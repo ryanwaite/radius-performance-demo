@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: catalog-api-config
+data:
+  LISTEN_ADDRESS: :8080
+  MYSQL_DSN: catalog:catalog@tcp(mysql:3306)/catalog?parseTime=true
+  VALKEY_ADDRESS: valkey:6379
+  CACHE_ENABLED: "false"
+  CACHE_TTL: 30s
+  DB_READ_DELAY: 250ms
+  DB_MAX_OPEN_CONNS: "10"
+  DB_MAX_IDLE_CONNS: "5"
+  DEPENDENCY_TIMEOUT: 3s
