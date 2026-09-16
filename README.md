@@ -2,7 +2,7 @@
 
 A small, self-contained catalogue performance lab for demonstrating how GitHub Copilot and the Radius Canvas can diagnose a slow service-to-database dependency, introduce a Valkey cache, visualize the graph change, deploy it to Kubernetes, and verify recovery.
 
-Phase 1 implements the runnable Go, MySQL, Valkey, Prometheus, Docker Compose, and Kubernetes foundation. Radius Canvas telemetry overlays and automated deployment orchestration are specified but intentionally not presented as existing features.
+Phase 1 implements the runnable Go, MySQL, Valkey, Prometheus, Docker Compose, and Kubernetes foundation. Radius Canvas telemetry overlays, automated deployment orchestration, and the graph-effectiveness agent benchmark are specified but intentionally not presented as existing features.
 
 ## Architecture
 
@@ -103,6 +103,9 @@ docs/specs/                       demo, implementation, and telemetry contracts
 - [End-to-end demo specification](docs/specs/demo-spec.md)
 - [Implementation plan](docs/specs/implementation-plan.md)
 - [Telemetry adapter contract](docs/specs/telemetry-contract.md)
+- [Agent graph evaluation specification](docs/specs/agent-evaluation-spec.md)
 - [Security policy](SECURITY.md)
+
+The polished Canvas flow and the unattended benchmark serve different purposes. The demo explains one end-to-end story to a human audience; the benchmark measures whether graph access improves agent diagnosis and remediation under controlled, repeated incidents.
 
 This project is original sample code released under the [MIT License](LICENSE). OpenTelemetry Demo is recognizable storefront inspiration for a later integration, not a source for this implementation.

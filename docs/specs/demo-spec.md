@@ -6,6 +6,19 @@ This demo shows a credible performance-diagnosis loop: catalogue read traffic ri
 
 Phase 1 in this repository implements the isolated performance lab and both Kubernetes graph states. The Radius Canvas already has graph, planned, graph-diff, deploying, and deployed views. Live telemetry in those views is new work: it must be delivered as an adapter/overlay using the contract in [telemetry-contract.md](telemetry-contract.md), not described as a current Canvas capability.
 
+This document describes the polished human-facing story. A separate, planned [agent graph evaluation](agent-evaluation-spec.md) will measure agents with and without Radius graph access under controlled incidents. A successful presentation is not benchmark evidence, and benchmark trials must not depend on the interactive Canvas UI.
+
+## Human demo mode versus benchmark mode
+
+| Property | Human demo mode | Benchmark mode |
+|---|---|---|
+| Purpose | Explain the diagnosis, graph diff, deployment, and recovery story | Measure the causal value of graph access |
+| Operation | Presenter-guided and interactive | Unattended and repeatable |
+| Primary scenario | MySQL read latency remediated with cache-aside | Versioned catalog of diagnosis and remediation incidents |
+| Radius Canvas | Central presentation surface | Not required; graph data is delivered through a stable machine interface |
+| Evidence | Live or clearly labeled replay telemetry | Immutable run records, validators, logs, patches, graph snapshots, and telemetry windows |
+| Claims | Demonstrates a credible workflow | Supports benchmark-specific comparative claims after sufficient repetitions |
+
 ## Presenter user script
 
 1. **Introduce the baseline.** Open the Radius graph for the baseline deployment. Point out the catalogue API, MySQL, Prometheus, and the `catalog-api -> mysql` connection.
@@ -138,6 +151,8 @@ Phase 1 supplies Kubernetes manifests, but not `app.bicep`, image publishing, cr
 - The deploy view reports workflow and rollout progress, then reaches a clear deployed or failed state.
 - All claims can be reproduced from commands and queries documented in this repository.
 
+These criteria establish demo reliability. They are not the agent benchmark score. Benchmark gates and weighted measures are defined in [agent-evaluation-spec.md](agent-evaluation-spec.md).
+
 ## Reliability and fallback plan
 
 - Pre-pull container images and pre-build the API image before a live presentation.
@@ -149,3 +164,14 @@ Phase 1 supplies Kubernetes manifests, but not `app.bicep`, image publishing, cr
 - If deployment is unavailable, render both Kustomize variants and the graph diff, then use a previously deployed environment for the metrics comparison.
 - If k6 is unavailable, use a documented fixed-concurrency HTTP load fallback, but do not change success thresholds mid-demo.
 - If Valkey is unavailable, demonstrate the service's fallback behavior and cache error metric; do not claim performance recovery.
+
+## Evaluation compatibility
+
+The demo environment should evolve into the same resettable scenario substrate used by the benchmark:
+
+- Compose and Kubernetes trials begin from versioned images, manifests, seed data, load profiles, and incident parameters.
+- Incident injection is reversible and declarative; no trial depends on manually editing a running container.
+- The graph-enabled and graph-disabled conditions receive the same repository snapshot, task, telemetry, traces, non-graph tools, and budgets.
+- The graph-enabled condition receives Radius topology and identifiers through an adapter. The control condition receives ordinary repository and runtime artifacts but no graph-derived summary or conclusion.
+- Cache-aside scenarios always model both `catalog-api--valkey` and `catalog-api--mysql`; MySQL remains the source of truth.
+- Interactive Canvas actions may visualize a completed run, but benchmark orchestration and validation remain headless.
