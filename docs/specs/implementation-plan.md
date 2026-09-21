@@ -1,5 +1,7 @@
 # Implementation Plan
 
+The canonical experiment design, treatment definitions, Copilot harness, measures, and research roadmap are in the [Copilot + Radius experiment plan](copilot-radius-experiment-plan.md). This document tracks repository implementation surfaces.
+
 ## Phase 1: Runnable performance lab
 
 **Status:** implemented by the initial scaffold.
@@ -51,9 +53,9 @@ These are recommendations, not recorded decisions:
 
 | Decision | Recommended default |
 |---|---|
-| Agent execution host and interface | Ephemeral container runner invoking a provider-neutral CLI adapter |
-| Initial model providers | Two providers and 2-3 current models total, selected for tool use and reproducible version attribution |
-| Per-trial budget | 20 minutes, 40 tool calls, and an explicit provider-neutral token/cost ceiling |
+| Agent execution host and interface | Inspect AI orchestrating fresh GitHub Copilot SDK sessions in an ephemeral runner |
+| Initial models | Two or three explicit pinned models available in the user's Copilot account |
+| Per-trial budget | 20 minutes, 40 tool calls, and explicit Copilot usage, AI-credit, and cost ceilings |
 | Graph payload | Versioned JSON containing Radius topology, stable IDs, code references, and deployment state; telemetry is a separate optional section |
 | Applying remediation | Automatically apply only inside an ephemeral sandbox after the agent emits a structured plan and patch |
 | Initial target | Docker Compose for fast pilots, followed by an isolated Kubernetes namespace per trial |
@@ -68,10 +70,10 @@ The implementation must keep these values configurable. Final choices depend on 
 
 Work:
 
-- Implement the provider-neutral agent adapter and normalized output schema.
+- Implement the benchmark-facing GitHub Copilot SDK adapter and normalized output schema.
 - Implement a headless trial orchestrator that provisions, resets, injects, loads, invokes, records, validates, and rolls back.
 - Freeze versioned prompts, repository snapshots, scenario definitions, graph payloads, and hidden validators.
-- Run the MVP with one app, three incidents, two conditions (`graph-disabled`, `graph-enabled`), and 2-3 models.
+- Run the MVP with one app, three incidents, the native and fully Radius-enabled fixtures, and 2-3 explicit Copilot models.
 - Separate diagnosis-only trials from diagnosis-and-remediation trials.
 - Produce immutable JSON run records, JSONL event streams, summary CSV, Markdown reports, logs, patches, telemetry windows, and graph snapshots.
 

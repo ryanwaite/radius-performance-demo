@@ -100,6 +100,7 @@ docs/specs/                       demo, implementation, and telemetry contracts
 
 ## Specifications
 
+- **[Canonical Copilot + Radius experiment plan](docs/specs/copilot-radius-experiment-plan.md)**
 - [End-to-end demo specification](docs/specs/demo-spec.md)
 - [Implementation plan](docs/specs/implementation-plan.md)
 - [Telemetry adapter contract](docs/specs/telemetry-contract.md)

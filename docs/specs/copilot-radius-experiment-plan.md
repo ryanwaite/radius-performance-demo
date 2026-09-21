@@ -1,0 +1,665 @@
+# Copilot + Radius Experiment Plan
+
+## Status and authority
+
+**Status:** canonical experiment design; implementation is planned unless a capability is explicitly marked implemented.
+
+This document is the decision-ready plan for evaluating GitHub Copilot on the Radius Performance Demo. It governs treatment definitions, protocol, measures, analysis, integrity, and implementation sequencing. The focused specifications remain authoritative for their narrower contracts:
+
+- [Agent evaluation details](agent-evaluation-spec.md): incident catalog, validators, scoring mechanics, and artifact detail.
+- [Telemetry contract](telemetry-contract.md): stable metrics, PromQL, Radius identifiers, and telemetry adapter JSON.
+- [Demo specification](demo-spec.md): interactive Radius Canvas presentation.
+- [Implementation plan](implementation-plan.md): repository delivery phases.
+
+The Go catalogue application, MySQL and Valkey paths, Prometheus metrics, Docker Compose stack, k6 load, and Kubernetes manifests are implemented. Inspect AI orchestration, Copilot SDK integration, Radius repository fixtures, benchmark reset, hidden validators, and benchmark result capture are planned.
+
+## Purpose and research questions
+
+The experimental unit is the **complete GitHub Copilot harness plus a selected model**, not an isolated raw LLM. Results therefore characterize a pinned Copilot runtime, model, tools, repository fixture, prompt, budget, and incident version.
+
+### Primary product question
+
+Does Radius-enabling a repository make GitHub Copilot more successful, efficient, and safe when diagnosing and changing a cloud-native application on behalf of a developer?
+
+The primary treatment is the complete repository experience that a developer would adopt. It includes the Radius application model, graph access, stable identifiers and source references, repository configuration, and generic Radius skills.
+
+### Secondary questions
+
+- Where does any uplift come from: application graph, Radius skills, or their interaction?
+- How much one-time effort is required to Radius-enable the repository?
+- After how many tasks does operational benefit plausibly amortize that preparation cost?
+- On which incident and task classes does Radius help, have no effect, or hurt?
+- Does Radius improve diagnosis only, or also improve remediation correctness, recovery, and safety?
+- Does an agent use the available graph and skills, and does use correlate with outcome?
+
+### Product-treatment claims versus causal graph claims
+
+The primary two-condition campaign estimates the effect of the **fully Radius-enabled repository treatment**. It cannot attribute the result to the graph alone because the treatment also changes repository files, instructions, skills, identifiers, and tool affordances.
+
+Causal claims about graph access require the later graph-by-skills factorial ablation. Even then, conclusions apply to the pinned Copilot harness, models, tasks, fixtures, and benchmark version. They do not establish general LLM intelligence or universal benefit for every repository.
+
+## Primary conditions
+
+| Surface | A. Native repository | B. Fully Radius-enabled repository |
+|---|---|---|
+| Application source and tests | Same frozen snapshot | Same frozen snapshot |
+| Compose and Kubernetes manifests | Included | Included |
+| Telemetry and load tools | Included | Included |
+| Ordinary repository instructions | Included | Included |
+| `app.bicep` | Absent | Generated, corrected if necessary, validated, and frozen before trials |
+| Radius repository configuration | Absent | Included and frozen |
+| Radius application graph | Not available | Available with stable resource/connection IDs and source references |
+| Radius skills | None | Generic, repository-scoped procedural skills |
+| Scenario-specific hints | None | None |
+
+The Radius-enabled fixture must describe the deployed application and how to use Radius. It must not encode incident answers, expected root causes, scenario thresholds, or scenario-specific remediation.
+
+Radius setup occurs before timed trials. Both fixtures are frozen and hashed. `app.bicep` is not regenerated per trial, because generation time and variability would confound task execution. One-time setup cost is recorded separately.
+
+### Variables held constant
+
+- Neutral task prompt and structured output requirement.
+- Application source behavior, tests, telemetry, load, and incident seed.
+- Non-Radius tools and permissions.
+- Selected model and model version or provider snapshot.
+- GitHub Copilot SDK and CLI versions.
+- Reasoning effort and sampling configuration.
+- Wall-clock, model-call, tool-call, token, AI-credit, and cost budgets.
+- Cold-context policy and fresh Copilot session.
+- Environment driver and benchmark host class.
+
+The initial benchmark disables automatic model routing, fleet execution, subagents, and cross-trial memory. Each trial uses one explicit pinned model in one fresh Copilot session.
+
+### Neutral task prompt
+
+The task must not mention Radius, an application graph, cache, or the expected cause. Scenario-visible symptoms and success requirements may vary, but the core prompt remains neutral.
+
+> The catalogue application is not meeting its service objective under the supplied workload. Diagnose the root cause using the repository and runtime evidence available to you. Return the causal category, affected component or dependency, supporting evidence, confidence, and the smallest safe remediation. In remediation mode, implement and validate only the changes necessary to restore the objective without weakening health checks, tests, or source-of-truth guarantees.
+
+The prompt must not tell the agent which tool or repository artifact to inspect.
+
+## Follow-up factorial ablations
+
+Run the primary native-versus-fully-Radius campaign first. If it produces a stable signal and the harness passes integrity checks, run a 2x2 graph-by-skills campaign:
+
+| Condition | Graph / `app.bicep` | Radius skills |
+|---|---:|---:|
+| Native | No | No |
+| Skills only | No | Yes |
+| Graph only | Yes | No |
+| Fully Radius-enabled | Yes | Yes |
+
+The factorial model estimates:
+
+- **Graph main effect:** average difference between graph-present and graph-absent conditions.
+- **Skills main effect:** average difference between skills-present and skills-absent conditions.
+- **Graph x skills interaction:** whether the combined effect differs from the sum of their separate effects.
+
+A positive interaction would suggest that procedural skills help Copilot exploit the graph. A negative interaction could indicate redundant context, conflicting instructions, or added tool overhead. Do not infer these effects from the primary two-condition campaign.
+
+A later graph-content ablation compares:
+
+1. Static graph and deployment state.
+2. Static graph plus telemetry overlay defined by the [telemetry contract](telemetry-contract.md).
+
+Raw traces and metrics remain identical across arms unless their availability is itself the explicit treatment.
+
+## Harness and environment
+
+```mermaid
+flowchart LR
+    Inspect[Inspect AI orchestrator] --> SDK[GitHub Copilot SDK session]
+    SDK --> Fixture[Native or Radius-enabled fixture]
+    SDK --> Tools[Identical non-Radius tools]
+    Fixture --> Env[Ephemeral Compose project]
+    Collector[Independent evidence collector] --> Env
+    Env --> Validators[Hidden deterministic validators]
+    SDK --> Events[Copilot events and usage]
+    Collector --> Record[Immutable run record]
+    Validators --> Record
+    Events --> Record
+```
+
+### Inspect AI
+
+Inspect AI is the recommended benchmark orchestrator. It should own suite configuration, randomized paired scheduling, task state, scoring integration, artifact references, resumability, and report generation. Repository-specific environment and validator code remains separate from Inspect task definitions so it can be tested independently.
+
+Inspect is pinned by exact package version and configuration hash. Its role is orchestration and evaluation, not diagnosis.
+
+### GitHub Copilot SDK
+
+The GitHub Copilot SDK is the agent harness. Each trial selects an explicit model available in the user's Copilot account.
+
+Use the SDK rather than:
+
+- **Copilot App UI:** interactive UI state, human timing, Canvas rendering, and manual actions are difficult to automate and reproduce.
+- **Raw provider API:** it bypasses the Copilot tool loop, permissions, usage accounting, repository integration, skills, and product behavior being evaluated.
+- **Copilot CLI alone:** the CLI may remain a useful implementation surface, but the SDK provides programmatic session creation, event capture, configuration, and lifecycle control needed by Inspect.
+
+Pin both SDK and Copilot CLI/runtime versions because event and usage APIs may evolve. The accumulated session usage RPC is experimental and must be treated as a reconciliation source, not the only raw record.
+
+### MVP environment: Docker Compose
+
+Every trial uses:
+
+- a unique Compose project name;
+- fresh volumes and containers;
+- dynamic host ports discovered by the environment driver;
+- images pinned by digest;
+- frozen source and fixture hashes;
+- verified schema and seed rows;
+- verified initial cache state;
+- verified environment variables and resource limits;
+- readiness checks before injection and load;
+- teardown with volumes and orphan containers removed;
+- explicit cleanup verification.
+
+The driver must fail closed if the environment differs from the scenario declaration. Merely running `docker compose down --volumes` is insufficient evidence of reset.
+
+### Later Kubernetes and Radius target
+
+The user-selected target is:
+
+- AKS cluster: `ryanw-aks`
+- Resource group: `ryanw-rg`
+- Tenant/account: `radiustest20260806.onmicrosoft.com` Test account
+
+This target is a direction, not a verified dependency. Cluster existence, account access, Radius installation/configuration, namespace permissions, quota, network policy, image access, and cleanup rights remain outstanding validation work.
+
+Kubernetes trials use a unique namespace per trial and never share mutable application resources. The benchmark must not run against production or shared demo state.
+
+### Independent evidence and hidden validators
+
+The evidence collector runs outside the Copilot session and gathers ground truth directly from the environment. Following Harbor and Terminal-Bench patterns, the agent cannot edit collector state or hidden expected answers.
+
+For remediation, use SWE-bench-style clean patch validation:
+
+- apply the agent patch to the frozen fixture in an ephemeral checkout;
+- reject modifications outside the allowed scope;
+- run tests and manifest validation from a clean process;
+- deploy only to the trial environment;
+- compare behavior and telemetry against hidden scenario validators;
+- retain the exact patch and commands.
+
+The headless benchmark remains separate from the interactive Radius Canvas demo described in [demo-spec.md](demo-spec.md). Canvas may visualize benchmark artifacts later but is not part of timed execution.
+
+## Scenarios and task modes
+
+### MVP scenarios
+
+| Scenario | Injection | Allowed remediation | Deterministic validators |
+|---|---|---|---|
+| MySQL pool/read delay | Fixed read delay plus constrained connection pool under standard load | Bounded pool/config change and/or effective cache-aside; no removal of MySQL | Correct causal category and `catalog-api--mysql`; functional tests; p95 recovery; error guardrail; pool/config bounds; topology consistency |
+| Ineffective cache | Valkey enabled with hidden TTL/key/config variant that prevents useful hits | Correct cache policy/configuration; preserve fail-open behavior and MySQL source of truth | Cache causal category; hit-ratio recovery; MySQL request reduction; Valkey healthy; both `catalog-api--mysql` and `catalog-api--valkey` retained |
+| API CPU throttling | Hidden CPU limit/workload variant causing cgroup throttling | Bounded API resource adjustment or removal of injected CPU work | API resource localization; throttling reduction; dependency latency not falsely blamed; throughput/p95 recovery; resource cap remains safe |
+
+Later scenarios:
+
+- Dependency timeout or endpoint misconfiguration.
+- Misleading correlated symptom where an obvious degraded component, such as Prometheus scrape health, is not causal.
+
+### Hidden variants
+
+Public documentation names scenario concepts, but each version includes hidden variants that alter pool sizes, read delays, endpoint values, TTLs, CPU limits, workload intensity, and accepted remediation ranges. Variant assignment is seeded and recorded. The neutral prompt exposes symptoms, not hidden parameters or expected answers.
+
+### Diagnosis-only
+
+- Repository and runtime inspection are allowed.
+- Writes, deployments, and runtime mutation are prohibited by permissions and validated afterward.
+- Success requires a structured causal diagnosis with evidence and confidence.
+
+### Diagnosis and remediation
+
+- The agent must emit a structured diagnosis before changes.
+- File and runtime changes are restricted to the ephemeral checkout and environment.
+- Scenario definitions declare allowed files, resources, commands, and maximum scope.
+- The orchestrator applies or executes bounded changes only after validation.
+- Human approval is not required inside the sandbox, but all actions are logged and safety gates remain enforced.
+
+## Exact trial protocol
+
+1. Resolve immutable benchmark inputs: native and Radius fixture hashes, repository commit, application images, scenario/variant, prompt, skills, graph payload, validators, Inspect version, Copilot SDK/CLI version, model, reasoning effort, tools, and budgets.
+2. Create a unique Compose project or Kubernetes namespace from a clean host state.
+3. Verify images, schema, seed data, cache state, configuration, resource limits, readiness, and absence of prior trial artifacts.
+4. Inject the seeded incident and independently verify that the intended fault is active.
+5. Start the fixed workload and capture the pre-agent telemetry window and ground-truth evidence.
+6. Start the authoritative monotonic trial clock.
+7. Create a fresh Copilot SDK session with memory off, the explicit pinned model, the assigned frozen fixture, and the condition's allowed tools.
+8. Capture every Copilot session event, `assistant.usage` event, model request, tool request/response, permission/action event, patch, terminal status, and adapter error.
+9. In diagnosis-only mode, prohibit writes. In remediation mode, accept only bounded sandbox changes and preserve the pre-change patch base.
+10. When the agent finishes or a budget expires, record normalized output and terminal classification.
+11. Run hidden diagnosis, functional, performance, regression, topology consistency, scope/minimality, and safety validators.
+12. For remediation, capture the post-change telemetry window under the same load profile.
+13. Persist logs, patches, telemetry, graph snapshots, fixture hashes, raw usage payloads, validator results, and cleanup evidence.
+14. Destroy containers/namespace, volumes, credentials, and temporary checkout; verify cleanup.
+15. Repeat the paired condition from a new environment with the same incident seed. Randomize which condition runs first.
+
+Terminal classifications are mutually exclusive:
+
+- infrastructure failure;
+- Copilot SDK or adapter failure;
+- invalid structured output;
+- refusal;
+- budget exhaustion;
+- diagnosis failure;
+- remediation failure;
+- validated success.
+
+Infrastructure and adapter failures are reported and retried under a predetermined policy; they are not silently converted into agent failures or dropped.
+
+## Measures
+
+### Primary outcome
+
+**Deterministic validated end-to-end task success.** Diagnosis-only and remediation modes have separate gates. A weighted score is secondary and is calculated only after gate outcomes are fixed.
+
+### Diagnosis
+
+- Correct causal category.
+- Correct causal resource and connection.
+- Correct rejection of correlated but non-causal symptoms.
+- Evidence validity and confidence calibration.
+- Time to first correct structured diagnosis.
+
+### Wall-clock timing
+
+The orchestrator records monotonic durations and UTC timestamps for:
+
+- total trial;
+- provisioning/reset;
+- incident injection and verification;
+- baseline load and evidence collection;
+- agent execution;
+- time to correct diagnosis;
+- remediation;
+- validation;
+- artifact persistence;
+- teardown and cleanup verification.
+
+Provider-reported latency is retained separately and never replaces end-to-end timing.
+
+### Copilot usage
+
+Capture each per-call `assistant.usage` payload and reconcile the accumulated totals with `session.usage.getMetrics` when available. Retain both raw forms.
+
+Normalized nullable fields:
+
+- input uncached tokens;
+- input cached-read tokens;
+- input cache-write tokens;
+- visible output tokens;
+- reasoning tokens;
+- provider-reported total tokens;
+- model-call count;
+- AI credits or premium-request cost;
+- provider-reported monetary charge, when available;
+- estimated charge with pricing version, when calculation is necessary.
+
+The accumulated usage RPC is experimental; pin the SDK/CLI and record schema/version changes. Reconciliation mismatches are artifacts, not values to overwrite.
+
+Providers and models account for cache and reasoning tokens differently. Some include cached tokens inside input totals; some split cache reads and writes; some include reasoning in output; some expose it separately; some do not expose it. Missing values are `null`, not zero. Never sum overlapping fields. Cross-provider token or cost rankings are therefore descriptive and qualified. Efficiency inference relies primarily on paired comparisons within the exact same model/version/runtime.
+
+### Tools and treatment use
+
+- Logical tool calls.
+- Tool attempts, retries, failures, and duration.
+- Model requests and turns.
+- Permission prompts and denied actions.
+- Graph tool calls, graph nodes/edges inspected, and graph-derived citations.
+- Radius skill activation and steps used.
+- Files, resources, and commands touched.
+- Human intervention, which is expected to be zero in benchmark mode.
+
+### Runtime recovery
+
+- HTTP p50/p95/p99 and throughput.
+- HTTP error rate.
+- MySQL request rate and dependency latency.
+- Cache hit/miss/error ratio.
+- Valkey dependency latency.
+- Pool wait and CPU throttling measures once implemented.
+- Difference from the paired baseline under the same fixed workload.
+
+See [telemetry-contract.md](telemetry-contract.md) for current metric names and mapping. Scenario validators must not claim pool-wait or CPU-throttling evidence until those collectors are implemented and validated.
+
+### Patch quality and safety
+
+- Tests and build pass.
+- Required performance recovery occurs.
+- No functional or error-rate regression.
+- Radius graph and deployment topology remain consistent.
+- Cache-aside retains both `catalog-api--mysql` and `catalog-api--valkey`.
+- No unsafe, secret-bearing, destructive, or unrelated edits.
+- Files/resources touched and patch size.
+- Unnecessary changes and avoidable operational complexity.
+
+### One-time Radius preparation cost
+
+Record separately from trial timing:
+
+- human and agent elapsed time to generate and correct `app.bicep`;
+- generated and edited files;
+- validation commands and failures;
+- skill authoring/customization time;
+- graph/source-reference corrections;
+- environment setup needed only for Radius.
+
+A rough break-even calculation is:
+
+```text
+tasks_to_break_even =
+  one_time_radius_setup_minutes
+  / median_minutes_saved_per_successful_task
+```
+
+Report sensitivity when task success changes, because avoiding a failed task can be more valuable than saving minutes. Do not charge fixture setup to each Radius trial.
+
+### Intention to treat and treatment use
+
+The primary analysis is **intention to treat**: every run assigned to the Radius-enabled fixture remains in that arm, whether or not Copilot uses the graph or skills.
+
+Secondary segmentation may compare Radius-assigned runs that did and did not use graph/skills. This is per-protocol or treatment-use analysis and is subject to selection bias: stronger agents or easier incidents may be more likely to use a tool successfully. It cannot replace the randomized intention-to-treat estimate.
+
+## Scoring and analysis
+
+### Pass gates
+
+Diagnosis-only:
+
+- valid output schema;
+- accepted causal category;
+- accepted causal resource/connection;
+- valid evidence;
+- no prohibited mutation;
+- within hard safety and budget limits.
+
+Remediation adds:
+
+- clean patch application;
+- functional/build/manifest success;
+- scenario recovery threshold;
+- regression and error guardrails;
+- topology consistency;
+- scope/minimality and safety.
+
+A sandbox escape attempt, secret access attempt, shared-resource mutation, invalid output, or uncleanable environment is an automatic failure with its own classification.
+
+The weighted score remains as defined in [agent-evaluation-spec.md](agent-evaluation-spec.md). Optional blinded human review covers explanation clarity and operational practicality, is reported separately, and never overrides deterministic gates.
+
+### Experimental design
+
+- Pair conditions within exact Copilot model, model version, SDK/CLI/runtime, reasoning effort, prompt, tools, budget, scenario variant, seed, and host class.
+- Use cold contexts and a fresh Copilot session for every run.
+- Randomize condition order within each pair.
+- Record exact fixture, prompt, graph, skill, model, tool, scenario, validator, and orchestrator versions.
+- Analyze each model and scenario before aggregation.
+- Report paired pass-rate differences, score/time/tool/usage deltas, effect sizes, and confidence intervals.
+- Use bootstrap confidence intervals when distribution assumptions are weak.
+- Publish infrastructure and adapter failure rates separately.
+
+Recommended pilot:
+
+```text
+3 scenarios x 2 conditions x 2-3 models x 5 paired repetitions
+= 60-90 total runs
+```
+
+The pilot validates mechanics and estimates variance. A larger comparison uses at least 20 paired repetitions per model/scenario: 240 runs for two models or 360 for three. Do not generalize from tiny samples.
+
+### Estimands
+
+- **Primary product estimand:** intention-to-treat difference between fully Radius-enabled and native repository fixtures.
+- **Scenario-specific estimand:** primary treatment difference within each incident/task class.
+- **Graph and skills effects:** factorial main effects and interaction from the later four-condition campaign.
+- **Treatment-use association:** outcome difference by observed graph/skill use; secondary and non-causal because use is self-selected.
+- **Amortization estimate:** one-time Radius preparation cost divided by observed per-task time/value uplift under explicit assumptions.
+
+## Artifacts and run record
+
+Each run stores:
+
+- canonical `run.json`;
+- ordered JSONL event log;
+- raw Copilot session events and `assistant.usage` payloads;
+- `session.usage.getMetrics` response and reconciliation;
+- model/tool requests, permissions, retries, and terminal status;
+- agent structured output;
+- patch and executed actions;
+- logs and validator output;
+- pre/post telemetry windows and PromQL;
+- graph payload/snapshot for graph-enabled conditions;
+- fixture, prompt, skill, graph, image, SDK/CLI, Inspect, scenario, and validator hashes;
+- suite summary CSV and Markdown report;
+- redaction and cleanup-verification results.
+
+Run-record excerpt:
+
+```json
+{
+  "schemaVersion": "v1",
+  "runId": "mvp-v1_mysql-pool-delay_seed-1842_model-x_radius",
+  "assignment": {
+    "fixture": "radius-enabled",
+    "conditionOrder": 1,
+    "mode": "diagnosis",
+    "pairId": "mysql-pool-delay_seed-1842_model-x"
+  },
+  "inputs": {
+    "repositoryCommit": "0123456789abcdef",
+    "fixtureHash": "sha256:fixture",
+    "appBicepHash": "sha256:bicep",
+    "skillsHash": "sha256:skills",
+    "promptHash": "sha256:prompt",
+    "scenario": "mysql-pool-delay/v1",
+    "variantHash": "sha256:hidden-variant",
+    "validatorHash": "sha256:validator"
+  },
+  "copilot": {
+    "sdkVersion": "pinned-version",
+    "cliVersion": "pinned-version",
+    "model": "explicit-model",
+    "modelVersion": "provider-reported-version",
+    "reasoningEffort": "pinned",
+    "contextPolicy": "cold"
+  },
+  "usage": {
+    "assistantUsageEvents": "assistant-usage.jsonl",
+    "sessionMetrics": "session-usage-metrics.json",
+    "inputUncachedTokens": 42100,
+    "inputCachedReadTokens": null,
+    "outputVisibleTokens": 2300,
+    "outputReasoningTokens": null,
+    "aiCredits": 1.0,
+    "estimatedCostUSD": null
+  },
+  "timingMs": {
+    "trial": 411000,
+    "agent": 311000,
+    "timeToCorrectDiagnosis": 284000
+  },
+  "validators": {
+    "diagnosis": "pass",
+    "scope": "pass",
+    "safety": "pass"
+  },
+  "result": {
+    "terminalClass": "validated_success",
+    "intentionToTreatSuccess": true,
+    "graphUsed": true,
+    "skillsUsed": false
+  },
+  "cleanupVerified": true
+}
+```
+
+Actual records use real immutable identifiers; placeholders above illustrate the schema.
+
+## Integrity and leakage controls
+
+- Public scenario concepts are distinct from hidden variants and hidden validators.
+- Inspect tasks expose only scenario-visible symptoms and allowed tools.
+- Automated checks reject prompts, skills, `app.bicep`, graph payloads, or repository instructions containing hidden values, accepted-answer categories, expected resource IDs beyond descriptive topology, or recommended scenario fixes.
+- Radius skills remain generic and procedural across scenarios.
+- Freeze and hash all dependencies, images, prompts, instructions, skills, graph payloads, `app.bicep`, SDK/CLI, Inspect, model configuration, scenarios, collectors, and validators.
+- Keep hidden validators outside the agent-visible checkout and tool namespace.
+- Record provider/model attribution and benchmark date.
+- Rotate hidden variants if public exposure or training leakage is plausible.
+- Label every report with the benchmark version and fixture versions.
+
+## Safety and cost controls
+
+- Run Copilot and application workloads in ephemeral containers or isolated Kubernetes namespaces.
+- Use non-root processes, scoped service accounts, resource quotas, network policy, and time-to-live cleanup.
+- Expose only sandbox credentials and necessary model/registry endpoints.
+- Deny production subscriptions, shared clusters, personal credentials, unrelated repositories, and unrestricted network access.
+- Cap wall time, model calls, tool calls, tokens, AI credits, premium requests, monetary cost, CPU, memory, storage, and process count.
+- Validate changes before execution and block paths/resources outside the declared sandbox.
+- Redact secrets from artifacts.
+- Fail closed when isolation, redaction, budget enforcement, or cleanup cannot be verified.
+- Never allow an agent to mutate shared or production resources.
+
+## Implementation roadmap
+
+### Phase 0: Freeze fixtures and setup cost
+
+Work:
+
+- Commit and tag a clean application baseline.
+- Produce native and fully Radius-enabled repository fixtures.
+- Generate, correct, validate, and freeze `app.bicep`.
+- Add generic Radius repository configuration and skills.
+- Capture setup time, corrections, validation, files, and hashes.
+- Run leakage review on instructions, skills, graph, and `app.bicep`.
+
+Exit criteria:
+
+- Fixtures differ only by declared Radius treatment surfaces.
+- Both fixtures build and run the same application behavior.
+- Radius graph IDs and source references validate.
+- No scenario-specific answer leakage is detected.
+- One-time setup cost record is complete.
+
+### Phase 1: Inspect + Copilot SDK smoke task
+
+Work:
+
+- Pin Inspect, Copilot SDK, and CLI/runtime.
+- Start a fresh SDK session with one explicit model.
+- Run a non-scored smoke diagnosis in each fixture.
+- Capture session events, `assistant.usage`, tool calls, terminal status, and `session.usage.getMetrics`.
+- Reconcile usage and verify budget termination.
+
+Exit criteria:
+
+- Inspect can launch and terminate a Copilot session unattended.
+- Event ordering and monotonic timing are complete.
+- Raw and normalized usage records are preserved without double counting.
+- No App UI, auto routing, memory, fleet, or subagents are involved.
+
+### Phase 2: Deterministic Compose reset and one diagnosis scenario
+
+Work:
+
+- Implement unique-project Compose driver, dynamic ports, fresh volumes, digest pinning, and cleanup verification.
+- Implement independent collector and hidden diagnosis validator.
+- Implement one hidden `mysql-pool-delay/v1` variant.
+- Run randomized native/Radius pairs repeatedly.
+
+Exit criteria:
+
+- Ten consecutive environment resets produce identical verified starting state.
+- Incident activation and cleanup are independently verified.
+- Diagnosis-only writes are technically blocked.
+- A complete paired run produces immutable records and a report.
+- Repeating the same seed stays within predefined environment variance.
+
+### Phase 3: MVP campaign
+
+Work:
+
+- Add ineffective-cache and API-CPU-throttling scenarios with hidden variants.
+- Add pool and CPU evidence collectors needed for deterministic validation.
+- Select 2-3 explicit models available in the Copilot account.
+- Run five paired repetitions per model/scenario.
+
+Exit criteria:
+
+- 60-90 planned runs complete or have explicit terminal classifications.
+- All scenarios meet reset, incident, evidence, and validator reliability thresholds.
+- Paired deltas and confidence intervals are generated.
+- Reports clearly state that the pilot estimates variance and benchmark-specific signal.
+
+### Phase 4: Remediation trials
+
+Work:
+
+- Add bounded write permissions and clean patch application.
+- Implement functional, performance, regression, topology, minimality, and safety validators.
+- Add post-change load and telemetry capture.
+- Exercise rollback and uncleanable-environment handling.
+
+Exit criteria:
+
+- Agent changes cannot escape the checkout or trial environment.
+- Known good remediations pass; known unsafe or incomplete remediations fail.
+- Cache remediation retains MySQL and Valkey edges.
+- Every trial destroys or quarantines its environment with evidence.
+
+### Phase 5: Factorial ablations, telemetry overlay, and Kubernetes
+
+Work:
+
+- Run native, skills-only, graph-only, and full Radius conditions.
+- Estimate graph, skills, and interaction effects.
+- Compare static graph with graph plus telemetry overlay.
+- Validate access to `ryanw-aks` in `ryanw-rg` under the Test account.
+- Add isolated namespace driver and Radius deployment-state collection.
+
+Exit criteria:
+
+- Four fixtures pass leakage and parity checks.
+- Factorial analysis reports main effects and interaction with uncertainty.
+- Telemetry-overlay treatment is isolated from static graph.
+- Azure access, Radius setup, namespace isolation, quotas, network policy, image pulls, and cleanup are verified before scored runs.
+
+## Recommended defaults and unresolved decisions
+
+| Area | Recommended default | Status |
+|---|---|---|
+| Orchestrator | Inspect AI | Recommended; version not selected |
+| Agent harness | GitHub Copilot SDK | Recommended; integration not implemented |
+| Environment | Docker Compose | Recommended for MVP |
+| Session policy | Fresh cold session, memory off | Recommended |
+| Model selection | Explicit pinned model, no auto routing | Models unresolved |
+| Parallelism | One agent, no fleet or subagents | Recommended |
+| First task mode | Diagnosis-only | Recommended |
+| Remediation | Apply bounded changes automatically only in sandbox after Phase 3 | Recommended |
+| Initial Radius data | Static graph, no telemetry overlay | Recommended |
+| Prompt | Neutral, no Radius/graph/cache/root-cause mention | Recommended |
+| Radius fixture | Frozen validated `app.bicep`, repo config, graph, IDs/source refs, generic skills | Required; not built |
+| Trial budgets | Fixed wall-clock, model/tool/token/AI-credit/cost caps | Exact values unresolved |
+| Models | 2-3 models available in the user's Copilot account | Unresolved |
+| Kubernetes target | `ryanw-aks` / `ryanw-rg` / Test account | User-selected; access/setup unverified |
+| Human review | Optional, blinded, separate from deterministic score | Recommended |
+
+Before Phase 1 implementation, choose the initial models, exact budgets, Inspect and Copilot SDK/CLI versions, structured output schema, and usage normalization policy. Before Phase 5, verify Azure access and select the Kubernetes/Radius deployment configuration.
+
+## What this experiment can and cannot claim
+
+### It can claim
+
+- The intention-to-treat effect of a frozen fully Radius-enabled repository versus a frozen native repository for the tested Copilot model/runtime and benchmark tasks.
+- Per-scenario differences in validated success, efficiency, recovery, and safety.
+- The observed one-time Radius preparation cost and a transparent amortization estimate.
+- After factorial ablations, benchmark-specific graph, skills, and interaction effects.
+- Whether Copilot used graph or skills, reported as secondary behavior and association.
+
+### It cannot claim
+
+- Isolated raw LLM quality independent of the Copilot harness.
+- A graph-only causal effect from the primary two-condition campaign.
+- General intelligence, universal cloud-debugging ability, or benefit for all repositories.
+- Provider superiority from incomparable token/cost accounting.
+- Production safety from sandbox performance.
+- A live-telemetry Canvas capability before the telemetry adapter is implemented.
+- Statistical certainty from the minimum pilot or from unpaired demonstrations.

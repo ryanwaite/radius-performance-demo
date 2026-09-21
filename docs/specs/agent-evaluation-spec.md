@@ -4,9 +4,9 @@
 
 **Status:** planned; no benchmark runner, provider integration, scenario harness, or results are implemented yet.
 
-This benchmark will test a narrow causal question: when an engineering agent has access to a Radius application graph, does it diagnose and remediate this catalogue application's performance incidents more accurately and efficiently than the same agent without graph access?
+The canonical product-treatment design is the [Copilot + Radius experiment plan](copilot-radius-experiment-plan.md). It defines the primary native-versus-fully-Radius conditions, Inspect AI orchestration, GitHub Copilot SDK harness, usage capture, estimands, and phased decisions. This focused specification supplies scenario, validator, scoring, and artifact detail.
 
-The benchmark measures performance on this versioned task suite, not general intelligence or universal agent quality. The existing [human demo](demo-spec.md) remains a polished explanatory experience. Benchmark mode is unattended, repeatable, headless, and independent of the interactive Radius Canvas UI.
+Graph-enabled versus graph-disabled is a follow-up causal ablation, not the primary product treatment. The benchmark measures the complete pinned Copilot harness plus selected model on this versioned task suite, not raw LLM quality, general intelligence, or universal agent quality. The existing [human demo](demo-spec.md) remains a polished explanatory experience. Benchmark mode is unattended, repeatable, headless, and independent of the interactive Radius Canvas UI.
 
 ## MVP recommendation
 
@@ -14,8 +14,8 @@ Start with:
 
 - One application: the catalogue API, MySQL, optional Valkey, Prometheus, and load generator.
 - Three incidents: MySQL pool exhaustion/read delay, missing or ineffective cache, and CPU throttling.
-- Two conditions: graph-disabled and graph-enabled with static Radius topology.
-- Two or three current agent models spanning at least two providers.
+- Two conditions: frozen native repository and frozen fully Radius-enabled repository.
+- Two or three explicit models available through GitHub Copilot.
 - Diagnosis-only trials for all incidents, followed by diagnosis-and-remediation where deterministic validators are mature.
 - Five paired repetitions per model/scenario for a minimum pilot: 3 incidents x 2 conditions x 2-3 models x 5 repetitions = 60-90 runs.
 
@@ -73,9 +73,9 @@ The agent may inspect allowed artifacts and tools, then returns a structured dia
 
 The agent first emits the same structured diagnosis, then may produce a patch and bounded deployment actions inside the ephemeral sandbox. The orchestrator applies only allowed changes, reruns tests and load, validates recovery, records the patch, and destroys the environment.
 
-## Provider-neutral agent adapter
+## Benchmark-facing Copilot adapter
 
-The orchestrator must not call model-provider APIs directly. It invokes a stable adapter interface implemented by provider-specific or agent-host-specific plugins.
+Inspect invokes a stable benchmark-facing adapter over the GitHub Copilot SDK. The adapter selects an explicit pinned model available through the user's Copilot account and must not bypass Copilot by calling raw model-provider APIs. Provider-specific usage differences are normalized only for recording; the evaluated harness remains Copilot.
 
 Conceptual interface:
 
@@ -109,15 +109,13 @@ Example configuration:
 ```yaml
 schemaVersion: v1
 agents:
-  - id: provider-a-model-1
-    adapter: exec
-    command: ["agent-adapter-a", "run"]
+  - id: copilot-model-1
+    adapter: copilot-sdk
     model: model-1
     temperature: 0
     contextPolicy: cold
-  - id: provider-b-model-2
-    adapter: exec
-    command: ["agent-adapter-b", "run"]
+  - id: copilot-model-2
+    adapter: copilot-sdk
     model: model-2
     temperature: 0
     contextPolicy: cold
@@ -129,11 +127,11 @@ budgets:
   maxCostUSD: 10
 ```
 
-The executable names are examples of the interface, not claims that provider integrations exist. Secrets are injected by the runner, never stored in benchmark configuration or artifacts.
+The model names are examples, not selected models. Copilot credentials are injected by the runner, never stored in benchmark configuration or artifacts. Exact event and usage capture follows the [canonical plan](copilot-radius-experiment-plan.md#copilot-usage).
 
-## Controlled conditions
+## Controlled condition payloads
 
-The unit of comparison is a paired trial: the same model/version/configuration diagnoses the same seeded incident once under each condition. Condition order is randomized.
+The primary fixture definitions are governed by the [canonical plan](copilot-radius-experiment-plan.md#primary-conditions). The graph payload rules below apply when constructing the fully Radius-enabled fixture and the later graph-only ablation. The unit of comparison remains a paired trial with randomized condition order.
 
 ### Graph-enabled
 
@@ -148,7 +146,7 @@ The agent receives a versioned, machine-readable graph payload containing:
 
 The payload contains topology and measurements, not a generated root-cause conclusion or recommended fix.
 
-### Graph-disabled control
+### Graph-disabled or native control
 
 The agent receives:
 
