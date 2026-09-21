@@ -109,9 +109,10 @@ Raw traces and metrics remain identical across arms unless their availability is
 ```mermaid
 flowchart LR
     Inspect[Inspect AI orchestrator] --> SDK[GitHub Copilot SDK session]
-    SDK --> Fixture[Native or Radius-enabled fixture]
+    Fixture[Sealed native or Radius fixture] --> Workspace[Fresh standalone git workspace]
+    SDK --> Workspace
     SDK --> Tools[Identical non-Radius tools]
-    Fixture --> Env[Ephemeral Compose project]
+    Workspace --> Env[Ephemeral Compose project]
     Collector[Independent evidence collector] --> Env
     Env --> Validators[Hidden deterministic validators]
     SDK --> Events[Copilot events and usage]
@@ -137,6 +138,138 @@ Use the SDK rather than:
 - **Copilot CLI alone:** the CLI may remain a useful implementation surface, but the SDK provides programmatic session creation, event capture, configuration, and lifecycle control needed by Inspect.
 
 Pin both SDK and Copilot CLI/runtime versions because event and usage APIs may evolve. The accumulated session usage RPC is experimental and must be treated as a reconciliation source, not the only raw record.
+
+## Repository fixture and workspace isolation
+
+The Copilot agent must **never** run against the benchmark-development checkout or the full public `radius-performance-demo` repository during a scored trial. That repository contains experiment plans, public scenario concepts, expected diagnoses and remediations, harness code, result formats, and eventually scenario and orchestration files. Exposing it would create answer leakage and allow the agent to modify the benchmark control plane.
+
+### Worktrees are not the scored-run boundary
+
+Developers may use Git worktrees while authoring and comparing fixtures. Scored runs do not consume those worktrees.
+
+A worktree remains linked to the parent repository's object database, configuration, hooks, refs, and administrative files. It can expose treatment branches or benchmark commits through refs, inherit or accidentally copy untracked/generated files, and permit parent-path access when mounts or tools are too broad. It also complicates exact cleanup and does not hide public plan content that remains reachable through the same checkout, host filesystem, or network. These properties make it useful for fixture preparation but unsuitable as the benchmark isolation boundary.
+
+**Direct answer:** worktrees can prepare variants; benchmark runs consume sealed fixture artifacts and fresh standalone repositories.
+
+### Three repository layers
+
+| Layer | Contents | Agent access |
+|---|---|---|
+| Benchmark/control-plane repository | Inspect tasks, orchestration, scenario definitions, hidden variants, evidence collectors, validators, expected answers, reports, and fixture builder | Never mounted or exposed to the agent sandbox |
+| Immutable application fixture source | Allowlisted application files exported from one pinned source commit, plus the declared Radius treatment overlay for the Radius fixture | Used only to build sealed fixture artifacts |
+| Ephemeral per-trial agent workspace | Fresh standalone Git repository extracted from one exact fixture artifact | Mounted as the agent's only working directory |
+
+The benchmark repository and hidden validators should ultimately live outside the public application fixture. Until that separation is implemented, the fixture builder must enforce a strict allowlist and construct artifacts without exposing the source checkout.
+
+### Phase 0 fixture construction
+
+Build and seal two artifacts from the same pinned application source commit:
+
+1. **Native fixture:** allowlisted developer-realistic application source, tests, manifests, telemetry configuration, and ordinary repository instructions.
+2. **Radius-enabled fixture:** the exact native fixture plus one versioned, allowlisted Radius treatment overlay containing validated `app.bicep`, Radius repository configuration, stable graph/source references, and generic Radius skills.
+
+Prefer a content-addressed tar or OCI artifact with a manifest and SHA-256 digest. A dedicated fixture commit/repository exported with `git archive` is also acceptable, but the scored workspace must be created from the export, not attached to its `.git` directory. Application files and behavior must otherwise be byte-identical.
+
+Create a machine-readable difference manifest that records every native-versus-Radius path, file digest, mode, and treatment reason. Fixture publication fails if an undeclared difference exists.
+
+Explicitly exclude:
+
+- `docs/specs/` and experiment plans;
+- `benchmark/`, `evaluation/`, `results/`, orchestration, and scoring code;
+- hidden scenarios, incident injection implementation, validators, expected answers, and ground-truth fixtures;
+- CI secrets and provider credentials;
+- `.env`, local configuration, logs, coverage, profiles, and result artifacts;
+- developer-machine metadata and editor state;
+- source-repository `.git`, local Git configuration, hooks, refs, remotes, alternates, credentials, submodules, and LFS state;
+- load-injector controls or hidden incident parameters that reveal the cause.
+
+The agent may receive developer-realistic runtime tools, application logs, metrics, traces, and ordinary manifests. The control plane injects the incident from outside the mounted repository.
+
+### Per-trial workspace creation
+
+For every run:
+
+1. Resolve the assigned fixture ID, version, and content digest.
+2. Create a new empty temporary directory owned by the sandbox identity.
+3. Extract the sealed artifact with path traversal, absolute path, device file, hard-link escape, and unsafe symlink protections.
+4. Verify every path, mode, and SHA-256 against the fixture manifest; verify allowlist and denylist versions.
+5. Initialize a new standalone Git repository in that directory.
+6. Apply deterministic Git metadata where needed: fixed default branch, author identity, commit time, line-ending policy, and file modes.
+7. Create one baseline commit and record its tree and commit hashes.
+8. Verify clean status, no remote or only an inert local remote, no hooks, alternates, submodules, LFS fetch configuration, credentials, or network Git access.
+9. Mount only this directory read-write as the agent working directory.
+10. Start a fresh Copilot session with memory off.
+11. After execution, record status, untracked files, binary changes, the final patch, and patch SHA-256 separately from the workspace.
+12. Unmount and destroy the workspace, then verify the directory and related container mount no longer exist.
+
+Recommended Git visibility is **yes**: Copilot should have `git status`, `git diff`, and a baseline for safe patch inspection. The repository has one synthetic baseline commit, no useful prior history, no live remote, and no credentials. Record both baseline tree hash and final patch hash.
+
+### Docker and mount boundary
+
+- Copy or mount the per-trial workspace read-write only into the agent container.
+- Do not mount the source checkout, its parent directory, home directory, Docker configuration, SSH directory, credential stores, or benchmark/control-plane repository.
+- Do not expose the Docker socket to the agent.
+- Evidence collectors and validators use separate read-only workspace snapshots or control mounts and do not share writable state with the agent.
+- Application containers consume pinned built artifacts and scenario configuration; they do not browse agent or benchmark control files.
+- Resolve and validate every mount source before container creation. Parent-path and recursive broad mounts are forbidden.
+
+### Network boundary
+
+Initially deny general outbound internet from the scored sandbox. Permit Copilot/model control connectivity through a narrowly controlled path outside the application sandbox, plus only explicitly required local trial endpoints.
+
+The agent must not fetch the public benchmark repository, search published expected answers, add arbitrary Git remotes, or query public code search. If GitHub access becomes necessary for a later task class, expose a controlled mirror containing only the assigned fixture and record that access as a new tool/treatment version.
+
+### Reproducibility record
+
+Every run records:
+
+- fixture ID, version, and artifact digest;
+- pinned application source commit;
+- treatment overlay version and digest, or explicit absence;
+- file manifest and native-versus-Radius difference-manifest digests;
+- baseline Git tree and commit hashes;
+- workspace creation tool version;
+- allowlist and denylist versions;
+- extraction and workspace verification results;
+- final patch hash and final dirty-status summary;
+- workspace and mount cleanup verification.
+
+### Planned CLI flow
+
+The following CLI is planned, not implemented:
+
+```bash
+radius-perf-eval fixture build \
+  --source-commit "$SOURCE_COMMIT" \
+  --condition native \
+  --output oci://registry.example/fixtures/catalog-native:mvp-v1
+
+radius-perf-eval fixture build \
+  --source-commit "$SOURCE_COMMIT" \
+  --condition radius-enabled \
+  --overlay evaluation/treatments/radius/v1 \
+  --output oci://registry.example/fixtures/catalog-radius:mvp-v1
+
+radius-perf-eval workspace create \
+  --fixture-digest sha256:... \
+  --run-id "$RUN_ID" \
+  --output "$WORKSPACE"
+
+radius-perf-eval workspace verify --workspace "$WORKSPACE" --expected-tree "$TREE_HASH"
+radius-perf-eval run --workspace "$WORKSPACE" --scenario "$SCENARIO" --agent "$AGENT"
+radius-perf-eval workspace collect --workspace "$WORKSPACE" --output "$RUN_ARTIFACTS"
+radius-perf-eval workspace destroy --workspace "$WORKSPACE" --verify
+```
+
+### Isolation exit criteria
+
+- Ten repeated workspace creations from one fixture produce identical baseline tree and commit hashes.
+- Native versus Radius fixture differences exactly match the declared treatment overlay manifest.
+- Intentional forbidden files, unsafe symlinks, path traversal entries, remotes, hooks, alternates, submodules, LFS fetch configuration, or undeclared file differences cause verification failure.
+- The agent cannot read parent paths, benchmark files, hidden validators, source-control credentials, or the Docker socket.
+- After teardown, no workspace directory, agent container, mount, Compose project, volume, credential, or temporary fixture remains.
+
+Repository isolation and runtime isolation are complementary. The unique Compose project resets application and dependency state; the fresh standalone repository resets agent-visible code, history, instructions, and writable context. Every scored run requires both.
 
 ### MVP environment: Docker Compose
 
@@ -218,21 +351,22 @@ Public documentation names scenario concepts, but each version includes hidden v
 
 ## Exact trial protocol
 
-1. Resolve immutable benchmark inputs: native and Radius fixture hashes, repository commit, application images, scenario/variant, prompt, skills, graph payload, validators, Inspect version, Copilot SDK/CLI version, model, reasoning effort, tools, and budgets.
-2. Create a unique Compose project or Kubernetes namespace from a clean host state.
-3. Verify images, schema, seed data, cache state, configuration, resource limits, readiness, and absence of prior trial artifacts.
-4. Inject the seeded incident and independently verify that the intended fault is active.
-5. Start the fixed workload and capture the pre-agent telemetry window and ground-truth evidence.
-6. Start the authoritative monotonic trial clock.
-7. Create a fresh Copilot SDK session with memory off, the explicit pinned model, the assigned frozen fixture, and the condition's allowed tools.
-8. Capture every Copilot session event, `assistant.usage` event, model request, tool request/response, permission/action event, patch, terminal status, and adapter error.
-9. In diagnosis-only mode, prohibit writes. In remediation mode, accept only bounded sandbox changes and preserve the pre-change patch base.
-10. When the agent finishes or a budget expires, record normalized output and terminal classification.
-11. Run hidden diagnosis, functional, performance, regression, topology consistency, scope/minimality, and safety validators.
-12. For remediation, capture the post-change telemetry window under the same load profile.
-13. Persist logs, patches, telemetry, graph snapshots, fixture hashes, raw usage payloads, validator results, and cleanup evidence.
-14. Destroy containers/namespace, volumes, credentials, and temporary checkout; verify cleanup.
-15. Repeat the paired condition from a new environment with the same incident seed. Randomize which condition runs first.
+1. Resolve immutable benchmark inputs: native and Radius fixture artifact digests, source commit, treatment overlay and difference manifests, application images, scenario/variant, prompt, skills, graph payload, validators, workspace builder, Inspect version, Copilot SDK/CLI version, model, reasoning effort, tools, and budgets.
+2. Create an empty temporary directory, safely extract the assigned fixture, initialize a new standalone Git repository, create the deterministic baseline commit, and verify manifest, denylist, clean status, no remote/hooks/alternates/submodules/LFS, and baseline hashes.
+3. Create a unique Compose project or Kubernetes namespace from a clean host state.
+4. Verify images, schema, seed data, cache state, configuration, resource limits, readiness, workspace isolation, and absence of prior trial artifacts.
+5. Inject the seeded incident from the control plane and independently verify that the intended fault is active without exposing hidden injection controls in the agent workspace.
+6. Start the fixed workload and capture the pre-agent telemetry window and ground-truth evidence.
+7. Start the authoritative monotonic trial clock.
+8. Mount only the standalone workspace as the agent's working directory and create a fresh Copilot SDK session with memory off, the explicit pinned model, and the condition's allowed tools.
+9. Capture every Copilot session event, `assistant.usage` event, model request, tool request/response, permission/action event, patch, terminal status, and adapter error.
+10. In diagnosis-only mode, technically prohibit writes. In remediation mode, accept only bounded sandbox changes and preserve the baseline commit.
+11. When the agent finishes or a budget expires, record normalized output, Git status, final patch hash, and terminal classification.
+12. Run hidden diagnosis, functional, performance, regression, topology consistency, scope/minimality, and safety validators from separate control mounts.
+13. For remediation, capture the post-change telemetry window under the same load profile.
+14. Persist logs, patches, telemetry, graph snapshots, fixture and baseline hashes, raw usage payloads, validator results, and cleanup evidence outside the workspace.
+15. Destroy the agent workspace, containers/namespace, mounts, volumes, credentials, and temporary files; verify every resource is absent.
+16. Repeat the paired condition from a newly extracted fixture and new runtime environment with the same incident seed. Randomize which condition runs first.
 
 Terminal classifications are mutually exclusive:
 
@@ -525,7 +659,8 @@ Actual records use real immutable identifiers; placeholders above illustrate the
 Work:
 
 - Commit and tag a clean application baseline.
-- Produce native and fully Radius-enabled repository fixtures.
+- Implement the allowlist/denylist fixture builder and native-versus-Radius difference manifest.
+- Produce sealed, content-addressed native and fully Radius-enabled fixture artifacts from the same source commit.
 - Generate, correct, validate, and freeze `app.bicep`.
 - Add generic Radius repository configuration and skills.
 - Capture setup time, corrections, validation, files, and hashes.
@@ -534,9 +669,12 @@ Work:
 Exit criteria:
 
 - Fixtures differ only by declared Radius treatment surfaces.
+- Fixture archives contain no benchmark plans, scenario implementations, expected answers, validators, results, credentials, local Git state, or developer artifacts.
 - Both fixtures build and run the same application behavior.
 - Radius graph IDs and source references validate.
 - No scenario-specific answer leakage is detected.
+- Ten repeated standalone workspace creations produce identical baseline tree and commit hashes.
+- Forbidden file, unsafe archive path/symlink, remote, hook, or undeclared-difference tests fail closed.
 - One-time setup cost record is complete.
 
 ### Phase 1: Inspect + Copilot SDK smoke task
@@ -560,6 +698,7 @@ Exit criteria:
 
 Work:
 
+- Implement per-trial standalone Git workspace creation, verification, collection, and destruction from sealed fixture artifacts.
 - Implement unique-project Compose driver, dynamic ports, fresh volumes, digest pinning, and cleanup verification.
 - Implement independent collector and hidden diagnosis validator.
 - Implement one hidden `mysql-pool-delay/v1` variant.
@@ -568,9 +707,12 @@ Work:
 Exit criteria:
 
 - Ten consecutive environment resets produce identical verified starting state.
+- Ten consecutive workspace creations produce identical baseline hashes and clean status.
+- The agent mount contains only the standalone fixture workspace; benchmark/control-plane paths and Docker socket are unreachable.
 - Incident activation and cleanup are independently verified.
 - Diagnosis-only writes are technically blocked.
 - A complete paired run produces immutable records and a report.
+- After teardown, no workspace, mount, agent container, Compose project, or volume remains.
 - Repeating the same seed stays within predefined environment variance.
 
 ### Phase 3: MVP campaign

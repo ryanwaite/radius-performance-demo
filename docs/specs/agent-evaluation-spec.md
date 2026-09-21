@@ -25,6 +25,8 @@ Use the pilot to estimate variance, debug leakage, and tune validators. A larger
 
 Each trial runs in an isolated, containerized environment that can be recreated from immutable inputs.
 
+Repository fixture construction and per-trial standalone Git workspace isolation are governed by [Repository fixture and workspace isolation](copilot-radius-experiment-plan.md#repository-fixture-and-workspace-isolation). A Git worktree may assist fixture authoring but is never the scored-run isolation boundary.
+
 ```mermaid
 flowchart LR
     O[Trial orchestrator] --> P[Provision/reset]
@@ -174,18 +176,19 @@ Traces and raw metrics must remain constant across compared arms. If a trial exc
 The orchestrator is planned, not implemented. Its lifecycle:
 
 1. Resolve immutable repository, image, scenario, prompt, graph, validator, and agent versions.
-2. Create an isolated Compose project or Kubernetes namespace.
-3. Seed and verify the baseline.
-4. Inject and verify the selected incident.
-5. Start the fixed load profile and capture the pre-agent telemetry window.
-6. Randomly select the first paired condition.
-7. Invoke the agent adapter and record every tool call, response, usage value, and timestamp.
-8. For remediation trials, validate the proposed scope, apply it only in the sandbox, and capture the exact patch/actions.
-9. Run deterministic diagnosis and remediation validators.
-10. Capture post-agent telemetry, tests, deployment status, graph snapshot, and safety findings.
-11. Roll back and destroy the environment; verify deletion.
-12. Repeat from a clean environment for the paired condition.
-13. Append immutable run artifacts and update derived summaries.
+2. Safely extract the assigned sealed fixture and create a verified standalone Git workspace with one deterministic baseline commit.
+3. Create an isolated Compose project or Kubernetes namespace.
+4. Seed and verify the runtime and repository baselines.
+5. Inject and verify the selected incident from outside the agent workspace.
+6. Start the fixed load profile and capture the pre-agent telemetry window.
+7. Randomly select the first paired condition.
+8. Invoke the agent adapter with only the standalone workspace mounted and record every tool call, response, usage value, and timestamp.
+9. For remediation trials, validate the proposed scope, apply it only in the sandbox, and capture the exact patch/actions.
+10. Run deterministic diagnosis and remediation validators from separate control mounts.
+11. Capture post-agent telemetry, tests, deployment status, graph snapshot, and safety findings.
+12. Collect the patch/status separately, then destroy the workspace and runtime environment; verify deletion.
+13. Repeat from new workspace and runtime instances for the paired condition.
+14. Append immutable run artifacts and update derived summaries.
 
 Suggested planned layout:
 
