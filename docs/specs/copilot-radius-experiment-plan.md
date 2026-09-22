@@ -413,6 +413,14 @@ For remediation, use SWE-bench-style clean patch validation:
 
 The headless benchmark remains separate from the interactive Radius Canvas demo described in [demo-spec.md](demo-spec.md). Canvas may visualize benchmark artifacts later but is not part of timed execution.
 
+### Negative assertions require an attempt
+
+Any check of the form "nothing bad happened" passes when nothing was tried, so every negative assertion pairs with an affirmative record that the attempt occurred. A confinement probe in which the agent never attempted an escape, a validator that observes no forbidden write because the scenario never reached the code path, and a leakage scan over an artifact that was never produced all report success on no evidence.
+
+This failure mode decays rather than announcing itself. As the surrounding harness improves at constraining the agent, attempts become rarer and the check trends green for the same reason the system is getting better, which makes a weakening signal indistinguishable from a strengthening result. Treat absent evidence, a skipped probe, and an unexercised path as failures, and record attempt counts alongside outcomes so a check that has quietly stopped testing anything is visible in the run record.
+
+This applies to the isolation gate, the hidden scenario validators, the patch-scope rejection checks, and the committed-configuration leakage scan.
+
 ## Scenarios and task modes
 
 ### MVP scenarios
