@@ -356,7 +356,15 @@ radius-perf-eval workspace destroy --workspace "$WORKSPACE" --verify
 - The agent cannot read parent paths, benchmark files, hidden validators, source-control credentials, or the Docker socket.
 - After teardown, no workspace directory, agent container, mount, Compose project, volume, credential, or temporary fixture remains.
 
+- A live escape probe executed inside every scored run approves none of its attempted parent-path reads, host-file reads, or out-of-workspace writes.
+
 Repository isolation and runtime isolation are complementary. The unique Compose project resets application and dependency state; the fresh standalone repository resets agent-visible code, history, instructions, and writable context. Every scored run requires both.
+
+### Shell confinement
+
+The agent harness permission API cannot confine shell execution. The shell permission request exposes no resolved paths even for commands with a single unambiguous literal path, so a handler that decides by inspecting declared paths approves everything it is shown. Under such a handler the agent successfully read a parent-directory file, read a host configuration file, and wrote outside its workspace, while every action was classified as within the workspace.
+
+Shell therefore defaults to denied. Static command screening is defence in depth only, since command substitution defeats it by construction. The container mount boundary is the actual confinement boundary for shell, which makes the Compose runtime a security control rather than a convenience: any scenario that enables shell must execute inside that boundary. Because this failure is invisible to unit tests written against the permission API, confinement is asserted by a live escape probe in each scored run rather than by test coverage alone.
 
 ### MVP environment: Docker Compose
 
@@ -517,6 +525,10 @@ Normalized nullable fields:
 - estimated charge with pricing version, when calculation is necessary.
 
 The accumulated usage RPC is experimental; pin the SDK/CLI and record schema/version changes. Reconciliation mismatches are artifacts, not values to overwrite.
+
+Premium-request cost is not a sum over calls. Only model calls whose initiator is the user are charged; summing per-call `assistant.usage.cost` across every call overcounts, measured as 2.0 against a runtime-reported 1.0 on a two-call session. Normalize by filtering on initiator before summing, retain the unfiltered sum as a raw artifact, and treat any disagreement with `session.usage.getMetrics` as a finding rather than a value to correct silently.
+
+Cache overlap is resolved empirically rather than assumed. For the pinned SDK/CLI, `copilotUsage.tokenDetails` shows input tokens to be inclusive of cache-read tokens, so uncached input is a computed value rather than `null`. This resolution is specific to the pinned runtime and model family and must be re-verified whenever either changes; the general rule that overlapping fields are never summed still governs.
 
 Providers and models account for cache and reasoning tokens differently. Some include cached tokens inside input totals; some split cache reads and writes; some include reasoning in output; some expose it separately; some do not expose it. Missing values are `null`, not zero. Never sum overlapping fields. Cross-provider token or cost rankings are therefore descriptive and qualified. Efficiency inference relies primarily on paired comparisons within the exact same model/version/runtime.
 
@@ -874,11 +886,13 @@ Exit criteria:
 | Kubernetes target | `ryanw-aks` / `ryanw-rg` / Test account | User-selected; access/setup unverified |
 | Package source | CFS proxy only, single index, installed at image build time | Required; machine configuration verified |
 | Go modules | Public proxy at build time, no vendoring | Declared exception; no internal proxy reachable |
-| Python runtime | 3.12 | Recommended |
-| Dependency pins | `inspect-ai==0.3.263`, `github-copilot-sdk==1.0.13` | Verified installable via CFS; SDK/CLI compatibility unverified |
+| Python runtime | 3.12 | Recommended; `>=3.12,<3.13` |
+| Dependency pins | `inspect-ai==0.3.263`, `github-copilot-sdk==1.0.13` | Verified installable via CFS |
+| Agent CLI runtime | SDK-pinned CLI, not the host CLI | Recommended; both pairings verified working |
+| Shell tool | Denied by default; permitted only inside the container boundary | Required; permission API cannot confine shell |
 | Human review | Optional, blinded, separate from deterministic score | Recommended |
 
-Before Phase 1 implementation, choose the initial models, exact budgets, Inspect and Copilot SDK/CLI versions, structured output schema, and usage normalization policy. Confirm that the pinned Copilot SDK and the installed Copilot CLI are compatible, since CFS quarantine may prevent pinning the newest SDK. Before Phase 5, verify Azure access and select the Kubernetes/Radius deployment configuration.
+Before Phase 1 implementation, choose the initial models, exact budgets, and the structured output schema. The Copilot SDK drives its own pinned CLI unless explicitly pointed at another binary; pinning the SDK-supplied CLI is preferred because it removes host machine state from the reproducibility surface, and both versions are recorded separately so a result cannot be misattributed. Before Phase 5, verify Azure access and select the Kubernetes/Radius deployment configuration.
 
 ## What this experiment can and cannot claim
 
