@@ -210,6 +210,22 @@ Trial containers should therefore have no egress to package registries, and the 
 
 Container base images prefer Microsoft Container Registry equivalents where they exist. Where no equivalent exists, images are pinned by digest as already required, and the absence of an equivalent is recorded.
 
+At the time of writing, MCR provides builder, distroless runtime, and Prometheus equivalents, but provides no MySQL or Valkey image. Those two remain on Docker Hub, pinned by digest. An MCR Redis mirror exists but is stale and is deliberately not adopted, because swapping the cache implementation to chase a base image would change the application under test for marginal benefit.
+
+### Declared exception: Go modules
+
+Go is not covered by the CFS controls above, and this exception is recorded rather than left implicit.
+
+- Public `proxy.golang.org` and `sum.golang.org` are reachable and are not blocked by current device policy, which covers npm, PyPI, and NuGet.
+- Go is not yet under CFS quarantine. Quarantine covers npm, NuGet, and PyPI, with Maven next and Cargo and Go listed as future onboarding.
+- An internal centralized Go module proxy exists, built on Athens, but it is enabled through 1ES Pipeline Templates and OneBranch feature flags rather than exposed as a generally reachable endpoint. It is not available to this repository.
+
+Go module download therefore occurs at image build time against the public proxy, outside scored trials. Module integrity rests on `go.sum` verification, and builds use a read-only module mode and a pinned toolchain. Modules are pre-populated into a builder layer so the application build itself resolves nothing from the network.
+
+Vendoring is deliberately rejected. Committing a vendor tree would enlarge the fixture the agent explores during trials, changing exploration cost and task difficulty in order to satisfy a requirement that policy does not impose.
+
+Revisit this exception if Go onboards to CFS quarantine, if an internally reachable Go proxy becomes available to this repository, or if the benchmark moves into a 1ES pipeline.
+
 ## Repository fixture and workspace isolation
 
 The Copilot agent must **never** run against the benchmark-development checkout or the full public `radius-performance-demo` repository during a scored trial. That repository contains experiment plans, public scenario concepts, expected diagnoses and remediations, harness code, result formats, and eventually scenario and orchestration files. Exposing it would create answer leakage and allow the agent to modify the benchmark control plane.
@@ -857,6 +873,7 @@ Exit criteria:
 | Models | 2-3 models available in the user's Copilot account | Unresolved |
 | Kubernetes target | `ryanw-aks` / `ryanw-rg` / Test account | User-selected; access/setup unverified |
 | Package source | CFS proxy only, single index, installed at image build time | Required; machine configuration verified |
+| Go modules | Public proxy at build time, no vendoring | Declared exception; no internal proxy reachable |
 | Python runtime | 3.12 | Recommended |
 | Dependency pins | `inspect-ai==0.3.263`, `github-copilot-sdk==1.0.13` | Verified installable via CFS; SDK/CLI compatibility unverified |
 | Human review | Optional, blinded, separate from deterministic score | Recommended |
