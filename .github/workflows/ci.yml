@@ -24,3 +24,29 @@ jobs:
         run: go test ./...
       - name: Build
         run: go build ./...
+
+  python:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: benchmark
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compose trial driver tests
+        # Run with the stdlib only, deliberately. The driver package has zero
+        # runtime dependencies, so these tests need no package index and no
+        # Docker daemon, and therefore cannot be broken by a mirror outage.
+        #
+        # The rest of the suite (tests importing github-copilot-sdk and
+        # inspect-ai) is NOT run here yet. Installing it needs the CFS proxy,
+        # which requires authentication -- it answers 401 to an unauthenticated
+        # request -- so a GitHub-hosted runner cannot reach it as configured.
+        # Wiring that up needs a credential decision that belongs with the
+        # instrumentation increment; until then those tests run locally only,
+        # and this job covers what it can honestly cover rather than being
+        # permanently red.
+        run: python -m unittest tests.test_driver -v
+
