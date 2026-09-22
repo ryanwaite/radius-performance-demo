@@ -421,6 +421,8 @@ This failure mode decays rather than announcing itself. As the surrounding harne
 
 This applies to the isolation gate, the hidden scenario validators, the patch-scope rejection checks, and the committed-configuration leakage scan.
 
+The same rule governs negative build and runtime tests, where the usual failure is that the setup did not do what the author believed. A test asserting that a build fails without network access passed while the cache-eviction step silently removed nothing, because the module cache lived at a different path than assumed; the build succeeded from a populated cache and the result was nearly recorded as proof of failing closed. Every negative test therefore carries a positive control demonstrating that the mechanism under test was actually engaged, and the control is asserted rather than inspected by hand.
+
 ## Scenarios and task modes
 
 ### MVP scenarios
