@@ -34,6 +34,15 @@ class LoadProfile:
     product_ids: int = 10
     request_timeout_seconds: float = 10.0
 
+    # A request is a "stall" when it exceeds this multiple of the phase's own
+    # median latency. The median is used rather than a fixed threshold so the
+    # definition self-calibrates to each phase: the healthy phase runs at ~29ms
+    # and the incident phase at ~506ms, and a single absolute bound could not
+    # describe both. 3x sits far above normal jitter in both phases (measured
+    # maxima are ~1.4x the median) and still catches the 1.85s outlier that
+    # distorted an early ten-cycle run.
+    stall_factor: float = 3.0
+
     def to_dict(self) -> dict[str, float | int | str]:
         return {
             "name": self.name,
@@ -44,6 +53,7 @@ class LoadProfile:
             "listLimit": self.list_limit,
             "productIds": self.product_ids,
             "requestTimeoutSeconds": self.request_timeout_seconds,
+            "stallFactor": self.stall_factor,
         }
 
 
@@ -74,6 +84,10 @@ class LoadResult:
     latency_mean_seconds: float
     latency_max_seconds: float
     error_rate: float
+    stall_threshold_seconds: float
+    stall_count: int
+    stall_rate: float
+    stall_latencies_seconds: tuple[float, ...] = ()
     status_counts: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
@@ -97,8 +111,32 @@ class LoadResult:
             "latencyMeanSeconds": self.latency_mean_seconds,
             "latencyMaxSeconds": self.latency_max_seconds,
             "errorRate": self.error_rate,
+            "stalls": {
+                "thresholdSeconds": self.stall_threshold_seconds,
+                "count": self.stall_count,
+                "rate": self.stall_rate,
+                "latenciesSeconds": list(self.stall_latencies_seconds),
+            },
             "statusCounts": dict(self.status_counts),
         }
+
+
+def detect_stalls(
+    latencies: list[float], factor: float
+) -> tuple[float, list[float]]:
+    """Classify requests that exceed ``factor`` times the median latency.
+
+    The threshold is relative to the sample's own median so that the same
+    definition applies to a 29ms healthy phase and a 506ms incident phase. A
+    stall is strictly greater than the threshold, so a perfectly uniform
+    sample yields none.
+    """
+    if not latencies:
+        return math.nan, []
+    threshold = percentile(latencies, 0.50) * factor
+    return threshold, sorted(
+        (value for value in latencies if value > threshold), reverse=True
+    )
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -204,6 +242,13 @@ def run_load(base_url: str, profile: LoadProfile) -> LoadResult:
         status_counts[key] = status_counts.get(key, 0) + 1
 
     window = max(measured_end - measured_start, 1e-9)
+
+    # Stalls are counted directly rather than left to show up as variance in the
+    # averaged throughput. Widening the measurement window makes throughput
+    # robust to a rare stall, which is the point, but it also means a rising
+    # stall rate would be quietly absorbed. Counting them restores that signal.
+    stall_threshold, stalls = detect_stalls(latencies, profile.stall_factor)
+
     return LoadResult(
         profile=profile,
         started_at=started_at,
@@ -222,5 +267,9 @@ def run_load(base_url: str, profile: LoadProfile) -> LoadResult:
         latency_mean_seconds=statistics.fmean(latencies) if latencies else math.nan,
         latency_max_seconds=max(latencies) if latencies else math.nan,
         error_rate=(len(errors) / len(measured)) if measured else math.nan,
+        stall_threshold_seconds=stall_threshold,
+        stall_count=len(stalls),
+        stall_rate=(len(stalls) / len(measured)) if measured else math.nan,
+        stall_latencies_seconds=tuple(stalls[:10]),
         status_counts=status_counts,
     )

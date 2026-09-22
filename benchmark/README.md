@@ -274,6 +274,32 @@ two come from Docker Hub and are digest-pinned. This is a known gap, not an over
 The Python package itself has **zero runtime dependencies** — stdlib only — so it needs
 no package index at all. Tests use stdlib `unittest` for the same reason.
 
+The Go build is hermetic in both halves: `go mod download` primes the module cache in a
+layer keyed only on `go.mod`/`go.sum`, and the compile step then runs with `GOPROXY=off`
+so an incomplete cache fails the build instead of quietly reaching the network.
+`GOTOOLCHAIN` is pinned exactly rather than left at `auto`, which would otherwise fetch
+a different toolchain on demand.
+
+`scripts/verify-hermetic-build.sh` proves this rather than asserting it, and it is worth
+reading as an example of how the check can lie. Negative tests pass for the wrong reason
+very easily, and this one did — three times:
+
+1. The eviction step wrote to `/root/go/pkg/mod`, but `GOMODCACHE` in the MCR image is
+   `/go/pkg/mod`. The `rm` was a no-op and the cache stayed intact.
+2. Asserting the cache directory was *empty after* the `rm` did not catch that, because
+   `mkdir -p` produces an empty directory at any path, correct or not.
+3. Grepping the build log for the control's marker matched the `RUN` command text that
+   `--progress=plain` echoes, not the command's output — so the control reported itself
+   armed on a step that never ran.
+
+What holds now: the control asserts the cache was **populated before** it was removed
+(the only version of the check that a wrong path cannot satisfy), the marker literals
+are split across a string concatenation so the grep can only match real output, and the
+build failure must carry the specific `module lookup disabled by GOPROXY=off` error —
+any other failure is reported as inconclusive rather than as a pass. Re-running the
+script with `GOMODCACHE` deliberately pointed at the wrong path makes it fail with
+"positive control not armed", which is how the above was confirmed.
+
 Two consequences of the distroless choice are worth knowing before editing
 `compose/base.yml`: the Prometheus image has no shell and no `wget`, so its healthcheck
 uses `promtool check ready`; and the catalog-api image has no shell at all, so its
@@ -339,6 +365,33 @@ variance is written down rather than assumed.
 
 Tolerances live in `trials.py::DECLARED_TOLERANCES`, each with a stated rationale.
 Measured values from the ten-cycle run are in the pull request description.
+
+### Stalls are gated separately, on purpose
+
+The first ten-cycle suite failed on `incident.throughputRps` variance: one cycle
+contained a single 1.85s request against a 0.51s normal maximum. With `pool=2` that
+outlier halves capacity while it lasts, costing 14 of 176 requests — 8% of the window,
+and a 2.536% coefficient of variation against a declared 1.0%.
+
+The fix was to widen the incident measurement window from 22s to 80s, because the
+estimator was too small to be stable, not because the bound was too tight. But a wider
+window also *dilutes* the stall: the same event moves a 640-sample window by 2% instead
+of 8%. Left there, we would have traded a noisy true signal for a quiet blind spot —
+the same mistake as reading a 0.000% coefficient of variation as stability when it was
+really insensitivity.
+
+So stalls are now counted and bounded directly. A stall is a request exceeding
+`stall_factor` (3x) times its own phase's median latency; the threshold is relative
+because the healthy phase runs at ~29ms and the incident phase at ~506ms, and no single
+absolute number describes both. `MAX_STALL_RATE` (0.5%) bounds the rate per phase, and
+`determinism-report.json` carries a `stallBudget` block with per-cycle occurrences and
+their magnitudes, so a rare event stays visible as a discrete occurrence rather than
+being averaged into the background.
+
+This matters most for the case throughput variance cannot see at all: a stall rate that
+is *uniformly* elevated across every cycle degrades all of them equally, so the
+coefficient of variation reads 0.000% while the environment is measurably worse.
+`tests/test_driver.py::StallDetectionTests` asserts exactly that scenario.
 
 ### A note on the cache
 

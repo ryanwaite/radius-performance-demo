@@ -93,6 +93,55 @@ DRIFT_SENSITIVE_METRICS: tuple[str, ...] = (
     "healthy.latencyP95Seconds",
 )
 
+# Stall rate is gated separately from the CV tolerances, for the same reason
+# as the error budget: its expected value is ~0, so a coefficient of
+# variation says nothing useful about it.
+#
+# This exists because widening the incident window from 22s to 80s made
+# throughput robust to a rare stall -- which was the goal -- but in doing so
+# it also made a *rising* stall rate invisible: the same event that moved a
+# 176-sample window by 8% moves a 640-sample window by 2%. Trading a noisy
+# true signal for a quiet blind spot is the mistake that the 0.000% pinned CV
+# already taught us once, so stalls are measured directly instead.
+#
+# Observed baseline: 1 stall across 10 cycles of ~176 requests (~0.057%).
+# 0.5% per phase is roughly 9x that, so it tolerates the known rate while
+# still failing if stalls become common.
+MAX_STALL_RATE = 0.005
+
+# Recorded rather than smoothed away. One cycle of the first ten-cycle suite
+# contained a single 1.85s request against a 0.51s normal maximum, and the
+# mechanism is still unknown. It is reported with every suite so that a reader
+# is not left to infer determinism we have not demonstrated.
+#
+# What the attribution attempt showed: driving 1816 incident requests -- four
+# times a normal cycle -- while independently probing /healthz, which does no
+# database work, produced no catalog stall at all (max 0.536s against a 0.506s
+# median). The probe's own maximum over 4248 samples was 21ms, so there was no
+# sub-application pause anywhere near 1.85s during steady operation. That rules
+# out continuous background jitter as the cause, but it does not attribute the
+# event, because the event did not recur.
+#
+# Consequence for the experiment: if this happens during a scored trial, an
+# agent could legitimately observe and diagnose a latency spike that we did not
+# inject. The stall-rate gate bounds how often that can happen without the
+# suite failing; it does not prevent it.
+UNEXPLAINED_STALL = {
+    "status": "unexplained",
+    "observedMagnitudeSeconds": 1.85,
+    "phaseNormalMaxSeconds": 0.51,
+    "frequency": "1 occurrence across 10 cycles (~1760 measured requests)",
+    "attribution": "not reproduced in a 1816-request diagnostic window",
+    "ruledOut": (
+        "continuous sub-application pause: a concurrent database-free /healthz "
+        "probe peaked at 21ms over 4248 samples spanning 240s"
+    ),
+    "openRisk": (
+        "a scored trial may contain a latency spike we did not inject, which an "
+        "agent could diagnose as a real fault"
+    ),
+}
+
 
 @dataclass(frozen=True)
 class Tolerance:
@@ -287,6 +336,12 @@ def run_cycle(
             "incident.latencyP50Seconds": incident_phase.load.latency_p50_seconds,
             "incident.latencyP95Seconds": incident_phase.load.latency_p95_seconds,
             "incident.errorRate": incident_phase.load.error_rate,
+            "healthy.stallRate": healthy.load.stall_rate,
+            "incident.stallRate": incident_phase.load.stall_rate,
+            "healthy.stallCount": float(healthy.load.stall_count),
+            "incident.stallCount": float(incident_phase.load.stall_count),
+            "healthy.latencyMaxSeconds": healthy.load.latency_max_seconds,
+            "incident.latencyMaxSeconds": incident_phase.load.latency_max_seconds,
             "incident.promHttpP95Seconds": incident_phase.telemetry.value("httpP95Seconds")
             or math.nan,
             "incident.promMysqlP95Seconds": incident_phase.telemetry.value("mysqlP95Seconds")
@@ -441,6 +496,49 @@ def run_suite(
         ),
     }
 
+    # Per-cycle stall detail is kept rather than averaged, so that a rare event
+    # stays visible as a discrete occurrence with a magnitude and a frequency.
+    stall_observations = [
+        {
+            "cycleId": c.cycle_id,
+            "phase": phase,
+            "count": int(c.metrics.get(f"{phase}.stallCount", 0) or 0),
+            "maxLatencySeconds": c.metrics.get(f"{phase}.latencyMaxSeconds"),
+        }
+        for c in successful
+        for phase in ("healthy", "incident")
+        if int(c.metrics.get(f"{phase}.stallCount", 0) or 0) > 0
+    ]
+
+    stall_rates = {
+        name: variance.get(name, {}).get("max", math.nan)
+        for name in ("healthy.stallRate", "incident.stallRate")
+    }
+    stall_budget = {
+        "maxStallRate": MAX_STALL_RATE,
+        "observedMaxRate": stall_rates,
+        "totalStalls": {
+            name: sum(
+                int(c.metrics.get(name, 0) or 0)
+                for c in successful
+            )
+            for name in ("healthy.stallCount", "incident.stallCount")
+        },
+        "observations": stall_observations,
+        "withinBudget": bool(
+            all(
+                not math.isnan(value) and value <= MAX_STALL_RATE
+                for value in stall_rates.values()
+            )
+        ),
+        "note": (
+            "A stall is a request exceeding 3x its phase's median latency. Gated "
+            "directly because the widened measurement window deliberately dilutes "
+            "individual stalls out of the throughput estimate."
+        ),
+        "unexplainedObservation": UNEXPLAINED_STALL,
+    }
+
     error_rates = {
         name: variance.get(name, {}).get("max", math.nan)
         for name in ("healthy.errorRate", "incident.errorRate")
@@ -463,6 +561,7 @@ def run_suite(
         and all(entry["withinTolerance"] for entry in tolerance_report)
         and degradation["incidentDegradedPerformance"]
         and error_budget["withinBudget"]
+        and stall_budget["withinBudget"]
     )
 
     report = {
@@ -474,6 +573,7 @@ def run_suite(
         "dockerVersions": daemon_info(),
         "degradation": degradation,
         "errorBudget": error_budget,
+        "stallBudget": stall_budget,
         "structuralExpectations": structural_report,
         "driftSensitivity": drift_report,
         "tolerances": tolerance_report,

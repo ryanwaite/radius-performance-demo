@@ -33,7 +33,11 @@ from radius_perf_eval.incidents import (  # noqa: E402
     IncidentVerification,
     VerificationCheck,
 )
-from radius_perf_eval.load import LoadProfile, percentile  # noqa: E402
+from radius_perf_eval.load import (  # noqa: E402
+    LoadProfile,
+    detect_stalls,
+    percentile,
+)
 from radius_perf_eval.manifest import (  # noqa: E402
     EnvironmentManifest,
     canonical_json,
@@ -46,7 +50,9 @@ from radius_perf_eval.trials import (  # noqa: E402
     DRIFT_SENSITIVE_METRICS,
     INCIDENT_PROFILE,
     MAX_ERROR_RATE,
+    MAX_STALL_RATE,
     STRUCTURAL_EXPECTATIONS,
+    UNEXPLAINED_STALL,
     summarise,
 )
 
@@ -456,3 +462,117 @@ class DeterminismReportingTests(unittest.TestCase):
         stats = summarise([0.0, 0.0, 0.0])
         self.assertEqual(stats["cvPercent"], 0.0)
         self.assertFalse(math.isinf(stats["cvPercent"]))
+
+
+class StallDetectionTests(unittest.TestCase):
+    """Stalls are gated directly, so the detector itself needs a real test.
+
+    Each negative assertion below is paired with a positive control that
+    proves the detector would have fired had a stall been present. A silent
+    detector and a clean environment produce identical output otherwise.
+    """
+
+    def test_uniform_sample_has_no_stalls(self) -> None:
+        threshold, stalls = detect_stalls([0.5] * 200, 3.0)
+        self.assertEqual(stalls, [])
+        self.assertAlmostEqual(threshold, 1.5)
+
+        # Positive control: the same detector, same threshold, one bad sample.
+        _, controls = detect_stalls([0.5] * 199 + [1.6], 3.0)
+        self.assertEqual(controls, [1.6])
+
+    def test_healthy_phase_jitter_is_not_a_stall(self) -> None:
+        # Measured healthy phase: median ~29ms, max ~42ms (1.4x the median).
+        observed = [0.029] * 400 + [0.042, 0.038, 0.035]
+        threshold, stalls = detect_stalls(observed, 3.0)
+        self.assertEqual(stalls, [])
+        self.assertGreater(threshold, 0.042)
+
+        _, controls = detect_stalls(observed + [0.1], 3.0)
+        self.assertEqual(controls, [0.1])
+
+    def test_detects_the_observed_incident_stall(self) -> None:
+        # The 1.85s outlier from the first ten-cycle suite, against that
+        # phase's measured 0.506s median.
+        observed = [0.506] * 175 + [1.85]
+        threshold, stalls = detect_stalls(observed, 3.0)
+        self.assertEqual(stalls, [1.85])
+        self.assertLess(threshold, 1.85)
+
+    def test_stall_threshold_scales_with_phase_median(self) -> None:
+        fast, _ = detect_stalls([0.029] * 10, 3.0)
+        slow, _ = detect_stalls([0.506] * 10, 3.0)
+        self.assertLess(fast, slow)
+        # A single absolute threshold could not serve both phases: the
+        # incident phase's *normal* latency exceeds the healthy threshold.
+        self.assertGreater(0.506, fast)
+
+    def test_stalls_are_ordered_worst_first(self) -> None:
+        _, stalls = detect_stalls([0.5] * 50 + [2.0, 5.0, 3.0], 3.0)
+        self.assertEqual(stalls, [5.0, 3.0, 2.0])
+
+    def test_empty_sample_is_not_silently_clean(self) -> None:
+        threshold, stalls = detect_stalls([], 3.0)
+        self.assertTrue(math.isnan(threshold))
+        self.assertEqual(stalls, [])
+
+    def test_stall_rate_bound_is_above_observed_baseline(self) -> None:
+        # 1 stall in 10 cycles of ~176 measured requests.
+        observed_baseline = 1 / (10 * 176)
+        self.assertGreater(MAX_STALL_RATE, observed_baseline)
+        # ...but still tight enough to fail on a materially worse rate.
+        self.assertLess(MAX_STALL_RATE, 0.01)
+
+    def test_uniform_stall_rate_is_invisible_to_throughput_variance(self) -> None:
+        """The blind spot the stall gate exists to close.
+
+        Throughput variance only reacts to stalls that fall unevenly across
+        cycles. A stall rate that is uniformly elevated degrades every cycle
+        equally, so the coefficient of variation reads 0.000% -- perfectly
+        stable, and perfectly wrong. This is the same insensitivity that made
+        the structurally pinned metrics look reassuring.
+        """
+        # Each stall costs ~14 requests of a 640-request window (pool=2 is
+        # halved for the stall's duration).
+        degraded = [640 - 8 * 14] * 10
+        throughput = summarise(degraded)
+        self.assertEqual(throughput["cvPercent"], 0.0)
+
+        tolerance = next(
+            t for t in DECLARED_TOLERANCES if t.metric == "incident.throughputRps"
+        )
+        self.assertLess(throughput["cvPercent"], tolerance.max_cv_percent)
+
+        # The direct bound catches what the variance bound cannot.
+        self.assertGreater(8 / 640, MAX_STALL_RATE)
+
+    def test_single_known_stall_stays_within_both_bounds(self) -> None:
+        # The observed baseline -- 1 stall in 1 of 10 cycles -- must not fail
+        # the suite, or the gate is merely a tripwire for normal behaviour.
+        throughput = summarise([640] * 9 + [640 - 14])
+        tolerance = next(
+            t for t in DECLARED_TOLERANCES if t.metric == "incident.throughputRps"
+        )
+        self.assertLess(throughput["cvPercent"], tolerance.max_cv_percent)
+        self.assertLess(1 / 640, MAX_STALL_RATE)
+
+    def test_stall_metrics_are_drift_sensitive_not_structurally_pinned(self) -> None:
+        pinned = set(STRUCTURAL_EXPECTATIONS)
+        self.assertNotIn("incident.stallRate", pinned)
+        self.assertNotIn("healthy.stallRate", pinned)
+
+
+class UnexplainedObservationTests(unittest.TestCase):
+    """The suite must keep reporting what we could not explain."""
+
+    def test_unexplained_stall_is_recorded_not_smoothed(self) -> None:
+        record = UNEXPLAINED_STALL
+        self.assertEqual(record["status"], "unexplained")
+        # Magnitude and frequency both present: either alone is unactionable.
+        self.assertGreater(record["observedMagnitudeSeconds"], record["phaseNormalMaxSeconds"])
+        self.assertIn("10 cycles", record["frequency"])
+
+    def test_unexplained_stall_names_the_experimental_risk(self) -> None:
+        # The reason this is not merely a determinism footnote: an agent under
+        # test could diagnose a fault we never injected.
+        self.assertIn("did not inject", UNEXPLAINED_STALL["openRisk"])
