@@ -14,8 +14,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-# Files that define the environment. Their combined digest is the fixtureHash;
+# Everything that defines a trial. Their combined digest is the fixtureHash;
 # a change to any of them is a new environment version, not a drifting one.
+#
+# This deliberately covers more than the container build. An earlier version
+# hashed six files -- the Dockerfile, the Go module files, the seed SQL and the
+# Prometheus config -- and called the result a fixture hash, while the
+# application source, the driver, the load profiles, the incident definition
+# and the Compose template could all change without moving it. Two runs could
+# then report the same fixtureHash while measuring different things, which is
+# the one job the field has.
 FIXTURE_PATHS: tuple[str, ...] = (
     "Dockerfile",
     "go.mod",
@@ -24,6 +32,32 @@ FIXTURE_PATHS: tuple[str, ...] = (
     "deploy/mysql/init/002-seed.sql",
     "deploy/prometheus/prometheus.yml",
 )
+
+# Directory trees walked recursively, filtered to the suffixes below so that
+# build output and caches cannot perturb the digest.
+FIXTURE_TREES: tuple[str, ...] = (
+    "cmd",
+    "internal",
+    "benchmark/radius_perf_eval",
+)
+
+FIXTURE_SUFFIXES: frozenset[str] = frozenset({".go", ".py", ".yml", ".yaml", ".sql"})
+
+
+def fixture_files(root: Path) -> list[str]:
+    """Every file contributing to the fixture hash, as sorted relative paths."""
+    found = list(FIXTURE_PATHS)
+    for tree in FIXTURE_TREES:
+        base = root / tree
+        if not base.is_dir():
+            raise FileNotFoundError(f"fixture tree missing: {base}")
+        for path in base.rglob("*"):
+            if not path.is_file() or path.suffix not in FIXTURE_SUFFIXES:
+                continue
+            if "__pycache__" in path.parts:
+                continue
+            found.append(str(path.relative_to(root)))
+    return sorted(set(found))
 
 
 def hash_file(path: Path) -> str:
@@ -38,12 +72,15 @@ def hash_text(text: str) -> str:
     return f"sha256:{hashlib.sha256(text.encode('utf-8')).hexdigest()}"
 
 
-def hash_fixture(root: Path, relpaths: Iterable[str] = FIXTURE_PATHS) -> tuple[str, dict[str, str]]:
+def hash_fixture(
+    root: Path, relpaths: Iterable[str] | None = None
+) -> tuple[str, dict[str, str]]:
     """Content-address the environment-defining files.
 
     Returns the combined digest and the per-file digests it was computed from,
     so a mismatch can be localised instead of merely reported.
     """
+    relpaths = fixture_files(root) if relpaths is None else relpaths
     per_file: dict[str, str] = {}
     for relpath in sorted(relpaths):
         candidate = root / relpath

@@ -138,8 +138,16 @@ statically for absolute, `~`, and `..` path tokens.
 probes are observations, never assertions, and are excluded from
 `allFailedClosed` so a lucky denial cannot read as proof.
 
-Real filesystem confinement requires the container mount boundary, which makes
-the Compose increment a security control rather than a convenience.
+Real filesystem confinement requires a sandbox that the agent's own processes run
+inside. **The Compose environment in Increment 2 is not that sandbox**, and an
+earlier version of this file said it was. The Copilot CLI and its tools run as
+host processes against a host temporary directory; the containers hold the
+application under test, not the agent. Their mounts bound what the *application*
+can reach, which is worth having for the data plane, but they say nothing about
+what an agent shell can reach.
+
+No agent sandbox exists yet. Shell-enabled scored runs stay blocked until one
+does.
 
 ### Confinement is a run gate, not a metric
 
@@ -321,6 +329,13 @@ does not claim a blanket egress block it cannot deliver.
 
 The Docker socket is never mounted into any container.
 
+**None of this confines an agent.** Everything in this section bounds the
+*application* containers — what the data tier can reach, what the driver
+publishes, what is mounted where. The Copilot CLI and its tools run as host
+processes, outside all of it. Read the network posture and mount audit as
+properties of the fixture's data plane, not as a security boundary around the
+thing being evaluated.
+
 ### Credentials
 
 MySQL passwords are generated per run with `secrets.token_hex(16)`, prefixed and
@@ -354,6 +369,27 @@ Run the Docker-free tests with:
 ```bash
 cd /path/to/repo && python3.12 -m unittest discover -s benchmark/tests -t benchmark
 ```
+
+### Every measured cycle is the same experiment
+
+A suite runs in three parts, and only the third is measured:
+
+1. **Setup** — pull and build every image. Unmeasured.
+2. **Warm-up** — one or more full cycles, identical to the measured ones, results
+   discarded. These absorb page-cache and layer-cache effects the setup phase does not.
+3. **Measured** — ten identical cycles, pulling disabled on all of them.
+
+This is not ceremony. An earlier version pulled images on cycle 1 only, which made it a
+cold start rather than a repetition, and the numbers show it plainly:
+
+| cycle | healthy rps | healthy max | healthy stalls | incident max |
+|---|---|---|---|---|
+| 1 | 226.3 | 0.536s | 58 (1.709%) | 1.010s |
+| 2–8 | 273.6–274.8 | 0.039–0.044s | 0 | 0.513s |
+
+Cycle 1 breached the 0.5% stall budget on its own, and averaging it with nine warm
+cycles described a population that does not exist. `determinism-report.json` records the
+setup and warm-up cycles under `unmeasured` so the distinction is auditable.
 
 ### Exit criterion
 
@@ -392,6 +428,18 @@ This matters most for the case throughput variance cannot see at all: a stall ra
 is *uniformly* elevated across every cycle degrades all of them equally, so the
 coefficient of variation reads 0.000% while the environment is measurably worse.
 `tests/test_driver.py::StallDetectionTests` asserts exactly that scenario.
+
+Two further guards, because the relative rule has its own blind spot. A uniformly slower
+environment raises its own threshold along with the median and can report zero stalls
+while being obviously worse, so each phase also carries a **frozen absolute bound**
+(100ms healthy, 1.0s incident) and the report counts excursions past it. And the full
+sorted latency sample is written to every cycle's `measurements.json`, so later analysis
+can re-derive any threshold rather than inheriting the one chosen here.
+
+The stall definition, the 3x factor and the 0.5% budget were all fitted **after** seeing
+the first ten-cycle result. They are frozen in `GATE_PRE_REGISTRATION` and echoed into
+every report, and the holdout run changed nothing between freeze and execution — so the
+holdout tests the gate rather than continuing to fit it.
 
 ### A note on the cache
 

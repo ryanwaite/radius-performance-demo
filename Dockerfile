@@ -14,7 +14,10 @@
 # this repository does not use. Revisit if Go onboards to CFS or this repo
 # moves into a 1ES pipeline. go.sum gives cryptographic verification of every
 # module in the meantime.
-FROM mcr.microsoft.com/oss/go/microsoft/golang:1.23-bookworm AS build
+# Digest-pinned: MCR tags move, and a builder that changes underneath the
+# experiment changes the fixture. The tag is kept beside the digest only as
+# a human-readable label.
+FROM mcr.microsoft.com/oss/go/microsoft/golang:1.23-bookworm@sha256:97e44f3c610d5fd44e0d2bd86bd533b48151488d18cdd53032af0c65a4f7af24 AS build
 
 # Pinned exactly rather than left at "auto", which would silently download a
 # different toolchain if go.mod asked for one: a network fetch during the
@@ -37,7 +40,8 @@ COPY . .
 RUN GOPROXY=off CGO_ENABLED=0 GOOS=linux \
     go build -trimpath -ldflags="-s -w" -o /out/catalog-api ./cmd/catalog-api
 
-FROM mcr.microsoft.com/azurelinux/distroless/base:3.0
+# Digest-pinned for the same reason as the builder above.
+FROM mcr.microsoft.com/azurelinux/distroless/base:3.0@sha256:4377af4aa7a810b7d59f691eae5066895a71aa3eee4cfb4eba527bbebff16479
 COPY --from=build /out/catalog-api /catalog-api
 EXPOSE 8080
 USER 65532:65532

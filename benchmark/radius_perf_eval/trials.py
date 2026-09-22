@@ -30,6 +30,11 @@ HEALTHY_PROFILE = LoadProfile(
     duration_seconds=20.0,
     warmup_seconds=5.0,
     seed=1842,
+    # Pre-registered, frozen before the holdout run. Warm steady state is a
+    # 29ms median with a 44ms maximum; 100ms is ~3.4x the median and well clear
+    # of normal jitter. Cold-start cycles breach it heavily (max 536ms), which
+    # is the point -- it is what caught cycle 1 not being a repetition.
+    absolute_excursion_seconds=0.100,
 )
 
 INCIDENT_PROFILE = LoadProfile(
@@ -43,22 +48,26 @@ INCIDENT_PROFILE = LoadProfile(
     # saturated (any value >= pool size does) so throughput still pins at 8 rps,
     # while holding p50 near 0.5s with roughly 6x headroom under the timeout.
     concurrency=4,
+    duration_seconds=80.0,
     # A 22s window at 8 rps yields only ~176 samples, which makes the throughput
     # estimator coarse: a ten-cycle run showed one cycle at 7.27 rps against a
     # 7.91 rps mode, traced to a single 1.85s stall (normal max latency is
-    # 0.51s). With pool=2 one slow query halves capacity while it lasts, so that
-    # single event cost 14 requests, i.e. 8% of the window, and a modelled CV of
-    # 2.536% -- matching the 2.536% actually measured.
+    # 0.51s). With pool=2 one slow query halves capacity while it lasts, so a
+    # single stall costs ~14 requests -- 8% of a 176-sample window, and a 2.536%
+    # coefficient of variation on its own.
     #
-    # Widening the window is the honest fix: it reduces the estimator's exposure
-    # to a rare stall without hiding the stall, which still shows in p95/p99.
-    # At an 80s window (~640 samples) the same stall costs 2.2%, giving a
-    # modelled CV of 0.693% for one stall and 0.95% for two -- both inside the
-    # declared 1.5%. A 50s window was rejected because two stalls in ten cycles
-    # would model at 1.52% and breach the bound.
-    duration_seconds=90.0,
+    # Sizing the window against that model: 22s/176 samples gives 2.536% for one
+    # stall; 50s/400 samples gives 1.111% for one but 1.52% for two, which
+    # breaches the 1.5% bound; 80s/640 samples gives 0.693% for one and 0.95%
+    # for two. So 80s, and the stall itself is gated separately rather than
+    # being left to show up as throughput variance.
     warmup_seconds=10.0,
     seed=1842,
+    # Pre-registered, frozen before the holdout run. Warm steady state is a
+    # 506ms median with a 513ms maximum, so 1.0s is roughly 2x the median and
+    # ~1.95x the observed maximum. The cold-start cycle reached 1.010s and
+    # trips it; every warm cycle sits far below.
+    absolute_excursion_seconds=1.000,
 )
 
 # Analytic expectations, used to distinguish "this metric is structurally
@@ -126,6 +135,25 @@ MAX_STALL_RATE = 0.005
 # agent could legitimately observe and diagnose a latency spike that we did not
 # inject. The stall-rate gate bounds how often that can happen without the
 # suite failing; it does not prevent it.
+# The stall definition, threshold and budget were chosen after seeing the
+# first ten-cycle result, which makes them fitted rather than predictive. They
+# are frozen here and recorded in every report so that the holdout run is a
+# test of them rather than a continuation of the fitting.
+GATE_PRE_REGISTRATION = {
+    "frozenBefore": "phase2-holdout",
+    "stallDefinition": "latency > stall_factor * phase median latency",
+    "stallFactor": 3.0,
+    "maxStallRate": 0.005,
+    "absoluteExcursionSeconds": {"healthy": 0.100, "incident": 1.000},
+    "fittedOn": "phase2-10x (10 cycles) and a contaminated phase2-final (8 cycles)",
+    "note": (
+        "Fitted on earlier runs, then frozen. The holdout run changed nothing "
+        "between freeze and execution. Raw latency distributions are kept per "
+        "cycle so any later analysis can re-derive a different threshold "
+        "instead of inheriting this one."
+    ),
+}
+
 UNEXPLAINED_STALL = {
     "status": "unexplained",
     "observedMagnitudeSeconds": 1.85,
@@ -168,8 +196,8 @@ DECLARED_TOLERANCES: tuple[Tolerance, ...] = (
             "Pinned by pool size / read delay (2 / 0.25s = 8.0 rps) rather than by host "
             "capacity. A 3-cycle calibration read 0.000% CV, which flattered the harness; "
             "over 10 cycles it was 2.536%, because a single 1.85s stall in one cycle cost "
-            "8% of a 174-sample window. The window is now 50s (~400 samples), which bounds "
-            "one such stall to under 1%. 1.5% covers that plus a second stall, and is not "
+            "8% of a 176-sample window. The window is now 80s (~640 samples), which bounds "
+            "one such stall to 0.693% and two to 0.95%. 1.5% covers both, and is not "
             "evidence of harness stability -- see DRIFT_SENSITIVE_METRICS for that."
         ),
     ),
@@ -341,6 +369,10 @@ def run_cycle(
             "healthy.stallCount": float(healthy.load.stall_count),
             "incident.stallCount": float(incident_phase.load.stall_count),
             "healthy.latencyMaxSeconds": healthy.load.latency_max_seconds,
+            "healthy.excursionRate": healthy.load.excursion_rate,
+            "incident.excursionRate": incident_phase.load.excursion_rate,
+            "healthy.excursionCount": float(healthy.load.excursion_count),
+            "incident.excursionCount": float(incident_phase.load.excursion_count),
             "incident.latencyMaxSeconds": incident_phase.load.latency_max_seconds,
             "incident.promHttpP95Seconds": incident_phase.telemetry.value("httpP95Seconds")
             or math.nan,
@@ -381,12 +413,73 @@ def run_suite(
     incident: IncidentVariant = MYSQL_POOL_DELAY_V1,
     results_dir: Path | None = None,
     pull: bool = True,
+    warmup_cycles: int = 1,
 ) -> dict[str, Any]:
-    """Run N cycles and report variance against the declared tolerances."""
+    """Run N identical measured cycles and report variance against tolerances.
+
+    Cycles are only comparable if they are actually repetitions of each other.
+    An earlier version pulled images on cycle 1 only, which made that cycle a
+    cold start rather than a repeat: it measured 226 rps against the 274 rps
+    of its nine siblings, with 58 stalls where they had none, and its incident
+    phase peaked at 1.010s against their 0.513s. Averaging that with the rest
+    described a population that does not exist.
+
+    So the run is now in three explicit parts: a setup phase that pulls and
+    builds every image and is never measured, one or more warm-up cycles whose
+    results are discarded, and only then the measured cycles -- all identical,
+    all with pulling disabled.
+    """
     repo_root = Path(repo_root).resolve()
     spec = spec or EnvironmentSpec()
     results_dir = Path(results_dir) if results_dir else repo_root / "benchmark" / "results"
     suite_id = suite_id or f"suite-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
+
+    # Setup phase: acquire every image once, measured by nobody. Done through a
+    # throwaway cycle so the build path exercised here is the same one the
+    # measured cycles use, rather than a separate code path that could drift.
+    setup_cycles: list[dict[str, Any]] = []
+    if pull:
+        print(f"[setup] pulling and building images (not measured) ...", flush=True)
+        setup = run_cycle(
+            0,
+            repo_root=repo_root,
+            suite_id=f"{suite_id}-setup",
+            spec=spec,
+            incident=incident,
+            results_dir=results_dir,
+            pull=True,
+        )
+        setup_cycles.append(
+            {"runId": setup.run_id, "ok": setup.ok, "role": "image-acquisition"}
+        )
+        if not setup.ok:
+            raise RuntimeError(
+                f"setup cycle failed, refusing to measure: "
+                f"{setup.failed_gates or setup.error}"
+            )
+
+    # Warm-up cycles: identical to the measured ones, results discarded. These
+    # absorb page-cache and layer-cache effects that the setup phase does not.
+    warmups: list[dict[str, Any]] = []
+    for index in range(1, warmup_cycles + 1):
+        print(f"[warmup {index}/{warmup_cycles}] discarded cycle ...", flush=True)
+        warm = run_cycle(
+            index,
+            repo_root=repo_root,
+            suite_id=f"{suite_id}-warmup",
+            spec=spec,
+            incident=incident,
+            results_dir=results_dir,
+            pull=False,
+        )
+        warmups.append(
+            {
+                "runId": warm.run_id,
+                "ok": warm.ok,
+                "role": "discarded-warmup",
+                "metrics": warm.metrics,
+            }
+        )
 
     cycle_results: list[CycleResult] = []
     for index in range(1, cycles + 1):
@@ -398,7 +491,9 @@ def run_suite(
             spec=spec,
             incident=incident,
             results_dir=results_dir,
-            pull=pull and index == 1,
+            # Never conditional on the index: every measured cycle must be the
+            # same experiment as every other measured cycle.
+            pull=False,
         )
         cycle_results.append(result)
         status = "ok" if result.ok else f"FAILED ({result.failed_gates or result.error})"
@@ -408,6 +503,37 @@ def run_suite(
             f"in {result.duration_seconds:.1f}s",
             flush=True,
         )
+
+    report = build_report(
+        cycle_results,
+        suite_id=suite_id,
+        cycles=cycles,
+        setup_cycles=setup_cycles,
+        warmups=warmups,
+    )
+
+    return report
+
+
+def build_report(
+    cycle_results: list[CycleResult],
+    *,
+    suite_id: str,
+    cycles: int,
+    setup_cycles: list[dict[str, Any]] | None = None,
+    warmups: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Assemble the determinism report from finished cycles.
+
+    Split out of run_suite so it can be exercised without a Docker daemon.
+    It previously could not be, and that is exactly how a crash reached the
+    report path: the stall block read a field name that does not exist on
+    CycleResult, so any suite containing a stall raised AttributeError
+    before writing anything. The unit tests all passed, because none of
+    them ran this function with a nonzero stall count.
+    """
+    setup_cycles = setup_cycles or []
+    warmups = warmups or []
 
     successful = [c for c in cycle_results if c.ok]
     metric_names = sorted({name for c in successful for name in c.metrics})
@@ -500,7 +626,7 @@ def run_suite(
     # stays visible as a discrete occurrence with a magnitude and a frequency.
     stall_observations = [
         {
-            "cycleId": c.cycle_id,
+            "runId": c.run_id,
             "phase": phase,
             "count": int(c.metrics.get(f"{phase}.stallCount", 0) or 0),
             "maxLatencySeconds": c.metrics.get(f"{phase}.latencyMaxSeconds"),
@@ -536,6 +662,23 @@ def run_suite(
             "directly because the widened measurement window deliberately dilutes "
             "individual stalls out of the throughput estimate."
         ),
+        "absoluteExcursions": {
+            "thresholdsSeconds": {
+                "healthy": HEALTHY_PROFILE.absolute_excursion_seconds,
+                "incident": INCIDENT_PROFILE.absolute_excursion_seconds,
+            },
+            "totals": {
+                name: sum(int(c.metrics.get(name, 0) or 0) for c in successful)
+                for name in ("healthy.excursionCount", "incident.excursionCount")
+            },
+            "note": (
+                "Absolute counts are reported next to the phase-relative stall "
+                "rate because the relative threshold moves with the median: a "
+                "uniformly slower environment raises its own bar and can report "
+                "zero stalls while being plainly worse."
+            ),
+        },
+        "preRegistration": GATE_PRE_REGISTRATION,
         "unexplainedObservation": UNEXPLAINED_STALL,
     }
 
@@ -574,6 +717,16 @@ def run_suite(
         "degradation": degradation,
         "errorBudget": error_budget,
         "stallBudget": stall_budget,
+        "unmeasured": {
+            "setupCycles": setup_cycles,
+            "warmupCycles": warmups,
+            "note": (
+                "Image acquisition and warm-up are run as separate unmeasured "
+                "cycles so that every measured cycle is a repetition of every "
+                "other one. Pulling on cycle 1 only made it a cold start: 226 rps "
+                "and 58 stalls against 274 rps and zero for its siblings."
+            ),
+        },
         "structuralExpectations": structural_report,
         "driftSensitivity": drift_report,
         "tolerances": tolerance_report,
@@ -581,9 +734,6 @@ def run_suite(
         "results": [c.to_dict() for c in cycle_results],
     }
 
-    suite_dir = results_dir / suite_id
-    suite_dir.mkdir(parents=True, exist_ok=True)
-    (suite_dir / "determinism-report.json").write_text(
-        json.dumps(report, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8"
-    )
     return report
+
+

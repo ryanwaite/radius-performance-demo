@@ -39,8 +39,10 @@ from radius_perf_eval.load import (  # noqa: E402
     percentile,
 )
 from radius_perf_eval.manifest import (  # noqa: E402
+    FIXTURE_PATHS,
     EnvironmentManifest,
     canonical_json,
+    fixture_files,
     hash_fixture,
     hash_text,
 )
@@ -52,6 +54,8 @@ from radius_perf_eval.trials import (  # noqa: E402
     MAX_ERROR_RATE,
     MAX_STALL_RATE,
     STRUCTURAL_EXPECTATIONS,
+    CycleResult,
+    build_report,
     UNEXPLAINED_STALL,
     summarise,
 )
@@ -576,3 +580,164 @@ class UnexplainedObservationTests(unittest.TestCase):
         # The reason this is not merely a determinism footnote: an agent under
         # test could diagnose a fault we never injected.
         self.assertIn("did not inject", UNEXPLAINED_STALL["openRisk"])
+
+
+def _cycle(index: int, *, stalls: float = 0.0, excursions: float = 0.0, ok: bool = True) -> CycleResult:
+    """A CycleResult with plausible warm steady-state metrics."""
+    return CycleResult(
+        index=index,
+        run_id=f"suite-c{index:02d}",
+        ok=ok,
+        signed_off=ok,
+        cleanup_verified=True,
+        incident_verified=ok,
+        duration_seconds=175.0,
+        metrics={
+            "healthy.throughputRps": 273.6,
+            "healthy.latencyP50Seconds": 0.029,
+            "healthy.latencyP95Seconds": 0.033,
+            "healthy.latencyMaxSeconds": 0.044,
+            "healthy.errorRate": 0.0,
+            "healthy.stallRate": 0.0,
+            "healthy.stallCount": 0.0,
+            "healthy.excursionRate": 0.0,
+            "healthy.excursionCount": 0.0,
+            "incident.throughputRps": 7.90,
+            "incident.latencyP50Seconds": 0.506,
+            "incident.latencyP95Seconds": 0.513,
+            "incident.latencyMaxSeconds": 0.513 if not stalls else 1.85,
+            "incident.errorRate": 0.0,
+            "incident.stallRate": stalls / 640.0,
+            "incident.stallCount": stalls,
+            "incident.excursionRate": excursions / 640.0,
+            "incident.excursionCount": excursions,
+        },
+    )
+
+
+class ReportGenerationTests(unittest.TestCase):
+    """Exercise the whole report path, including the branches only a stall reaches.
+
+    The stall block crashed on a field name that CycleResult does not define,
+    and every unit test passed anyway, because none of them built a cycle with
+    a nonzero stall count. Testing the detector was not the same as testing
+    the thing that reports it.
+    """
+
+    def test_report_builds_with_a_stall_present(self) -> None:
+        cycles = [_cycle(i) for i in range(1, 10)] + [_cycle(10, stalls=1.0)]
+        report = build_report(cycles, suite_id="suite", cycles=10)
+
+        observations = report["stallBudget"]["observations"]
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(observations[0]["runId"], "suite-c10")
+        self.assertEqual(observations[0]["count"], 1)
+        self.assertAlmostEqual(observations[0]["maxLatencySeconds"], 1.85)
+
+    def test_report_is_json_serialisable_with_a_stall(self) -> None:
+        # The report is written to disk; a value that cannot be encoded fails
+        # just as completely as an AttributeError.
+        cycles = [_cycle(i) for i in range(1, 10)] + [_cycle(10, stalls=3.0)]
+        report = build_report(cycles, suite_id="suite", cycles=10)
+        encoded = json.dumps(report, sort_keys=True, default=str)
+        self.assertIn("stallBudget", encoded)
+
+    def test_clean_run_reports_no_observations(self) -> None:
+        report = build_report(
+            [_cycle(i) for i in range(1, 11)], suite_id="suite", cycles=10
+        )
+        self.assertEqual(report["stallBudget"]["observations"], [])
+        self.assertTrue(report["stallBudget"]["withinBudget"])
+
+    def test_stall_budget_fails_when_breached(self) -> None:
+        # 8 stalls in a 640-request window is 1.25%, above the 0.5% bound.
+        cycles = [_cycle(i) for i in range(1, 10)] + [_cycle(10, stalls=8.0)]
+        report = build_report(cycles, suite_id="suite", cycles=10)
+        self.assertFalse(report["stallBudget"]["withinBudget"])
+        self.assertFalse(report["exitCriterionMet"])
+
+    def test_absolute_excursions_are_reported_alongside_relative_stalls(self) -> None:
+        cycles = [_cycle(i) for i in range(1, 10)] + [_cycle(10, stalls=1.0, excursions=1.0)]
+        report = build_report(cycles, suite_id="suite", cycles=10)
+        totals = report["stallBudget"]["absoluteExcursions"]["totals"]
+        self.assertEqual(totals["incident.excursionCount"], 1)
+        thresholds = report["stallBudget"]["absoluteExcursions"]["thresholdsSeconds"]
+        self.assertEqual(thresholds["incident"], 1.0)
+        self.assertEqual(thresholds["healthy"], 0.1)
+
+    def test_report_records_the_unmeasured_phases(self) -> None:
+        report = build_report(
+            [_cycle(i) for i in range(1, 11)],
+            suite_id="suite",
+            cycles=10,
+            setup_cycles=[{"runId": "suite-setup-c00", "ok": True, "role": "image-acquisition"}],
+            warmups=[{"runId": "suite-warmup-c01", "ok": True, "role": "discarded-warmup"}],
+        )
+        self.assertEqual(len(report["unmeasured"]["setupCycles"]), 1)
+        self.assertEqual(len(report["unmeasured"]["warmupCycles"]), 1)
+
+    def test_gate_definition_is_pre_registered_in_the_report(self) -> None:
+        report = build_report(
+            [_cycle(i) for i in range(1, 11)], suite_id="suite", cycles=10
+        )
+        pre = report["stallBudget"]["preRegistration"]
+        self.assertEqual(pre["stallFactor"], 3.0)
+        self.assertEqual(pre["maxStallRate"], MAX_STALL_RATE)
+
+    def test_failed_cycle_does_not_meet_exit_criterion(self) -> None:
+        cycles = [_cycle(i) for i in range(1, 10)] + [_cycle(10, ok=False)]
+        report = build_report(cycles, suite_id="suite", cycles=10)
+        self.assertFalse(report["exitCriterionMet"])
+
+
+class FixtureHashScopeTests(unittest.TestCase):
+    """The hash has to cover everything that can change what a trial measures."""
+
+    def setUp(self) -> None:
+        self.root = Path(__file__).resolve().parents[2]
+
+    def test_covers_application_source(self) -> None:
+        covered = fixture_files(self.root)
+        self.assertTrue(any(f.startswith("cmd/") for f in covered))
+        self.assertTrue(any(f.startswith("internal/") for f in covered))
+
+    def test_covers_the_driver_and_its_compose_templates(self) -> None:
+        covered = fixture_files(self.root)
+        # The driver defines the load profiles, the incident and the topology,
+        # so a change to it is a change to the experiment.
+        self.assertIn("benchmark/radius_perf_eval/trials.py", covered)
+        self.assertIn("benchmark/radius_perf_eval/load.py", covered)
+        self.assertIn("benchmark/radius_perf_eval/compose/base.yml", covered)
+        self.assertIn(
+            "benchmark/radius_perf_eval/compose/incident-mysql-pool-delay.yml", covered
+        )
+
+    def test_covers_the_build_and_seed_inputs(self) -> None:
+        covered = fixture_files(self.root)
+        for expected in FIXTURE_PATHS:
+            self.assertIn(expected, covered)
+
+    def test_excludes_caches_and_build_output(self) -> None:
+        covered = fixture_files(self.root)
+        self.assertFalse([f for f in covered if "__pycache__" in f])
+
+    def test_is_materially_wider_than_the_original_six_files(self) -> None:
+        # Guards the regression directly: six files was the bug.
+        self.assertGreater(len(fixture_files(self.root)), len(FIXTURE_PATHS) * 3)
+
+    def test_hash_changes_when_a_covered_file_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in FIXTURE_PATHS:
+                target = root / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("x")
+            for tree in ("cmd", "internal", "benchmark/radius_perf_eval"):
+                (root / tree).mkdir(parents=True, exist_ok=True)
+            source = root / "internal" / "thing.go"
+            source.write_text("package thing")
+
+            before, _ = hash_fixture(root)
+            source.write_text("package thing // changed")
+            after, _ = hash_fixture(root)
+            self.assertNotEqual(before, after)

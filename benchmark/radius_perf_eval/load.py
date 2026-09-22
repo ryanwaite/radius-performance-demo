@@ -43,6 +43,14 @@ class LoadProfile:
     # distorted an early ten-cycle run.
     stall_factor: float = 3.0
 
+    # An absolute latency bound for this phase, reported alongside the
+    # phase-relative stall rate. The relative rule adapts to each phase,
+    # which is what makes it usable across a 29ms and a 506ms workload, but
+    # it also moves when the median moves: a uniformly slower environment
+    # raises the threshold with it and can report zero stalls while being
+    # plainly worse. The absolute count cannot do that.
+    absolute_excursion_seconds: float = 1.0
+
     def to_dict(self) -> dict[str, float | int | str]:
         return {
             "name": self.name,
@@ -54,6 +62,7 @@ class LoadProfile:
             "productIds": self.product_ids,
             "requestTimeoutSeconds": self.request_timeout_seconds,
             "stallFactor": self.stall_factor,
+            "absoluteExcursionSeconds": self.absolute_excursion_seconds,
         }
 
 
@@ -87,7 +96,10 @@ class LoadResult:
     stall_threshold_seconds: float
     stall_count: int
     stall_rate: float
+    excursion_count: int = 0
+    excursion_rate: float = 0.0
     stall_latencies_seconds: tuple[float, ...] = ()
+    latency_distribution: tuple[float, ...] = ()
     status_counts: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
@@ -117,6 +129,16 @@ class LoadResult:
                 "rate": self.stall_rate,
                 "latenciesSeconds": list(self.stall_latencies_seconds),
             },
+            "absoluteExcursions": {
+                "thresholdSeconds": self.profile.absolute_excursion_seconds,
+                "count": self.excursion_count,
+                "rate": self.excursion_rate,
+            },
+            # Full sorted sample, so later analysis can re-derive any threshold
+            # rather than being stuck with the one chosen here.
+            "latencyDistributionSeconds": [
+                round(value, 6) for value in self.latency_distribution
+            ],
             "statusCounts": dict(self.status_counts),
         }
 
@@ -248,6 +270,9 @@ def run_load(base_url: str, profile: LoadProfile) -> LoadResult:
     # robust to a rare stall, which is the point, but it also means a rising
     # stall rate would be quietly absorbed. Counting them restores that signal.
     stall_threshold, stalls = detect_stalls(latencies, profile.stall_factor)
+    excursions = [
+        value for value in latencies if value > profile.absolute_excursion_seconds
+    ]
 
     return LoadResult(
         profile=profile,
@@ -271,5 +296,8 @@ def run_load(base_url: str, profile: LoadProfile) -> LoadResult:
         stall_count=len(stalls),
         stall_rate=(len(stalls) / len(measured)) if measured else math.nan,
         stall_latencies_seconds=tuple(stalls[:10]),
+        excursion_count=len(excursions),
+        excursion_rate=(len(excursions) / len(measured)) if measured else math.nan,
+        latency_distribution=tuple(sorted(latencies)),
         status_counts=status_counts,
     )
