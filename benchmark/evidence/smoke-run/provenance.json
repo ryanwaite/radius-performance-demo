@@ -1,0 +1,72 @@
+{
+  "capturedAt": "2026-09-22T22:32:45.552571+00:00",
+  "model": "gpt-5.4",
+  "provenanceDigest": "sha256:4f976adcd5df97b402d317c1a8ac8ae72f57f5007a806584fa1d0eb37d22951f",
+  "reasoningEffort": null,
+  "runtime": {
+    "machine": "arm64",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "processor": "arm",
+    "pythonImplementation": "CPython",
+    "pythonVersion": "3.12.13",
+    "release": "27.0.0",
+    "system": "Darwin"
+  },
+  "session": {
+    "autoRouting": false,
+    "contextPolicy": "cold",
+    "memoryEnabled": false,
+    "sessionId": "f39d49ac-bcfd-4507-a7ec-aa242b2eae32",
+    "subagentsEnabled": false,
+    "workspaceRoot": "/private/var/folders/tm/jmmxm1g54855dc29ks95g_br0000gn/T/radius-perf-ws-m_n3ksks"
+  },
+  "supplyChain": {
+    "compliant": true,
+    "configuredIndexes": [
+      {
+        "default": true,
+        "name": "cfs",
+        "url": "https://packagefeedproxy.microsoft.io/pypi/simple"
+      }
+    ],
+    "indexUrls": [
+      "https://packagefeedproxy.microsoft.io/pypi/simple"
+    ],
+    "planSection": "Package supply chain compliance",
+    "policy": "microsoft-central-feed-services",
+    "prohibitedRegistryHosts": [
+      "pypi.org",
+      "files.pythonhosted.org",
+      "registry.npmjs.org"
+    ],
+    "prohibitedRegistryReferences": [],
+    "resolvedVersions": {
+      "github-copilot-sdk": "1.0.13",
+      "inspect-ai": "0.3.263",
+      "pytest": "8.3.4"
+    },
+    "scannedFiles": [
+      {
+        "hits": [],
+        "path": "/Users/ryanwaite/Source/copilot-worktrees/radius-performance-demo/ryanwaite-improved-waddle/benchmark/pyproject.toml",
+        "present": true
+      },
+      {
+        "hits": [],
+        "path": "/Users/ryanwaite/Source/copilot-worktrees/radius-performance-demo/ryanwaite-improved-waddle/benchmark/uv.lock",
+        "present": true
+      }
+    ],
+    "singleIndex": true
+  },
+  "versions": {
+    "hostCliPath": "/opt/homebrew/bin/copilot",
+    "hostCliRaw": "GitHub Copilot CLI 1.0.87.\nRun 'copilot update' to check for updates.",
+    "hostCliVersion": "1.0.87",
+    "inspectAiVersion": "0.3.263",
+    "pinnedCliVersion": "1.0.83",
+    "sdkPackage": "github-copilot-sdk",
+    "sdkProtocolVersion": 3,
+    "sdkVersion": "1.0.13"
+  }
+}

@@ -1,0 +1,101 @@
+{
+  "error": null,
+  "experimental": true,
+  "response": {
+    "agentMetrics": {
+      "main": {
+        "modelMetrics": {
+          "gpt-5.4": {
+            "requests": {
+              "cost": 1.0,
+              "count": 2
+            },
+            "tokenDetails": {
+              "cache_read": {
+                "tokenCount": 11264
+              },
+              "cache_write": {
+                "tokenCount": 0
+              },
+              "input": {
+                "tokenCount": 6937
+              },
+              "output": {
+                "tokenCount": 159
+              }
+            },
+            "totalNanoAiu": 2254350000.0,
+            "usage": {
+              "cacheReadTokens": 11264,
+              "cacheWriteTokens": 0,
+              "inputTokens": 18201,
+              "outputTokens": 159,
+              "reasoningTokens": 86
+            }
+          }
+        },
+        "totalApiDurationMs": 3640,
+        "totalNanoAiu": 2254350000.0
+      }
+    },
+    "codeChanges": {
+      "filesModified": [],
+      "filesModifiedCount": 0,
+      "linesAdded": 0,
+      "linesRemoved": 0
+    },
+    "currentModel": "gpt-5.4",
+    "lastCallInputTokens": 9162,
+    "lastCallOutputTokens": 28,
+    "modelMetrics": {
+      "gpt-5.4": {
+        "cacheExpiresAt": "2026-09-22T23:02:50.666000+00:00",
+        "requests": {
+          "cost": 1.0,
+          "count": 2
+        },
+        "tokenDetails": {
+          "cache_read": {
+            "tokenCount": 11264
+          },
+          "cache_write": {
+            "tokenCount": 0
+          },
+          "input": {
+            "tokenCount": 6937
+          },
+          "output": {
+            "tokenCount": 159
+          }
+        },
+        "totalNanoAiu": 2254350000.0,
+        "usage": {
+          "cacheReadTokens": 11264,
+          "cacheWriteTokens": 0,
+          "inputTokens": 18201,
+          "outputTokens": 159,
+          "reasoningTokens": 86
+        }
+      }
+    },
+    "sessionStartTime": "2026-09-22T22:32:45.259000+00:00",
+    "tokenDetails": {
+      "cache_read": {
+        "tokenCount": 11264
+      },
+      "cache_write": {
+        "tokenCount": 0
+      },
+      "input": {
+        "tokenCount": 6937
+      },
+      "output": {
+        "tokenCount": 159
+      }
+    },
+    "totalApiDurationMs": 3640,
+    "totalNanoAiu": 2254350000.0,
+    "totalPremiumRequestCost": 1.0,
+    "totalUserRequests": 1
+  }
+}

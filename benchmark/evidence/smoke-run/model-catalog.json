@@ -1,0 +1,2598 @@
+{
+  "catalogDigest": "sha256:4c219774e61a8067585a3a90dddc978e4e61717ab13f5983ae0d153643f0461e",
+  "modelCount": 23,
+  "normalized": [
+    {
+      "available": true,
+      "billingDiscountPercent": 10,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 0
+        },
+        "supports": {}
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "Auto",
+      "id": "auto",
+      "modelPickerCategory": null,
+      "modelPickerPriceCategory": null,
+      "policyState": null,
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": null,
+      "tokenPrices": null
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1000000,
+          "max_output_tokens": 64000,
+          "max_prompt_tokens": 936000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 5,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "required",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "Claude Sonnet 5",
+      "id": "claude-sonnet-5",
+      "modelPickerCategory": "versatile",
+      "modelPickerPriceCategory": "medium",
+      "policyState": "enabled",
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 20.0,
+        "cacheReadPrice": 20.0,
+        "cacheWrite1hPrice": 400.0,
+        "cacheWritePrice": 250.0,
+        "contextMax": 200000,
+        "inputPrice": 200.0,
+        "longContext": {
+          "cachePrice": 20.0,
+          "cacheReadPrice": 20.0,
+          "cacheWrite1hPrice": 400.0,
+          "cacheWritePrice": 250.0,
+          "contextMax": 936000,
+          "inputPrice": 200.0,
+          "maxPromptTokens": 936000,
+          "outputPrice": 1000.0
+        },
+        "maxPromptTokens": 200000,
+        "outputPrice": 1000.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1000000,
+          "max_output_tokens": 64000,
+          "max_prompt_tokens": 936000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "required",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "Claude Opus 5",
+      "id": "claude-opus-5",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "high",
+      "policyState": "enabled",
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 50.0,
+        "cacheReadPrice": 50.0,
+        "cacheWrite1hPrice": 1000.0,
+        "cacheWritePrice": 625.0,
+        "contextMax": 200000,
+        "inputPrice": 500.0,
+        "longContext": {
+          "cachePrice": 50.0,
+          "cacheReadPrice": 50.0,
+          "cacheWrite1hPrice": 1000.0,
+          "cacheWritePrice": 625.0,
+          "contextMax": 936000,
+          "inputPrice": 500.0,
+          "maxPromptTokens": 936000,
+          "outputPrice": 2500.0
+        },
+        "maxPromptTokens": 200000,
+        "outputPrice": 2500.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1000000,
+          "max_output_tokens": 64000,
+          "max_prompt_tokens": 936000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "required",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "Claude Opus 4.8",
+      "id": "claude-opus-4.8",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "high",
+      "policyState": "enabled",
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 50.0,
+        "cacheReadPrice": 50.0,
+        "cacheWrite1hPrice": 1000.0,
+        "cacheWritePrice": 625.0,
+        "contextMax": 200000,
+        "inputPrice": 500.0,
+        "longContext": {
+          "cachePrice": 50.0,
+          "cacheReadPrice": 50.0,
+          "cacheWrite1hPrice": 1000.0,
+          "cacheWritePrice": 625.0,
+          "contextMax": 936000,
+          "inputPrice": 500.0,
+          "maxPromptTokens": 936000,
+          "outputPrice": 2500.0
+        },
+        "maxPromptTokens": 200000,
+        "outputPrice": 2500.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1000000,
+          "max_output_tokens": 64000,
+          "max_prompt_tokens": 936000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "required",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "Claude Opus 4.7",
+      "id": "claude-opus-4.7",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "high",
+      "policyState": "enabled",
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 50.0,
+        "cacheReadPrice": 50.0,
+        "cacheWrite1hPrice": 1000.0,
+        "cacheWritePrice": 625.0,
+        "contextMax": 200000,
+        "inputPrice": 500.0,
+        "longContext": {
+          "cachePrice": 50.0,
+          "cacheReadPrice": 50.0,
+          "cacheWrite1hPrice": 1000.0,
+          "cacheWritePrice": 625.0,
+          "contextMax": 936000,
+          "inputPrice": 500.0,
+          "maxPromptTokens": 936000,
+          "outputPrice": 2500.0
+        },
+        "maxPromptTokens": 200000,
+        "outputPrice": 2500.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 200000,
+          "max_output_tokens": 64000,
+          "max_prompt_tokens": 136000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 5,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": false,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "Claude Haiku 4.5",
+      "id": "claude-haiku-4.5",
+      "modelPickerCategory": "lightweight",
+      "modelPickerPriceCategory": "low",
+      "policyState": "enabled",
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": null,
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 10.0,
+        "cacheReadPrice": 10.0,
+        "cacheWritePrice": 125.0,
+        "inputPrice": 100.0,
+        "outputPrice": 500.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1050000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 922000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "GPT-5.6 Sol",
+      "id": "gpt-5.6-sol",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "high",
+      "policyState": "enabled",
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 40.0,
+        "cacheReadPrice": 40.0,
+        "cacheWritePrice": 500.0,
+        "contextMax": 272000,
+        "inputPrice": 400.0,
+        "longContext": {
+          "cachePrice": 80.0,
+          "cacheReadPrice": 80.0,
+          "cacheWritePrice": 1000.0,
+          "contextMax": 922000,
+          "inputPrice": 800.0,
+          "maxPromptTokens": 922000,
+          "outputPrice": 3000.0
+        },
+        "maxPromptTokens": 272000,
+        "outputPrice": 2000.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1050000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 922000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "GPT-5.6 Sol Fast (Internal only)",
+      "id": "gpt-5.6-sol-fast",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "very_high",
+      "policyState": "enabled",
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 80.0,
+        "cacheReadPrice": 80.0,
+        "cacheWritePrice": 1000.0,
+        "contextMax": 272000,
+        "inputPrice": 800.0,
+        "longContext": {
+          "cachePrice": 160.0,
+          "cacheReadPrice": 160.0,
+          "cacheWritePrice": 2000.0,
+          "contextMax": 922000,
+          "inputPrice": 1600.0,
+          "maxPromptTokens": 922000,
+          "outputPrice": 6000.0
+        },
+        "maxPromptTokens": 272000,
+        "outputPrice": 4000.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1050000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 922000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "GPT-5.6 Terra",
+      "id": "gpt-5.6-terra",
+      "modelPickerCategory": "versatile",
+      "modelPickerPriceCategory": "medium",
+      "policyState": "enabled",
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 20.0,
+        "cacheReadPrice": 20.0,
+        "cacheWritePrice": 250.0,
+        "contextMax": 272000,
+        "inputPrice": 200.0,
+        "longContext": {
+          "cachePrice": 40.0,
+          "cacheReadPrice": 40.0,
+          "cacheWritePrice": 500.0,
+          "contextMax": 922000,
+          "inputPrice": 400.0,
+          "maxPromptTokens": 922000,
+          "outputPrice": 1800.0
+        },
+        "maxPromptTokens": 272000,
+        "outputPrice": 1200.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1050000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 922000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "GPT-5.6 Luna",
+      "id": "gpt-5.6-luna",
+      "modelPickerCategory": "lightweight",
+      "modelPickerPriceCategory": "low",
+      "policyState": "enabled",
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 2.0,
+        "cacheReadPrice": 2.0,
+        "cacheWritePrice": 25.0,
+        "contextMax": 200000,
+        "inputPrice": 20.0,
+        "longContext": {
+          "cachePrice": 4.0,
+          "cacheReadPrice": 4.0,
+          "cacheWritePrice": 50.0,
+          "contextMax": 922000,
+          "inputPrice": 40.0,
+          "maxPromptTokens": 922000,
+          "outputPrice": 180.0
+        },
+        "maxPromptTokens": 200000,
+        "outputPrice": 120.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1050000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 922000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "GPT-5.5",
+      "id": "gpt-5.5",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "high",
+      "policyState": "enabled",
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 50.0,
+        "cacheReadPrice": 50.0,
+        "cacheWritePrice": 0.0,
+        "contextMax": 272000,
+        "inputPrice": 500.0,
+        "longContext": {
+          "cachePrice": 100.0,
+          "cacheReadPrice": 100.0,
+          "cacheWritePrice": 0.0,
+          "contextMax": 922000,
+          "inputPrice": 1000.0,
+          "maxPromptTokens": 922000,
+          "outputPrice": 4500.0
+        },
+        "maxPromptTokens": 272000,
+        "outputPrice": 3000.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1050000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 922000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "GPT-5.4",
+      "id": "gpt-5.4",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "medium",
+      "policyState": "enabled",
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 25.0,
+        "cacheReadPrice": 25.0,
+        "cacheWritePrice": 0.0,
+        "contextMax": 272000,
+        "inputPrice": 250.0,
+        "longContext": {
+          "cachePrice": 50.0,
+          "cacheReadPrice": 50.0,
+          "cacheWritePrice": 0.0,
+          "contextMax": 922000,
+          "inputPrice": 500.0,
+          "maxPromptTokens": 922000,
+          "outputPrice": 2250.0
+        },
+        "maxPromptTokens": 272000,
+        "outputPrice": 1500.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 400000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 272000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "GPT-5.4 mini",
+      "id": "gpt-5.4-mini",
+      "modelPickerCategory": "lightweight",
+      "modelPickerPriceCategory": "low",
+      "policyState": "enabled",
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 7.5,
+        "cacheReadPrice": 7.5,
+        "cacheWritePrice": 0.0,
+        "contextMax": 272000,
+        "inputPrice": 75.0,
+        "maxPromptTokens": 272000,
+        "outputPrice": 450.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 400000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 272000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "GPT-5.3-Codex",
+      "id": "gpt-5.3-codex",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "medium",
+      "policyState": null,
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 17.5,
+        "cacheReadPrice": 17.5,
+        "cacheWritePrice": 0.0,
+        "contextMax": 272000,
+        "inputPrice": 175.0,
+        "maxPromptTokens": 272000,
+        "outputPrice": 1400.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 264000,
+          "max_output_tokens": 64000,
+          "max_prompt_tokens": 128000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "GPT-5 mini",
+      "id": "gpt-5-mini",
+      "modelPickerCategory": "lightweight",
+      "modelPickerPriceCategory": "low",
+      "policyState": "enabled",
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 2.5,
+        "cacheReadPrice": 2.5,
+        "cacheWritePrice": 0.0,
+        "inputPrice": 25.0,
+        "outputPrice": 200.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 256000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 128000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "MAI-Code-1.1-Flash",
+      "id": "mai-code-1.1-flash",
+      "modelPickerCategory": "lightweight",
+      "modelPickerPriceCategory": "low",
+      "policyState": "enabled",
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 2.0,
+        "cacheReadPrice": 2.0,
+        "cacheWritePrice": 25.0,
+        "contextMax": 128000,
+        "inputPrice": 20.0,
+        "maxPromptTokens": 128000,
+        "outputPrice": 120.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 500000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 372000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "Grok 4.5",
+      "id": "grok-4.5",
+      "modelPickerCategory": "versatile",
+      "modelPickerPriceCategory": "medium",
+      "policyState": null,
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 50.0,
+        "cacheReadPrice": 50.0,
+        "cacheWritePrice": 0.0,
+        "contextMax": 200000,
+        "inputPrice": 200.0,
+        "longContext": {
+          "cachePrice": 100.0,
+          "cacheReadPrice": 100.0,
+          "cacheWritePrice": 0.0,
+          "contextMax": 500000,
+          "inputPrice": 400.0,
+          "maxPromptTokens": 500000,
+          "outputPrice": 1200.0
+        },
+        "maxPromptTokens": 200000,
+        "outputPrice": 600.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1000000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 872000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "required",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "Claude Opus 5.5",
+      "id": "claude-opus-5.5",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "high",
+      "policyState": "enabled",
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 20.0,
+        "cacheReadPrice": 20.0,
+        "cacheWritePrice": 500.0,
+        "contextMax": 200000,
+        "inputPrice": 400.0,
+        "longContext": {
+          "cachePrice": 20.0,
+          "cacheReadPrice": 20.0,
+          "cacheWritePrice": 500.0,
+          "contextMax": 872000,
+          "inputPrice": 400.0,
+          "maxPromptTokens": 872000,
+          "outputPrice": 2000.0
+        },
+        "maxPromptTokens": 200000,
+        "outputPrice": 2000.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1050000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 1050000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "GPT-6 Astra",
+      "id": "gpt-6-astra",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "very_high",
+      "policyState": "enabled",
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 100.0,
+        "cacheReadPrice": 100.0,
+        "cacheWritePrice": 1250.0,
+        "contextMax": 272000,
+        "inputPrice": 1000.0,
+        "longContext": {
+          "cachePrice": 200.0,
+          "cacheReadPrice": 200.0,
+          "cacheWritePrice": 2500.0,
+          "contextMax": 1050000,
+          "inputPrice": 2000.0,
+          "maxPromptTokens": 1050000,
+          "outputPrice": 7500.0
+        },
+        "maxPromptTokens": 272000,
+        "outputPrice": 5000.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1000000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 872000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "GPT-6 Luna",
+      "id": "gpt-6-luna",
+      "modelPickerCategory": "lightweight",
+      "modelPickerPriceCategory": "low",
+      "policyState": "enabled",
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 1.0,
+        "cacheReadPrice": 1.0,
+        "cacheWritePrice": 12.5,
+        "contextMax": 272000,
+        "inputPrice": 10.0,
+        "longContext": {
+          "cachePrice": 2.0,
+          "cacheReadPrice": 2.0,
+          "cacheWritePrice": 25.0,
+          "contextMax": 872000,
+          "inputPrice": 20.0,
+          "maxPromptTokens": 872000,
+          "outputPrice": 75.0
+        },
+        "maxPromptTokens": 272000,
+        "outputPrice": 50.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1000000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 872000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "GPT-6 Sol",
+      "id": "gpt-6-sol",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "medium",
+      "policyState": "enabled",
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 20.0,
+        "cacheReadPrice": 20.0,
+        "cacheWritePrice": 250.0,
+        "contextMax": 272000,
+        "inputPrice": 200.0,
+        "longContext": {
+          "cachePrice": 40.0,
+          "cacheReadPrice": 40.0,
+          "cacheWritePrice": 500.0,
+          "contextMax": 872000,
+          "inputPrice": 400.0,
+          "maxPromptTokens": 872000,
+          "outputPrice": 1500.0
+        },
+        "maxPromptTokens": 272000,
+        "outputPrice": 1000.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 500000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 372000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "Grok 4.6",
+      "id": "grok-4.6",
+      "modelPickerCategory": "versatile",
+      "modelPickerPriceCategory": "medium",
+      "policyState": null,
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 50.0,
+        "cacheReadPrice": 50.0,
+        "cacheWritePrice": 0.0,
+        "contextMax": 200000,
+        "inputPrice": 200.0,
+        "longContext": {
+          "cachePrice": 100.0,
+          "cacheReadPrice": 100.0,
+          "cacheWritePrice": 0.0,
+          "contextMax": 500000,
+          "inputPrice": 400.0,
+          "maxPromptTokens": 500000,
+          "outputPrice": 1200.0
+        },
+        "maxPromptTokens": 200000,
+        "outputPrice": 600.0
+      }
+    },
+    {
+      "available": true,
+      "billingDiscountPercent": null,
+      "billingMultiplier": null,
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 500000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 372000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "defaultReasoningEffort": null,
+      "displayName": "Grok 4.7",
+      "id": "grok-4.7",
+      "modelPickerCategory": "versatile",
+      "modelPickerPriceCategory": "medium",
+      "policyState": null,
+      "supportedContextTiers": null,
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "tokenPrices": {
+        "batchSize": 1000000,
+        "cachePrice": 50.0,
+        "cacheReadPrice": 50.0,
+        "cacheWritePrice": 0.0,
+        "contextMax": 200000,
+        "inputPrice": 200.0,
+        "longContext": {
+          "cachePrice": 100.0,
+          "cacheReadPrice": 100.0,
+          "cacheWritePrice": 0.0,
+          "contextMax": 500000,
+          "inputPrice": 400.0,
+          "maxPromptTokens": 500000,
+          "outputPrice": 1200.0
+        },
+        "maxPromptTokens": 200000,
+        "outputPrice": 600.0
+      }
+    }
+  ],
+  "raw": [
+    {
+      "billing": {
+        "discountPercent": 10
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 0
+        },
+        "supports": {}
+      },
+      "id": "auto",
+      "name": "Auto"
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 20.0,
+          "cacheReadPrice": 20.0,
+          "cacheWrite1hPrice": 400.0,
+          "cacheWritePrice": 250.0,
+          "contextMax": 200000,
+          "inputPrice": 200.0,
+          "longContext": {
+            "cachePrice": 20.0,
+            "cacheReadPrice": 20.0,
+            "cacheWrite1hPrice": 400.0,
+            "cacheWritePrice": 250.0,
+            "contextMax": 936000,
+            "inputPrice": 200.0,
+            "maxPromptTokens": 936000,
+            "outputPrice": 1000.0
+          },
+          "maxPromptTokens": 200000,
+          "outputPrice": 1000.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1000000,
+          "max_output_tokens": 64000,
+          "max_prompt_tokens": 936000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 5,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "required",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "claude-sonnet-5",
+      "modelPickerCategory": "versatile",
+      "modelPickerPriceCategory": "medium",
+      "name": "Claude Sonnet 5",
+      "policy": {
+        "state": "enabled",
+        "terms": "Enable access to the latest Claude model from Anthropic. [Learn more about how GitHub Copilot serves Claude](https://gh.io/copilot-claude-opus)."
+      },
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 50.0,
+          "cacheReadPrice": 50.0,
+          "cacheWrite1hPrice": 1000.0,
+          "cacheWritePrice": 625.0,
+          "contextMax": 200000,
+          "inputPrice": 500.0,
+          "longContext": {
+            "cachePrice": 50.0,
+            "cacheReadPrice": 50.0,
+            "cacheWrite1hPrice": 1000.0,
+            "cacheWritePrice": 625.0,
+            "contextMax": 936000,
+            "inputPrice": 500.0,
+            "maxPromptTokens": 936000,
+            "outputPrice": 2500.0
+          },
+          "maxPromptTokens": 200000,
+          "outputPrice": 2500.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1000000,
+          "max_output_tokens": 64000,
+          "max_prompt_tokens": 936000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "required",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "claude-opus-5",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "high",
+      "name": "Claude Opus 5",
+      "policy": {
+        "state": "enabled",
+        "terms": "Enable access to the latest Claude Opus 5 model from Anthropic. [Learn more about how GitHub Copilot serves Claude Opus 5](https://gh.io/copilot-claude-opus)."
+      },
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 50.0,
+          "cacheReadPrice": 50.0,
+          "cacheWrite1hPrice": 1000.0,
+          "cacheWritePrice": 625.0,
+          "contextMax": 200000,
+          "inputPrice": 500.0,
+          "longContext": {
+            "cachePrice": 50.0,
+            "cacheReadPrice": 50.0,
+            "cacheWrite1hPrice": 1000.0,
+            "cacheWritePrice": 625.0,
+            "contextMax": 936000,
+            "inputPrice": 500.0,
+            "maxPromptTokens": 936000,
+            "outputPrice": 2500.0
+          },
+          "maxPromptTokens": 200000,
+          "outputPrice": 2500.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1000000,
+          "max_output_tokens": 64000,
+          "max_prompt_tokens": 936000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "required",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "claude-opus-4.8",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "high",
+      "name": "Claude Opus 4.8",
+      "policy": {
+        "state": "enabled",
+        "terms": "Enable access to the latest Claude Opus 4.8 model from Anthropic. [Learn more about how GitHub Copilot serves Claude Opus 4.8](https://gh.io/copilot-claude-opus)."
+      },
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 50.0,
+          "cacheReadPrice": 50.0,
+          "cacheWrite1hPrice": 1000.0,
+          "cacheWritePrice": 625.0,
+          "contextMax": 200000,
+          "inputPrice": 500.0,
+          "longContext": {
+            "cachePrice": 50.0,
+            "cacheReadPrice": 50.0,
+            "cacheWrite1hPrice": 1000.0,
+            "cacheWritePrice": 625.0,
+            "contextMax": 936000,
+            "inputPrice": 500.0,
+            "maxPromptTokens": 936000,
+            "outputPrice": 2500.0
+          },
+          "maxPromptTokens": 200000,
+          "outputPrice": 2500.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1000000,
+          "max_output_tokens": 64000,
+          "max_prompt_tokens": 936000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "required",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "claude-opus-4.7",
+      "infoMessages": [
+        {
+          "code": "model_pending_deprecation",
+          "message": "Claude Opus 4.7 has a planned deprecation date of 2026-10-02."
+        }
+      ],
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "high",
+      "name": "Claude Opus 4.7",
+      "policy": {
+        "state": "enabled",
+        "terms": "Enable access to the latest Claude Opus 4.7 model from Anthropic. [Learn more about how GitHub Copilot serves Claude Opus 4.7](https://gh.io/copilot-claude-opus)."
+      },
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 10.0,
+          "cacheReadPrice": 10.0,
+          "cacheWritePrice": 125.0,
+          "inputPrice": 100.0,
+          "outputPrice": 500.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 200000,
+          "max_output_tokens": 64000,
+          "max_prompt_tokens": 136000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 5,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": false,
+          "vision": true
+        }
+      },
+      "id": "claude-haiku-4.5",
+      "modelPickerCategory": "lightweight",
+      "modelPickerPriceCategory": "low",
+      "name": "Claude Haiku 4.5",
+      "policy": {
+        "state": "enabled",
+        "terms": "Enable access to the latest Claude Haiku 4.5 model from Anthropic. [Learn more about how GitHub Copilot serves Claude Haiku 4.5](https://gh.io/copilot-anthropic)."
+      }
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 40.0,
+          "cacheReadPrice": 40.0,
+          "cacheWritePrice": 500.0,
+          "contextMax": 272000,
+          "inputPrice": 400.0,
+          "longContext": {
+            "cachePrice": 80.0,
+            "cacheReadPrice": 80.0,
+            "cacheWritePrice": 1000.0,
+            "contextMax": 922000,
+            "inputPrice": 800.0,
+            "maxPromptTokens": 922000,
+            "outputPrice": 3000.0
+          },
+          "maxPromptTokens": 272000,
+          "outputPrice": 2000.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1050000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 922000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "gpt-5.6-sol",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "high",
+      "name": "GPT-5.6 Sol",
+      "policy": {
+        "state": "enabled",
+        "terms": "Enable access to the latest GPT-5.6 Sol model from OpenAI. [Learn more about how GitHub Copilot serves GPT-5.6 Sol](https://gh.io/copilot-openai)."
+      },
+      "supportedReasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 80.0,
+          "cacheReadPrice": 80.0,
+          "cacheWritePrice": 1000.0,
+          "contextMax": 272000,
+          "inputPrice": 800.0,
+          "longContext": {
+            "cachePrice": 160.0,
+            "cacheReadPrice": 160.0,
+            "cacheWritePrice": 2000.0,
+            "contextMax": 922000,
+            "inputPrice": 1600.0,
+            "maxPromptTokens": 922000,
+            "outputPrice": 6000.0
+          },
+          "maxPromptTokens": 272000,
+          "outputPrice": 4000.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1050000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 922000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "gpt-5.6-sol-fast",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "very_high",
+      "name": "GPT-5.6 Sol Fast (Internal only)",
+      "policy": {
+        "state": "enabled",
+        "terms": "Enable access to the latest GPT-5.6 Sol Fast model from OpenAI. [Learn more about how GitHub Copilot serves GPT-5.6 Sol Fast](https://gh.io/copilot-openai)."
+      },
+      "supportedReasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 20.0,
+          "cacheReadPrice": 20.0,
+          "cacheWritePrice": 250.0,
+          "contextMax": 272000,
+          "inputPrice": 200.0,
+          "longContext": {
+            "cachePrice": 40.0,
+            "cacheReadPrice": 40.0,
+            "cacheWritePrice": 500.0,
+            "contextMax": 922000,
+            "inputPrice": 400.0,
+            "maxPromptTokens": 922000,
+            "outputPrice": 1800.0
+          },
+          "maxPromptTokens": 272000,
+          "outputPrice": 1200.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1050000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 922000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "gpt-5.6-terra",
+      "modelPickerCategory": "versatile",
+      "modelPickerPriceCategory": "medium",
+      "name": "GPT-5.6 Terra",
+      "policy": {
+        "state": "enabled",
+        "terms": "Enable access to the latest GPT-5.6 Terra model from OpenAI. [Learn more about how GitHub Copilot serves GPT-5.6 Terra](https://gh.io/copilot-openai)."
+      },
+      "supportedReasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 2.0,
+          "cacheReadPrice": 2.0,
+          "cacheWritePrice": 25.0,
+          "contextMax": 200000,
+          "inputPrice": 20.0,
+          "longContext": {
+            "cachePrice": 4.0,
+            "cacheReadPrice": 4.0,
+            "cacheWritePrice": 50.0,
+            "contextMax": 922000,
+            "inputPrice": 40.0,
+            "maxPromptTokens": 922000,
+            "outputPrice": 180.0
+          },
+          "maxPromptTokens": 200000,
+          "outputPrice": 120.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1050000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 922000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "gpt-5.6-luna",
+      "modelPickerCategory": "lightweight",
+      "modelPickerPriceCategory": "low",
+      "name": "GPT-5.6 Luna",
+      "policy": {
+        "state": "enabled",
+        "terms": "Enable access to the latest GPT-5.6 Luna model from OpenAI. [Learn more about how GitHub Copilot serves GPT-5.6 Luna](https://gh.io/copilot-openai)."
+      },
+      "supportedReasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 50.0,
+          "cacheReadPrice": 50.0,
+          "cacheWritePrice": 0.0,
+          "contextMax": 272000,
+          "inputPrice": 500.0,
+          "longContext": {
+            "cachePrice": 100.0,
+            "cacheReadPrice": 100.0,
+            "cacheWritePrice": 0.0,
+            "contextMax": 922000,
+            "inputPrice": 1000.0,
+            "maxPromptTokens": 922000,
+            "outputPrice": 4500.0
+          },
+          "maxPromptTokens": 272000,
+          "outputPrice": 3000.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1050000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 922000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "gpt-5.5",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "high",
+      "name": "GPT-5.5",
+      "policy": {
+        "state": "enabled",
+        "terms": "Enable access to the latest GPT-5.5 model from OpenAI. [Learn more about how GitHub Copilot serves GPT-5.5](https://gh.io/copilot-openai)."
+      },
+      "supportedReasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 25.0,
+          "cacheReadPrice": 25.0,
+          "cacheWritePrice": 0.0,
+          "contextMax": 272000,
+          "inputPrice": 250.0,
+          "longContext": {
+            "cachePrice": 50.0,
+            "cacheReadPrice": 50.0,
+            "cacheWritePrice": 0.0,
+            "contextMax": 922000,
+            "inputPrice": 500.0,
+            "maxPromptTokens": 922000,
+            "outputPrice": 2250.0
+          },
+          "maxPromptTokens": 272000,
+          "outputPrice": 1500.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1050000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 922000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "gpt-5.4",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "medium",
+      "name": "GPT-5.4",
+      "policy": {
+        "state": "enabled",
+        "terms": "Enable access to the latest GPT-5.4 model from OpenAI. [Learn more about how GitHub Copilot serves GPT-5.4](https://gh.io/copilot-openai)."
+      },
+      "supportedReasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 7.5,
+          "cacheReadPrice": 7.5,
+          "cacheWritePrice": 0.0,
+          "contextMax": 272000,
+          "inputPrice": 75.0,
+          "maxPromptTokens": 272000,
+          "outputPrice": 450.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 400000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 272000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "gpt-5.4-mini",
+      "modelPickerCategory": "lightweight",
+      "modelPickerPriceCategory": "low",
+      "name": "GPT-5.4 mini",
+      "policy": {
+        "state": "enabled",
+        "terms": "Enable access to the latest GPT-5.4 mini model from OpenAI. [Learn more about how GitHub Copilot serves GPT-5.4 mini](https://gh.io/copilot-openai)."
+      },
+      "supportedReasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 17.5,
+          "cacheReadPrice": 17.5,
+          "cacheWritePrice": 0.0,
+          "contextMax": 272000,
+          "inputPrice": 175.0,
+          "maxPromptTokens": 272000,
+          "outputPrice": 1400.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 400000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 272000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "gpt-5.3-codex",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "medium",
+      "name": "GPT-5.3-Codex",
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 2.5,
+          "cacheReadPrice": 2.5,
+          "cacheWritePrice": 0.0,
+          "inputPrice": 25.0,
+          "outputPrice": 200.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 264000,
+          "max_output_tokens": 64000,
+          "max_prompt_tokens": 128000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "gpt-5-mini",
+      "modelPickerCategory": "lightweight",
+      "modelPickerPriceCategory": "low",
+      "name": "GPT-5 mini",
+      "policy": {
+        "state": "enabled",
+        "terms": "Enable access to the latest GPT-5 mini model from OpenAI. [Learn more about how GitHub Copilot serves GPT-5 mini](https://gh.io/copilot-openai)."
+      },
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 2.0,
+          "cacheReadPrice": 2.0,
+          "cacheWritePrice": 25.0,
+          "contextMax": 128000,
+          "inputPrice": 20.0,
+          "maxPromptTokens": 128000,
+          "outputPrice": 120.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 256000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 128000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "mai-code-1.1-flash",
+      "modelPickerCategory": "lightweight",
+      "modelPickerPriceCategory": "low",
+      "name": "MAI-Code-1.1-Flash",
+      "policy": {
+        "state": "enabled",
+        "terms": ""
+      },
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 50.0,
+          "cacheReadPrice": 50.0,
+          "cacheWritePrice": 0.0,
+          "contextMax": 200000,
+          "inputPrice": 200.0,
+          "longContext": {
+            "cachePrice": 100.0,
+            "cacheReadPrice": 100.0,
+            "cacheWritePrice": 0.0,
+            "contextMax": 500000,
+            "inputPrice": 400.0,
+            "maxPromptTokens": 500000,
+            "outputPrice": 1200.0
+          },
+          "maxPromptTokens": 200000,
+          "outputPrice": 600.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 500000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 372000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "grok-4.5",
+      "modelPickerCategory": "versatile",
+      "modelPickerPriceCategory": "medium",
+      "name": "Grok 4.5",
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 20.0,
+          "cacheReadPrice": 20.0,
+          "cacheWritePrice": 500.0,
+          "contextMax": 200000,
+          "inputPrice": 400.0,
+          "longContext": {
+            "cachePrice": 20.0,
+            "cacheReadPrice": 20.0,
+            "cacheWritePrice": 500.0,
+            "contextMax": 872000,
+            "inputPrice": 400.0,
+            "maxPromptTokens": 872000,
+            "outputPrice": 2000.0
+          },
+          "maxPromptTokens": 200000,
+          "outputPrice": 2000.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1000000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 872000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "required",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "claude-opus-5.5",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "high",
+      "name": "Claude Opus 5.5",
+      "policy": {
+        "state": "enabled",
+        "terms": "Enable access to the latest Claude Opus 5.5 model from Anthropic. [Learn more about how GitHub Copilot serves Claude Opus 5.5](https://gh.io/copilot-claude-opus)."
+      },
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 100.0,
+          "cacheReadPrice": 100.0,
+          "cacheWritePrice": 1250.0,
+          "contextMax": 272000,
+          "inputPrice": 1000.0,
+          "longContext": {
+            "cachePrice": 200.0,
+            "cacheReadPrice": 200.0,
+            "cacheWritePrice": 2500.0,
+            "contextMax": 1050000,
+            "inputPrice": 2000.0,
+            "maxPromptTokens": 1050000,
+            "outputPrice": 7500.0
+          },
+          "maxPromptTokens": 272000,
+          "outputPrice": 5000.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1050000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 1050000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "gpt-6-astra",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "very_high",
+      "name": "GPT-6 Astra",
+      "policy": {
+        "state": "enabled",
+        "terms": "Enable access to the latest GPT-6 Astra model from OpenAI. [Learn more about how GitHub Copilot serves GPT-6 Astra](https://gh.io/copilot-openai)."
+      },
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "warningMessages": [
+        {
+          "code": "model_degraded_github",
+          "message": "GPT-6 Astra is currently experiencing issues. We are actively working to resolve the issue. In the meantime, you might want to use a different model."
+        }
+      ]
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 1.0,
+          "cacheReadPrice": 1.0,
+          "cacheWritePrice": 12.5,
+          "contextMax": 272000,
+          "inputPrice": 10.0,
+          "longContext": {
+            "cachePrice": 2.0,
+            "cacheReadPrice": 2.0,
+            "cacheWritePrice": 25.0,
+            "contextMax": 872000,
+            "inputPrice": 20.0,
+            "maxPromptTokens": 872000,
+            "outputPrice": 75.0
+          },
+          "maxPromptTokens": 272000,
+          "outputPrice": 50.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1000000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 872000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "gpt-6-luna",
+      "modelPickerCategory": "lightweight",
+      "modelPickerPriceCategory": "low",
+      "name": "GPT-6 Luna",
+      "policy": {
+        "state": "enabled",
+        "terms": "Enable access to the latest GPT-6 Luna model from OpenAI. [Learn more about how GitHub Copilot serves GPT-6 Luna](https://gh.io/copilot-openai)."
+      },
+      "supportedReasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 20.0,
+          "cacheReadPrice": 20.0,
+          "cacheWritePrice": 250.0,
+          "contextMax": 272000,
+          "inputPrice": 200.0,
+          "longContext": {
+            "cachePrice": 40.0,
+            "cacheReadPrice": 40.0,
+            "cacheWritePrice": 500.0,
+            "contextMax": 872000,
+            "inputPrice": 400.0,
+            "maxPromptTokens": 872000,
+            "outputPrice": 1500.0
+          },
+          "maxPromptTokens": 272000,
+          "outputPrice": 1000.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 1000000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 872000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/gif",
+              "application/pdf"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "gpt-6-sol",
+      "modelPickerCategory": "powerful",
+      "modelPickerPriceCategory": "medium",
+      "name": "GPT-6 Sol",
+      "policy": {
+        "state": "enabled",
+        "terms": "Enable access to the latest GPT-6 Sol model from OpenAI. [Learn more about how GitHub Copilot serves GPT-6 Sol](https://gh.io/copilot-openai)."
+      },
+      "supportedReasoningEfforts": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 50.0,
+          "cacheReadPrice": 50.0,
+          "cacheWritePrice": 0.0,
+          "contextMax": 200000,
+          "inputPrice": 200.0,
+          "longContext": {
+            "cachePrice": 100.0,
+            "cacheReadPrice": 100.0,
+            "cacheWritePrice": 0.0,
+            "contextMax": 500000,
+            "inputPrice": 400.0,
+            "maxPromptTokens": 500000,
+            "outputPrice": 1200.0
+          },
+          "maxPromptTokens": 200000,
+          "outputPrice": 600.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 500000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 372000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "grok-4.6",
+      "modelPickerCategory": "versatile",
+      "modelPickerPriceCategory": "medium",
+      "name": "Grok 4.6",
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "billing": {
+        "tokenPrices": {
+          "batchSize": 1000000,
+          "cachePrice": 50.0,
+          "cacheReadPrice": 50.0,
+          "cacheWritePrice": 0.0,
+          "contextMax": 200000,
+          "inputPrice": 200.0,
+          "longContext": {
+            "cachePrice": 100.0,
+            "cacheReadPrice": 100.0,
+            "cacheWritePrice": 0.0,
+            "contextMax": 500000,
+            "inputPrice": 400.0,
+            "maxPromptTokens": 500000,
+            "outputPrice": 1200.0
+          },
+          "maxPromptTokens": 200000,
+          "outputPrice": 600.0
+        }
+      },
+      "capabilities": {
+        "limits": {
+          "max_context_window_tokens": 500000,
+          "max_output_tokens": 128000,
+          "max_prompt_tokens": 372000,
+          "vision": {
+            "max_prompt_image_size": 3145728,
+            "max_prompt_images": 1,
+            "supported_media_types": [
+              "image/jpeg",
+              "image/png"
+            ]
+          }
+        },
+        "supports": {
+          "adaptive_thinking": "unsupported",
+          "reasoningEffort": true,
+          "vision": true
+        }
+      },
+      "id": "grok-4.7",
+      "modelPickerCategory": "versatile",
+      "modelPickerPriceCategory": "medium",
+      "name": "Grok 4.7",
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high"
+      ]
+    }
+  ]
+}
