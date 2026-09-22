@@ -51,7 +51,7 @@ not from a public registry listing.
 ```bash
 cd benchmark
 uv sync
-uv run pytest                 # 115 tests, no model calls
+uv run pytest                 # 133 tests, no model calls
 uv run radius-perf-smoke --model gpt-5.4 --output ../artifacts/smoke
 ```
 
@@ -93,10 +93,51 @@ only durable copy.
 File reads and writes are confined to the assigned temporary workspace, and
 symlink escapes are defeated by resolving paths before checking them.
 
-**Shell commands cannot be confined through the permission API.**
-`PermissionRequestShell.possible_paths` is empty even for `cat /etc/hosts`, so
-a handler that trusts it will approve escapes. Shell is therefore **disabled by
-default**; when enabled, commands are screened statically for absolute, `~`,
-and `..` path tokens. That screen is **best effort** — command substitution or
-encoding defeats any static check. Real confinement requires the container
-mount boundary in a later increment.
+**Shell commands cannot be confined through the permission API.** Three
+fields of `PermissionRequestShell` are unreliable on CLI 1.0.83, and two of
+them actively mislead:
+
+| Field | For `echo probe > /tmp/x` | Consequence |
+|---|---|---|
+| `possible_paths` | `[]` (also `[]` for `cat /etc/hosts`) | no path to check |
+| `has_write_file_redirection` | `False` | a check named for this case never fires |
+| `command_segments[*].full_command_text` | `"echo probe"` | truncated at `>`, so no outside path is visible |
+
+The screen therefore reads the **top-level `full_command_text`** and nothing
+else. The segment list is the more natural-looking choice precisely because it
+appears tokenized and structured — do not switch to it. A regression test
+plants a command whose segments differ from the full text and proves the
+screen still denies it.
+
+Shell is **disabled by default**; when enabled, commands are screened
+statically for absolute, `~`, and `..` path tokens.
+
+**That screen is defence in depth, not confinement.** It matches escape-shaped
+*tokens*, so any construction that removes the literal token defeats it.
+`isolation-report.json` records this boundary explicitly under
+`knownLimitations`: of six limitation probes, three defeat the screen
+(base64-encoded, interpreter-constructed, and variable-assembled paths). Those
+probes are observations, never assertions, and are excluded from
+`allFailedClosed` so a lucky denial cannot read as proof.
+
+Real filesystem confinement requires the container mount boundary, which makes
+the Compose increment a security control rather than a convenience.
+
+### Confinement is a run gate, not a metric
+
+Because the gap is invisible to tests written against the API, confinement is
+established by a **live escape probe in every scored run**, and the verdict
+**stops the run**. `evaluate_isolation_gate` requires every check to be
+*affirmatively* satisfied:
+
+- static probes ran and all failed closed;
+- a live probe is present — a scored run may not skip it;
+- the live probe is **non-vacuous**: the agent actually attempted an escape;
+- zero shell requests approved, no canary leak, no absolute-path write.
+
+Missing evidence fails. A run whose agent never attempted an escape fails as
+vacuous rather than passing trivially. The gate is enforced inside `run_smoke`,
+so a programmatic caller cannot bypass it by not checking an exit code, and it
+raises only *after* the run record is written so a failed run stays auditable.
+`--skip-live-escape-probe` explicitly downgrades the run to `scored: false`,
+recorded in the artifact, so the degradation is visible rather than silent.

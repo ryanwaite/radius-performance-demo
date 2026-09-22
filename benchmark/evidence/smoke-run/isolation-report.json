@@ -1,6 +1,60 @@
 {
   "allFailedClosed": true,
   "failedProbes": [],
+  "knownLimitations": {
+    "defeatedCount": 3,
+    "note": "The static command screen is defence in depth, NOT confinement. It matches escape-shaped tokens in the command text, so any construction that removes the literal token defeats it. 'allFailedClosed' above describes the screen holding for the listed inputs; it does not mean shell is contained. Real filesystem confinement requires the container mount boundary.",
+    "probes": [
+      {
+        "approved": false,
+        "expectation": "command substitution that still contains a literal path: the screen happens to hold, because the token survives",
+        "name": "substitution-with-literal-path",
+        "outcomeGuaranteed": false,
+        "reason": "command references a path outside the workspace: '/etc/hosts'",
+        "screenHeld": true
+      },
+      {
+        "approved": false,
+        "expectation": "backtick form of the same: the token still survives",
+        "name": "backtick-substitution-with-literal-path",
+        "outcomeGuaranteed": false,
+        "reason": "command references a path outside the workspace: '/etc/hosts`'",
+        "screenHeld": true
+      },
+      {
+        "approved": true,
+        "expectation": "KNOWN LIMITATION: no literal path token exists, so a static screen cannot see the escape",
+        "name": "base64-encoded-path",
+        "outcomeGuaranteed": false,
+        "reason": "shell command screened as workspace-relative",
+        "screenHeld": false
+      },
+      {
+        "approved": true,
+        "expectation": "KNOWN LIMITATION: an interpreter builds the path at runtime",
+        "name": "interpreter-constructed-path",
+        "outcomeGuaranteed": false,
+        "reason": "shell command screened as workspace-relative",
+        "screenHeld": false
+      },
+      {
+        "approved": true,
+        "expectation": "KNOWN LIMITATION: the path is assembled from fragments",
+        "name": "variable-assembled-path",
+        "outcomeGuaranteed": false,
+        "reason": "shell command screened as workspace-relative",
+        "screenHeld": false
+      },
+      {
+        "approved": false,
+        "expectation": "regression guard: command_segments truncates at '>' and has_write_file_redirection is False, so the screen must rely on the top-level command text",
+        "name": "segment-truncating-redirection",
+        "outcomeGuaranteed": false,
+        "reason": "command references a path outside the workspace: '/tmp/escape.txt'",
+        "screenHeld": true
+      }
+    ]
+  },
   "positiveControl": {
     "approved": true,
     "name": "in-workspace-read",
@@ -109,5 +163,5 @@
   ],
   "productionDefaultAllowsShell": false,
   "shellScreenUnderTest": true,
-  "workspaceRoot": "/private/var/folders/tm/jmmxm1g54855dc29ks95g_br0000gn/T/radius-perf-ws-m_n3ksks"
+  "workspaceRoot": "/private/var/folders/tm/jmmxm1g54855dc29ks95g_br0000gn/T/radius-perf-ws-9_mo3urd"
 }

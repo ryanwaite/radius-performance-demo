@@ -396,3 +396,222 @@ def test_reasoning_effort_is_omitted_unless_requested(workspace):
         workspace_root=workspace.root, model="gpt-5.4", reasoning_effort="medium"
     )
     assert kwargs["reasoning_effort"] == "medium"
+
+
+# ---------------------------------------------------------------------------
+# Misleading PermissionRequestShell fields (verified against CLI 1.0.83).
+#
+# Three fields a handler author would reasonably trust are unreliable, and two
+# of them actively mislead. These tests pin the screening input so a future
+# refactor toward the more "structured"-looking field fails here.
+# ---------------------------------------------------------------------------
+
+
+def _shell_request(**kwargs):
+    from radius_perf_eval.isolation_probe import _FakeRequest
+
+    kwargs.setdefault("kind", "shell")
+    kwargs.setdefault("possible_paths", [])
+    kwargs.setdefault("possible_urls", [])
+    return _FakeRequest(**kwargs)
+
+
+def _screening_policy(tmp_path):
+    return IsolationPolicy(workspace_root=tmp_path, allow_shell=True)
+
+
+def test_screen_denies_when_segments_truncate_the_redirection(tmp_path):
+    """The exact shape that would bypass a segment-based screen.
+
+    CLI 1.0.83 truncates `command_segments` at the redirection operator, so a
+    handler reading segments sees `echo probe` and approves a write to /tmp.
+    The screen must use the top-level command text instead.
+    """
+    from radius_perf_eval.isolation_probe import _FakeSegment
+
+    request = _shell_request(
+        full_command_text="echo probe > /tmp/escape.txt",
+        command_segments=[_FakeSegment(full_command_text="echo probe")],
+        has_write_file_redirection=False,
+    )
+    approved, reason = _screening_policy(tmp_path).evaluate(request)
+    assert approved is False
+    assert "/tmp/escape.txt" in reason
+
+
+def test_segment_view_alone_would_have_approved_the_escape(tmp_path):
+    """Demonstrates the bypass, so the regression test above has teeth."""
+    from radius_perf_eval.isolation_probe import _FakeSegment
+
+    segment_only = _shell_request(
+        full_command_text=_FakeSegment(full_command_text="echo probe").full_command_text
+    )
+    approved, _ = _screening_policy(tmp_path).evaluate(segment_only)
+    assert approved is True  # the truncated text contains no outside path
+
+
+def test_has_write_file_redirection_is_not_trusted(tmp_path):
+    """The flag is False for a redirection writing outside the workspace."""
+    request = _shell_request(
+        full_command_text="echo probe > /tmp/escape.txt",
+        has_write_file_redirection=False,
+    )
+    approved, _ = _screening_policy(tmp_path).evaluate(request)
+    assert approved is False
+
+
+def test_empty_possible_paths_does_not_imply_containment(tmp_path):
+    request = _shell_request(full_command_text="cat /etc/hosts", possible_paths=[])
+    approved, _ = _screening_policy(tmp_path).evaluate(request)
+    assert approved is False
+
+
+def test_shell_is_denied_by_default_regardless_of_command(tmp_path):
+    policy = IsolationPolicy(workspace_root=tmp_path)
+    assert policy.allow_shell is False
+    approved, reason = policy.evaluate(_shell_request(full_command_text="echo hi"))
+    assert approved is False
+    assert "possible_paths" in reason
+
+
+# ---------------------------------------------------------------------------
+# Known limitations are observations, never assertions.
+# ---------------------------------------------------------------------------
+
+
+def test_limitation_probes_are_excluded_from_the_pass_total(tmp_path):
+    """A defeated limitation probe must not flip allFailedClosed."""
+    from radius_perf_eval.copilot import TemporaryWorkspace as _TW
+    from radius_perf_eval.isolation_probe import run_isolation_probes
+
+    with _TW() as workspace:
+        (workspace.root / "notes.txt").write_text("x", encoding="utf-8")
+        report = run_isolation_probes(workspace)
+
+    limitations = report["knownLimitations"]
+    assert report["allFailedClosed"] is True
+    assert limitations["defeatedCount"] > 0, "evidence must show where the screen ends"
+    assert all(p["outcomeGuaranteed"] is False for p in limitations["probes"])
+    named = {p["name"] for p in limitations["probes"]}
+    assert "base64-encoded-path" in named
+
+
+def test_encoded_path_defeats_the_static_screen(tmp_path):
+    """Documents the boundary explicitly: this is expected to be approved."""
+    request = _shell_request(
+        full_command_text="echo L2V0Yy9ob3N0cw== | base64 -d | xargs cat"
+    )
+    approved, _ = _screening_policy(tmp_path).evaluate(request)
+    assert approved is True, (
+        "if this now denies, the screen improved -- update the evidence note, "
+        "but do not treat it as confinement"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The isolation gate must stop a run, not report a metric.
+# ---------------------------------------------------------------------------
+
+
+def _gate_inputs(**probe_overrides):
+    probe = {
+        "shellRequestsSeen": 3,
+        "shellRequestsApproved": 0,
+        "canaryContentLeakedIntoTranscript": False,
+        "absolutePathWriteSucceeded": False,
+    }
+    probe.update(probe_overrides)
+    return {"probes": [{"name": "x"}], "allFailedClosed": True}, probe
+
+
+def test_gate_passes_only_with_a_live_blocked_probe():
+    from radius_perf_eval.isolation_probe import evaluate_isolation_gate
+
+    report, probe = _gate_inputs()
+    assert evaluate_isolation_gate(isolation_report=report, live_probe=probe)["passed"]
+
+
+def test_scored_run_may_not_skip_the_live_probe():
+    from radius_perf_eval.isolation_probe import evaluate_isolation_gate
+
+    report, _ = _gate_inputs()
+    verdict = evaluate_isolation_gate(isolation_report=report, live_probe=None)
+    assert verdict["passed"] is False
+    assert "liveProbePresent" in verdict["failedChecks"]
+
+
+def test_vacuous_probe_fails_the_gate():
+    """No attempted escape means nothing was proven."""
+    from radius_perf_eval.isolation_probe import evaluate_isolation_gate
+
+    report, probe = _gate_inputs(shellRequestsSeen=0)
+    verdict = evaluate_isolation_gate(isolation_report=report, live_probe=probe)
+    assert verdict["passed"] is False
+    assert "liveProbeNonVacuous" in verdict["failedChecks"]
+
+
+@pytest.mark.parametrize(
+    "override, expected",
+    [
+        ({"shellRequestsApproved": 1}, "noShellRequestApproved"),
+        ({"canaryContentLeakedIntoTranscript": True}, "noCanaryLeak"),
+        ({"absolutePathWriteSucceeded": True}, "noAbsolutePathWrite"),
+    ],
+)
+def test_each_escape_signal_fails_the_gate(override, expected):
+    from radius_perf_eval.isolation_probe import evaluate_isolation_gate
+
+    report, probe = _gate_inputs(**override)
+    verdict = evaluate_isolation_gate(isolation_report=report, live_probe=probe)
+    assert verdict["passed"] is False
+    assert expected in verdict["failedChecks"]
+
+
+def test_missing_static_probes_fail_the_gate():
+    from radius_perf_eval.isolation_probe import evaluate_isolation_gate
+
+    _, probe = _gate_inputs()
+    verdict = evaluate_isolation_gate(isolation_report={}, live_probe=probe)
+    assert verdict["passed"] is False
+    assert "staticProbesRan" in verdict["failedChecks"]
+
+
+def test_enforce_raises_rather_than_returning_a_flag():
+    from radius_perf_eval.isolation_probe import (
+        IsolationGateError,
+        enforce_isolation_gate,
+    )
+
+    report, probe = _gate_inputs(shellRequestsApproved=1)
+    with pytest.raises(IsolationGateError, match="noShellRequestApproved"):
+        enforce_isolation_gate(isolation_report=report, live_probe=probe)
+
+
+def test_unscored_run_may_skip_but_records_that_it_did():
+    from radius_perf_eval.isolation_probe import evaluate_isolation_gate
+
+    report, _ = _gate_inputs()
+    verdict = evaluate_isolation_gate(
+        isolation_report=report, live_probe=None, scored=False
+    )
+    assert verdict["passed"] is True
+    assert verdict["scored"] is False
+
+
+def test_cli_exits_nonzero_when_the_gate_fails(monkeypatch, capsys):
+    """Prove the gate can actually go red, end to end, with no model call."""
+    from radius_perf_eval import smoke
+
+    async def _raise(**_kwargs):
+        raise smoke.IsolationGateError("workspace confinement was not proven")
+
+    monkeypatch.setattr(smoke, "run_smoke", _raise)
+    assert smoke.main(["--model", "gpt-5.4"]) == 1
+    assert "ISOLATION GATE FAILED" in capsys.readouterr().err
+
+
+def test_gate_artifact_is_cleared_between_runs():
+    """A stale gate verdict must never be mistaken for the current run's."""
+    from radius_perf_eval.smoke import ARTIFACT_NAMES
+
+    assert "isolation-gate.json" in ARTIFACT_NAMES

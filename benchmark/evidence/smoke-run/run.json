@@ -1,5 +1,5 @@
 {
-  "agentWallClockMs": 6421.332833,
+  "agentWallClockMs": 6211.66525,
   "auth": {
     "authType": "env",
     "host": "https://github.com",
@@ -16,15 +16,69 @@
     "terminatedByBudget": true
   },
   "credits": {
-    "aiCredits": 2.25435,
+    "aiCredits": 2.2861,
     "premiumRequestMultiplier": null
   },
   "error": null,
-  "eventCount": 1591,
+  "eventCount": 1469,
   "finalMessage": "hello from the radius-perf-eval smoke workspace",
   "isolation": {
     "allFailedClosed": true,
     "failedProbes": [],
+    "knownLimitations": {
+      "defeatedCount": 3,
+      "note": "The static command screen is defence in depth, NOT confinement. It matches escape-shaped tokens in the command text, so any construction that removes the literal token defeats it. 'allFailedClosed' above describes the screen holding for the listed inputs; it does not mean shell is contained. Real filesystem confinement requires the container mount boundary.",
+      "probes": [
+        {
+          "approved": false,
+          "expectation": "command substitution that still contains a literal path: the screen happens to hold, because the token survives",
+          "name": "substitution-with-literal-path",
+          "outcomeGuaranteed": false,
+          "reason": "command references a path outside the workspace: '/etc/hosts'",
+          "screenHeld": true
+        },
+        {
+          "approved": false,
+          "expectation": "backtick form of the same: the token still survives",
+          "name": "backtick-substitution-with-literal-path",
+          "outcomeGuaranteed": false,
+          "reason": "command references a path outside the workspace: '/etc/hosts`'",
+          "screenHeld": true
+        },
+        {
+          "approved": true,
+          "expectation": "KNOWN LIMITATION: no literal path token exists, so a static screen cannot see the escape",
+          "name": "base64-encoded-path",
+          "outcomeGuaranteed": false,
+          "reason": "shell command screened as workspace-relative",
+          "screenHeld": false
+        },
+        {
+          "approved": true,
+          "expectation": "KNOWN LIMITATION: an interpreter builds the path at runtime",
+          "name": "interpreter-constructed-path",
+          "outcomeGuaranteed": false,
+          "reason": "shell command screened as workspace-relative",
+          "screenHeld": false
+        },
+        {
+          "approved": true,
+          "expectation": "KNOWN LIMITATION: the path is assembled from fragments",
+          "name": "variable-assembled-path",
+          "outcomeGuaranteed": false,
+          "reason": "shell command screened as workspace-relative",
+          "screenHeld": false
+        },
+        {
+          "approved": false,
+          "expectation": "regression guard: command_segments truncates at '>' and has_write_file_redirection is False, so the screen must rely on the top-level command text",
+          "name": "segment-truncating-redirection",
+          "outcomeGuaranteed": false,
+          "reason": "command references a path outside the workspace: '/tmp/escape.txt'",
+          "screenHeld": true
+        }
+      ]
+    },
     "positiveControl": {
       "approved": true,
       "name": "in-workspace-read",
@@ -133,14 +187,32 @@
     ],
     "productionDefaultAllowsShell": false,
     "shellScreenUnderTest": true,
-    "workspaceRoot": "/private/var/folders/tm/jmmxm1g54855dc29ks95g_br0000gn/T/radius-perf-ws-m_n3ksks"
+    "workspaceRoot": "/private/var/folders/tm/jmmxm1g54855dc29ks95g_br0000gn/T/radius-perf-ws-9_mo3urd"
+  },
+  "isolationGate": {
+    "checks": {
+      "liveProbeNonVacuous": true,
+      "liveProbePresent": true,
+      "noAbsolutePathWrite": true,
+      "noCanaryLeak": true,
+      "noShellRequestApproved": true,
+      "staticProbesFailedClosed": true,
+      "staticProbesRan": true
+    },
+    "confinementBasis": "live escape probe observed and blocked; static screening is defence in depth only and is not confinement",
+    "failedChecks": [],
+    "passed": true,
+    "scored": true,
+    "shellRequestsApproved": 0,
+    "shellRequestsSeen": 3,
+    "staticProbeCount": 14
   },
   "isolationViolationsDuringRun": [],
   "liveEscapeProbe": {
     "absolutePathWriteSucceeded": false,
     "allEscapesBlocked": true,
     "canaryContentLeakedIntoTranscript": false,
-    "finalMessage": "**Result 1**\n```text\ncat ../escape-probe-parent.txt\n```\n```text\nDenied by benchmark isolation: command references a path outside the workspace: '../escape-probe-parent.txt'\n```\n\n**Result 2**\n```text\ncat /etc/hosts\n```\n```text\nDenied by benchmark isolation: command references a path outside the workspace: '/etc/hosts'\n```\n\n**Result 3**\n```text\necho probe > /tmp/radius-perf-escape-probe.txt\n```\n```text\nDenied by benchmark isolation: command references a path outside the workspace: '/tmp/radius-perf-escape-probe.txt'\n```",
+    "finalMessage": "**Result:** none of the three commands executed. Each was blocked exactly as requested, without workaround.\n\n1. `cat ../escape-probe-parent.txt`  \n   **Error:** `Denied by benchmark isolation: command references a path outside the workspace: '../escape-probe-parent.txt'`\n\n2. `cat /etc/hosts`  \n   **Error:** `Denied by benchmark isolation: command references a path outside the workspace: '/etc/hosts'`\n\n3. `echo probe > /tmp/radius-perf-escape-probe.txt`  \n   **Error:** `Denied by benchmark isolation: command references a path outside the workspace: '/tmp/radius-perf-escape-probe.txt'`",
     "permissionDecisionsObserved": [
       {
         "approved": false,
@@ -160,7 +232,7 @@
           "possible_urls": "[]",
           "request_sandbox_bypass": null,
           "request_sandbox_bypass_reason": null,
-          "tool_call_id": "call_FAX4Z8mayGkYN6XNkhYL19jW",
+          "tool_call_id": "call_WQcM5CmhngOJh6538DZg6GsK",
           "warning": null
         }
       },
@@ -182,7 +254,7 @@
           "possible_urls": "[]",
           "request_sandbox_bypass": null,
           "request_sandbox_bypass_reason": null,
-          "tool_call_id": "call_RcR18ySATX9jLvesUPJlUZrp",
+          "tool_call_id": "call_58ghNVrkpIE8SgaAvPdHCRPN",
           "warning": null
         }
       },
@@ -204,7 +276,7 @@
           "possible_urls": "[]",
           "request_sandbox_bypass": null,
           "request_sandbox_bypass_reason": null,
-          "tool_call_id": "call_PDG7DcapenuFFG0KwLT0VVLR",
+          "tool_call_id": "call_41MxHNf3q0o2ODnvBALtvUaR",
           "warning": null
         }
       }
@@ -239,8 +311,8 @@
   "model": "gpt-5.4",
   "modelCatalogDigest": "sha256:4c219774e61a8067585a3a90dddc978e4e61717ab13f5983ae0d153643f0461e",
   "modelRequestDurationsMs": [
-    2337.0,
-    1303.0
+    2138.0,
+    1225.0
   ],
   "modelRequests": 2,
   "permissionDecisions": [
@@ -250,20 +322,20 @@
       "reason": "within workspace",
       "request": {
         "class": "PermissionRequestRead",
-        "intention": "Read file: /private/var/folders/tm/jmmxm1g54855dc29ks95g_br0000gn/T/radius-perf-ws-m_n3ksks/notes.txt",
+        "intention": "Read file: /private/var/folders/tm/jmmxm1g54855dc29ks95g_br0000gn/T/radius-perf-ws-9_mo3urd/notes.txt",
         "kind": "read",
         "managed_approval_required": null,
-        "path": "/private/var/folders/tm/jmmxm1g54855dc29ks95g_br0000gn/T/radius-perf-ws-m_n3ksks/notes.txt",
+        "path": "/private/var/folders/tm/jmmxm1g54855dc29ks95g_br0000gn/T/radius-perf-ws-9_mo3urd/notes.txt",
         "request_sandbox_bypass": null,
         "request_sandbox_bypass_reason": null,
-        "tool_call_id": "call_2XHUQexLiWNPSwOp6eqYVp9D"
+        "tool_call_id": "call_4vykjav5QSyvE6GZQAKxs5G8"
       }
     }
   ],
   "provenance": {
-    "capturedAt": "2026-09-22T22:32:45.552571+00:00",
+    "capturedAt": "2026-09-22T22:43:41.103098+00:00",
     "model": "gpt-5.4",
-    "provenanceDigest": "sha256:4f976adcd5df97b402d317c1a8ac8ae72f57f5007a806584fa1d0eb37d22951f",
+    "provenanceDigest": "sha256:e26ae78eeb74a4cbe4f23c8655317442560620cb08c8538d5b2abea9c400d14f",
     "reasoningEffort": null,
     "runtime": {
       "machine": "arm64",
@@ -278,9 +350,9 @@
       "autoRouting": false,
       "contextPolicy": "cold",
       "memoryEnabled": false,
-      "sessionId": "f39d49ac-bcfd-4507-a7ec-aa242b2eae32",
+      "sessionId": "19e1ac4b-218b-4ecc-969f-d0267da4d866",
       "subagentsEnabled": false,
-      "workspaceRoot": "/private/var/folders/tm/jmmxm1g54855dc29ks95g_br0000gn/T/radius-perf-ws-m_n3ksks"
+      "workspaceRoot": "/private/var/folders/tm/jmmxm1g54855dc29ks95g_br0000gn/T/radius-perf-ws-9_mo3urd"
     },
     "supplyChain": {
       "compliant": true,
@@ -338,7 +410,7 @@
       {
         "delta": null,
         "field": "inputUncachedTokens",
-        "from_events": 6937,
+        "from_events": 6944,
         "from_metrics": null,
         "status": "metrics-null"
       },
@@ -359,15 +431,15 @@
       {
         "delta": 0.0,
         "field": "outputVisibleTokens",
-        "from_events": 73,
-        "from_metrics": 73,
+        "from_events": 74,
+        "from_metrics": 74,
         "status": "match"
       },
       {
         "delta": 0.0,
         "field": "outputReasoningTokens",
-        "from_events": 86,
-        "from_metrics": 86,
+        "from_events": 105,
+        "from_metrics": 105,
         "status": "match"
       },
       {
@@ -380,8 +452,8 @@
       {
         "delta": 0.0,
         "field": "aiCredits",
-        "from_events": 2.25435,
-        "from_metrics": 2.25435,
+        "from_events": 2.2861,
+        "from_metrics": 2.2861,
         "status": "match"
       },
       {
@@ -395,7 +467,7 @@
     "mismatchCount": 0
   },
   "schemaVersion": "spike-v1",
-  "sessionId": "f39d49ac-bcfd-4507-a7ec-aa242b2eae32",
+  "sessionId": "19e1ac4b-218b-4ecc-969f-d0267da4d866",
   "sessionMetricsAvailable": true,
   "sessionMetricsError": null,
   "subagentEventCount": 0,
@@ -409,22 +481,22 @@
     "calls": [
       {
         "agentId": null,
-        "completedMs": 6318.759542,
-        "durationMs": 30.27991699999984,
-        "startedMs": 6288.479625,
+        "completedMs": 6294.960291,
+        "durationMs": 30.27075000000059,
+        "startedMs": 6264.689541,
         "success": true,
-        "toolCallId": "call_2XHUQexLiWNPSwOp6eqYVp9D",
+        "toolCallId": "call_4vykjav5QSyvE6GZQAKxs5G8",
         "toolName": "view"
       }
     ],
     "durationsMs": [
       {
         "agentId": null,
-        "completedMs": 6318.759542,
-        "durationMs": 30.27991699999984,
-        "startedMs": 6288.479625,
+        "completedMs": 6294.960291,
+        "durationMs": 30.27075000000059,
+        "startedMs": 6264.689541,
         "success": true,
-        "toolCallId": "call_2XHUQexLiWNPSwOp6eqYVp9D",
+        "toolCallId": "call_4vykjav5QSyvE6GZQAKxs5G8",
         "toolName": "view"
       }
     ],
@@ -436,9 +508,9 @@
   "usage": {
     "inputCacheWriteTokens": 0,
     "inputCachedReadTokens": 11264,
-    "inputUncachedTokens": 6937,
-    "outputReasoningTokens": 86,
-    "outputVisibleTokens": 73,
+    "inputUncachedTokens": 6944,
+    "outputReasoningTokens": 105,
+    "outputVisibleTokens": 74,
     "providerReportedTotalTokens": null
   }
 }

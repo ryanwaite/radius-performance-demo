@@ -9,7 +9,8 @@ The experiment plan (``docs/specs/copilot-radius-experiment-plan.md``,
 4. Reconcile the accumulated-usage RPC against the summed per-call events, and
    keep a mismatch as an artifact instead of overwriting either source.
 
-Known overlap semantics for the GitHub Copilot SDK 1.0.14 wire schema:
+Known overlap semantics for the GitHub Copilot SDK 1.0.13 wire schema
+(pinned; re-verify these on any SDK or CLI bump):
 
 * ``reasoningTokens`` is documented as a **subset of** ``outputTokens``, so
   visible output is ``outputTokens - reasoningTokens``.

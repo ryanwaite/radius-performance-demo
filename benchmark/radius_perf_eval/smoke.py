@@ -37,7 +37,11 @@ from .copilot import (
     fetch_model_catalog,
 )
 from .events import EventRecorder, MonotonicClock
-from .isolation_probe import run_isolation_probes
+from .isolation_probe import (
+    IsolationGateError,
+    evaluate_isolation_gate,
+    run_isolation_probes,
+)
 from .usage import (
     TokenOverlapPolicy,
     build_normalized_record,
@@ -82,6 +86,7 @@ ARTIFACT_NAMES = (
     "provenance.json",
     "usage-normalized.json",
     "isolation-report.json",
+    "isolation-gate.json",
     "live-escape-probe.json",
     "budget-termination.json",
     "run.json",
@@ -122,6 +127,7 @@ async def run_smoke(
     prompt_timeout_s: float,
     verify_budget_termination: bool,
     live_escape_probe: bool = True,
+    scored: bool = False,
 ) -> dict[str, Any]:
     from copilot import CopilotClient
 
@@ -235,6 +241,12 @@ async def run_smoke(
             if outcome.session_metrics
             else None
         )
+        # Confinement is established by observing a live escape attempt fail,
+        # never by test coverage, because the permission API hides shell paths.
+        gate_verdict = evaluate_isolation_gate(
+            isolation_report=isolation, live_probe=live_escape, scored=scored
+        )
+
         rec = reconcile(from_events, from_metrics)
         normalized = build_normalized_record(
             model=model,
@@ -274,6 +286,7 @@ async def run_smoke(
                 "toolTimeline": outcome.tool_timeline,
                 "isolation": isolation,
                 "liveEscapeProbe": live_escape,
+                "isolationGate": gate_verdict,
                 "isolationViolationsDuringRun": outcome.isolation_violations,
                 "permissionDecisions": outcome.permission_decisions,
                 "subagentEventCount": outcome.subagent_events,
@@ -288,6 +301,15 @@ async def run_smoke(
             }
         )
         _write_json(output_dir / "run.json", summary)
+        _write_json(output_dir / "isolation-gate.json", gate_verdict)
+        recorder.record("harness", "isolation.gate", gate_verdict)
+        # Enforced only after the record is durably written, so a failed run is
+        # still fully auditable rather than vanishing with the exception.
+        if not gate_verdict["passed"]:
+            raise IsolationGateError(
+                "workspace confinement was not proven; failed checks: "
+                + ", ".join(gate_verdict["failedChecks"])
+            )
         return summary
     finally:
         recorder.record("harness", "client.stop", {})
@@ -445,27 +467,35 @@ def main(argv: list[str] | None = None) -> int:
     if args.model.strip().lower() == "auto":
         parser.error("auto routing is prohibited; pass an explicit model id")
 
-    summary = asyncio.run(
-        run_smoke(
-            model=args.model,
-            output_dir=args.output,
-            wall_clock_ms=args.wall_clock_ms,
-            max_model_requests=args.max_model_requests,
-            max_tool_calls=args.max_tool_calls,
-            max_ai_credits=args.max_ai_credits,
-            prompt_timeout_s=args.prompt_timeout_s,
-            verify_budget_termination=not args.skip_budget_termination_check,
-            live_escape_probe=not args.skip_live_escape_probe,
+    try:
+        summary = asyncio.run(
+            run_smoke(
+                model=args.model,
+                output_dir=args.output,
+                wall_clock_ms=args.wall_clock_ms,
+                max_model_requests=args.max_model_requests,
+                max_tool_calls=args.max_tool_calls,
+                max_ai_credits=args.max_ai_credits,
+                prompt_timeout_s=args.prompt_timeout_s,
+                verify_budget_termination=not args.skip_budget_termination_check,
+                live_escape_probe=not args.skip_live_escape_probe,
+                # Skipping the probe explicitly downgrades the run to unscored,
+                # so the artifact self-declares that confinement was not gated.
+                scored=not args.skip_live_escape_probe,
+            )
         )
-    )
+    except IsolationGateError as exc:
+        # The run record is already on disk; surface the refusal loudly.
+        print(f"ISOLATION GATE FAILED: {exc}", file=sys.stderr)
+        return 1
 
     print(json.dumps(summary, indent=2, default=str, sort_keys=True))
-    probe = summary.get("liveEscapeProbe")
+    # The isolation gate already raised if confinement was unproven; these are
+    # the remaining exit-criterion conditions.
     ok = (
         summary.get("terminalClass") == "validated_success"
-        and summary.get("isolation", {}).get("allFailedClosed") is True
+        and summary.get("isolationGate", {}).get("passed") is True
         and summary.get("subagentEventCount") == 0
-        and (probe is None or probe.get("allEscapesBlocked") is True)
     )
     return 0 if ok else 1
 

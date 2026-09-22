@@ -186,16 +186,28 @@ class IsolationPolicy:
     introduced by a future runtime cannot silently widen access.
 
     **Shell is denied by default, and this is not a conservative default --
-    it is required for correctness.** ``PermissionRequestShell.possible_paths``
-    is empty even for a command that plainly names an absolute path (verified
-    against CLI 1.0.83: ``cat /etc/hosts`` arrives with ``possible_paths=[]``).
-    A handler therefore has no reliable structured signal to confine a shell
-    command, and approving on that basis fails open.
+    it is required for correctness.** Three separate fields of
+    ``PermissionRequestShell`` are unreliable, all verified against CLI 1.0.83:
 
-    With ``allow_shell=True`` the policy falls back to screening
+    * ``possible_paths`` is empty even for a command that plainly names an
+      absolute path (``cat /etc/hosts`` arrives with ``possible_paths=[]``).
+    * ``has_write_file_redirection`` is ``False`` for
+      ``echo probe > /tmp/x``, a redirection writing outside the workspace.
+      A check named for exactly this case does not fire.
+    * ``command_segments[*].full_command_text`` truncates at the redirection
+      operator, reporting ``echo probe`` for that same command, so a
+      segment-based screen sees nothing outside the workspace.
+
+    A handler therefore has no reliable structured signal to confine a shell
+    command, and approving on any of these bases fails open. This is worse
+    than a missing signal: two of the three actively mislead, and the third is
+    the representation a careful author is most likely to reach for.
+
+    With ``allow_shell=True`` the policy falls back to screening the top-level
     ``full_command_text`` for escape-shaped tokens. That is **best effort
     only**: command substitution, encoding, or an interpreter can defeat any
-    static screen. Real filesystem confinement must come from the container
+    static screen, so it is defence in depth and must never be described as
+    confinement. Real filesystem confinement must come from the container
     mount boundary, which is a separate increment of the plan.
     """
 
@@ -256,6 +268,18 @@ class IsolationPolicy:
                 detail,
             )
 
+        # Screen `full_command_text` and nothing else. Two sibling fields look
+        # like better inputs and are both unsafe, verified against CLI 1.0.83:
+        #
+        #   * `command_segments[*].full_command_text` truncates at a
+        #     redirection operator. For `echo probe > /tmp/x`, the segment
+        #     reads `echo probe`, so a segment-based screen sees no outside
+        #     path and approves the write.
+        #   * `has_write_file_redirection` is False for that same command, so
+        #     a check named for exactly this case does not fire.
+        #
+        # The segment list is the more natural-looking choice precisely because
+        # it appears tokenized and structured. Do not switch to it.
         escape = _shell_escape_token(command)
         if escape is not None:
             return self._deny(
