@@ -139,6 +139,77 @@ Use the SDK rather than:
 
 Pin both SDK and Copilot CLI/runtime versions because event and usage APIs may evolve. The accumulated session usage RPC is experimental and must be treated as a reconciliation source, not the only raw record.
 
+## Package supply chain compliance
+
+This benchmark is developed on Microsoft-managed devices, so package consumption is constrained by Microsoft engineering policy. Direct use of public package registries is no longer compliant and is blocked at the network layer. All Python and npm packages must be acquired through Central Feed Services (CFS).
+
+This is a hard constraint on the benchmark, not background policy: it changes which dependency versions are available, and it interacts with the hermetic sandbox requirements below.
+
+### Required configuration
+
+Python consumption uses a single CFS index:
+
+```ini
+[global]
+index-url = https://packagefeedproxy.microsoft.io/pypi/simple
+```
+
+The equivalent `uv` configuration declares one default index:
+
+```toml
+[[index]]
+name = "cfs"
+url = "https://packagefeedproxy.microsoft.io/pypi/simple"
+default = true
+```
+
+npm consumption uses the CFS proxy registry:
+
+```ini
+registry=https://packagefeedproxy.microsoft.io/npm/
+```
+
+The CFS proxy is anonymous-readable per package, so no personal access token or credential provider is required for this endpoint. A dedicated Azure Artifacts feed would require authentication; the proxy deliberately avoids introducing a credential into the benchmark.
+
+### Prohibited patterns
+
+- Any reference to `pypi.org`, `files.pythonhosted.org`, or `registry.npmjs.org` in committed configuration, lockfiles, Dockerfiles, CI workflows, or documentation.
+- `--extra-index-url`, `PIP_EXTRA_INDEX_URL`, or any second package index. Multiple indexes are treated as a dependency-confusion risk and are flagged by CFS detectors.
+- Falling back to a public registry when a package or version is unavailable through CFS. The correct escalation is a CFS exception request, which is a human decision.
+
+Repository-level configuration is committed rather than relying on developer machine settings, because continuous integration and container builds do not inherit them.
+
+### Quarantine lag constrains version pinning
+
+CFS quarantines packages before release, so the CFS catalog trails public registries. Version pins must be chosen from what CFS actually serves, and a pin copied from a public registry listing will usually fail to resolve.
+
+Observed at the time of writing:
+
+| Package | Public latest | Latest stable on CFS | Pinned |
+|---|---|---|---|
+| `inspect-ai` | 0.3.266 | 0.3.263 | 0.3.263 |
+| `github-copilot-sdk` | 1.0.14 | 1.0.13 | 1.0.13 |
+
+Because quarantine lag shifts over time, every pin must be verified against CFS at the moment it is frozen, and the resolved versions recorded in the reproducibility record. A benchmark run is only reproducible if its dependency set is reachable through the same feed.
+
+Pinned Python runtime is 3.12. The Copilot SDK requires 3.11 or later, and the newest available interpreter is deliberately avoided for stability.
+
+The Copilot CLI and the Python SDK are versioned on separate lines. Their compatibility must be verified explicitly rather than assumed from version proximity, and the verified pair recorded alongside the other pins.
+
+### Interaction with sandbox hermeticity
+
+Dependencies are resolved and installed **once at image build time**, through CFS, before any scored trial begins. Trial containers perform no package resolution or download at run time.
+
+This satisfies three requirements simultaneously:
+
+- **Determinism.** Registry latency, upstream version drift, and transient feed availability are removed from measured trial variance, supporting the environment reset tolerances required in Phase 2.
+- **Isolation.** No feed credential or registry endpoint needs to exist inside an agent-visible workspace, consistent with the credential exclusions below.
+- **Compliance.** Package acquisition happens in one auditable place rather than implicitly across many container runs.
+
+Trial containers should therefore have no egress to package registries, and the absence of that egress is a verified sandbox property and a negative test, not an assumption.
+
+Container base images prefer Microsoft Container Registry equivalents where they exist. Where no equivalent exists, images are pinned by digest as already required, and the absence of an equivalent is recorded.
+
 ## Repository fixture and workspace isolation
 
 The Copilot agent must **never** run against the benchmark-development checkout or the full public `radius-performance-demo` repository during a scored trial. That repository contains experiment plans, public scenario concepts, expected diagnoses and remediations, harness code, result formats, and eventually scenario and orchestration files. Exposing it would create answer leakage and allow the agent to modify the benchmark control plane.
@@ -635,6 +706,7 @@ Actual records use real immutable identifiers; placeholders above illustrate the
 - Automated checks reject prompts, skills, `app.bicep`, graph payloads, or repository instructions containing hidden values, accepted-answer categories, expected resource IDs beyond descriptive topology, or recommended scenario fixes.
 - Radius skills remain generic and procedural across scenarios.
 - Freeze and hash all dependencies, images, prompts, instructions, skills, graph payloads, `app.bicep`, SDK/CLI, Inspect, model configuration, scenarios, collectors, and validators.
+- Verify every dependency pin resolves through CFS at freeze time and record the resolved versions, since quarantine lag makes public-registry versions unreliable as pins.
 - Keep hidden validators outside the agent-visible checkout and tool namespace.
 - Record provider/model attribution and benchmark date.
 - Rotate hidden variants if public exposure or training leakage is plausible.
@@ -645,6 +717,7 @@ Actual records use real immutable identifiers; placeholders above illustrate the
 - Run Copilot and application workloads in ephemeral containers or isolated Kubernetes namespaces.
 - Use non-root processes, scoped service accounts, resource quotas, network policy, and time-to-live cleanup.
 - Expose only sandbox credentials and necessary model/registry endpoints.
+- Install all packages at image build time through CFS, and deny trial-container egress to package registries.
 - Deny production subscriptions, shared clusters, personal credentials, unrelated repositories, and unrestricted network access.
 - Cap wall time, model calls, tool calls, tokens, AI credits, premium requests, monetary cost, CPU, memory, storage, and process count.
 - Validate changes before execution and block paths/resources outside the declared sandbox.
@@ -659,6 +732,7 @@ Actual records use real immutable identifiers; placeholders above illustrate the
 Work:
 
 - Commit and tag a clean application baseline.
+- Configure and commit CFS package sources, and verify every dependency pin resolves through CFS.
 - Implement the allowlist/denylist fixture builder and native-versus-Radius difference manifest.
 - Produce sealed, content-addressed native and fully Radius-enabled fixture artifacts from the same source commit.
 - Generate, correct, validate, and freeze `app.bicep`.
@@ -782,9 +856,12 @@ Exit criteria:
 | Trial budgets | Fixed wall-clock, model/tool/token/AI-credit/cost caps | Exact values unresolved |
 | Models | 2-3 models available in the user's Copilot account | Unresolved |
 | Kubernetes target | `ryanw-aks` / `ryanw-rg` / Test account | User-selected; access/setup unverified |
+| Package source | CFS proxy only, single index, installed at image build time | Required; machine configuration verified |
+| Python runtime | 3.12 | Recommended |
+| Dependency pins | `inspect-ai==0.3.263`, `github-copilot-sdk==1.0.13` | Verified installable via CFS; SDK/CLI compatibility unverified |
 | Human review | Optional, blinded, separate from deterministic score | Recommended |
 
-Before Phase 1 implementation, choose the initial models, exact budgets, Inspect and Copilot SDK/CLI versions, structured output schema, and usage normalization policy. Before Phase 5, verify Azure access and select the Kubernetes/Radius deployment configuration.
+Before Phase 1 implementation, choose the initial models, exact budgets, Inspect and Copilot SDK/CLI versions, structured output schema, and usage normalization policy. Confirm that the pinned Copilot SDK and the installed Copilot CLI are compatible, since CFS quarantine may prevent pinning the newest SDK. Before Phase 5, verify Azure access and select the Kubernetes/Radius deployment configuration.
 
 ## What this experiment can and cannot claim
 
