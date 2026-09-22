@@ -1,4 +1,12 @@
-# `radius_perf_eval` — Copilot SDK instrumentation (Increment 1)
+# `radius_perf_eval` — benchmark control plane
+
+Two increments share this package:
+
+- **Copilot SDK instrumentation** (Increment 1) — documented below.
+- **The deterministic Compose trial driver** (Increment 2) — documented in
+  [Compose trial driver](#compose-trial-driver-increment-2) at the end of this file.
+
+## Copilot SDK instrumentation (Increment 1)
 
 Control-plane code for the Radius performance benchmark. It starts an
 instrumented, isolated GitHub Copilot SDK session and records everything
@@ -9,8 +17,9 @@ needed to account for a trial in time, tokens, tool calls, and AI credits.
 > "Repository fixture and workspace isolation" in
 > `docs/specs/copilot-radius-experiment-plan.md`.
 
-This increment deliberately excludes the Compose trial driver, fixtures,
-Inspect tasks, scenarios, and validators.
+Increment 1 deliberately excludes fixtures, Inspect tasks, scenarios, and
+validators. The Compose trial driver referenced above as a security control
+landed separately as Increment 2.
 
 ## Layout
 
@@ -22,6 +31,15 @@ Inspect tasks, scenarios, and validators.
 | `versions.py` | Provenance and CFS package-supply-chain verification |
 | `smoke.py` | Exit-criterion driver (`radius-perf-smoke`) |
 | `isolation_probe.py` | Deterministic fail-closed workspace isolation probes |
+| `environment.py` | Trial lifecycle, verification gates, signed-off manifest |
+| `compose.py` | Compose project control and teardown verification |
+| `incidents.py` | Reversible incident injection + independent verification |
+| `load.py` | Stdlib closed-loop load generator |
+| `telemetry.py` | Prometheus baseline capture (canonical PromQL) |
+| `manifest.py` | Environment manifest, fixture hashing, sign-off |
+| `trials.py` | Repeated-cycle determinism harness and declared tolerances |
+| `images.py` / `docker_cli.py` | Digest pinning and Docker CLI plumbing |
+| `cli.py` | `radius-perf-eval-env` (`doctor`/`trial`/`determinism`/`cleanup`) |
 
 ## Packages come from CFS only
 
@@ -141,3 +159,192 @@ so a programmatic caller cannot bypass it by not checking an exit code, and it
 raises only *after* the run record is written so a failed run stays auditable.
 `--skip-live-escape-probe` explicitly downgrades the run to `scored: false`,
 recorded in the artifact, so the degradation is visible rather than silent.
+
+---
+
+## Compose trial driver (Increment 2)
+
+This package builds and destroys the environment that a scored benchmark trial runs
+in. Every trial gets its own Compose project, its own volumes, its own host ports and
+its own throwaway credentials, and every environmental property the experiment depends
+on is verified against reality before any measurement is taken.
+
+The point is narrow: if trial A and trial B differ, the difference must come from the
+treatment (Radius-enabled repo vs native repo), not from environment drift. So the
+driver refuses to hand back an environment it could not prove.
+
+See `docs/specs/copilot-radius-experiment-plan.md` for the experiment this serves and
+`docs/specs/telemetry-contract.md` for the canonical PromQL reproduced in
+`telemetry.py`.
+
+### Why not just use `docker-compose.yml` / `make local-up`?
+
+The repo-root Compose file is a developer convenience and is disqualified as a trial
+harness on four counts:
+
+| Property | Root `docker-compose.yml` | Trial driver |
+| --- | --- | --- |
+| Host ports | fixed 8080/3306/6379/9090 | Docker-assigned ephemeral, loopback-bound |
+| Volumes | one shared `mysql-data` | per-run, per-project, destroyed after |
+| Images | floating tags (`mysql:8.4`) | digest-pinned (`mysql@sha256:...`) |
+| Credentials | hardcoded in the file | generated per run, never committed |
+
+Fixed ports alone make concurrent trials impossible. A shared volume alone makes trial
+N observable from trial N+1. The driver is a separate path on purpose; the root
+Compose file is left alone for humans.
+
+### Lifecycle
+
+```
+pin images -> create -> verify start state -> measure (healthy)
+           -> inject incident -> verify incident -> measure (incident)
+           -> [revert -> verify reverted] -> destroy -> verify cleanup
+```
+
+Each stage appends gates to an environment manifest. The manifest is signed off
+(`"signedOff": true`) only if **every** gate passed. A failed gate does not degrade the
+run to a warning — it un-signs the manifest, and `trials.py` refuses to count that
+cycle.
+
+### Verified properties
+
+Gates recorded per run, all checked against the live system rather than assumed:
+
+- `image-pinned:<service>` — the container's running image ID equals the pinned digest.
+- `resource-limits:<service>` — `HostConfig.NanoCpus` / `HostConfig.Memory` match the
+  declared spec. The incident depends on constrained resources, so unconstrained
+  containers would silently invalidate the scenario.
+- `environment-variables:catalog-api` — read back from the daemon, not from the app.
+- `application-readiness` — HTTP readiness against the app and Prometheus, plus
+  `up{job="catalog-api"}`. `up --wait` only proves containers are healthy; it does not
+  prove the app can serve or that Prometheus is scraping it.
+- `mysql-seed-rows` — exact row count queried from MySQL.
+- `valkey-empty` — `DBSIZE` is 0.
+- `egress-blocked:mysql`, `egress-blocked:valkey` — negative test; outbound DNS from
+  the data tier must fail.
+- `catalog-api-image-hermetic` — no shell and no package manager in the runtime image.
+- `incident-active-verified` / `incident-inactive-verified` — see below.
+- `cleanup-verified` — see below.
+
+### Incident injection and independent verification
+
+`mysql-pool-delay` is applied as a Compose overlay
+(`compose/incident-mysql-pool-delay.yml`) that overrides three environment variables on
+`catalog-api` and nothing else, which makes reversion exact rather than approximate.
+
+The brief required that activation be verifiable from outside the application. Trusting
+`/healthz` would be circular — a misconfigured or misreporting app is precisely the
+failure this benchmark is trying to detect. So three independent authorities are
+consulted, none of which is the app's own self-report:
+
+1. **`docker-daemon`** — `Config.Env` read back via `docker inspect`.
+2. **`mysql-server`** — peak concurrent sessions for the app user sampled from
+   `information_schema.PROCESSLIST` during a saturating probe. With `pool=2`, MySQL can
+   never observe a third session. This is the strongest check: the app cannot fake
+   MySQL's own view of its connections.
+3. **`external-probe`** — wall-clock single-request latency measured by the driver over
+   the network.
+
+Deactivation inverts all three. A unit test asserts that `"application"` never appears
+as a verification source.
+
+### Cleanup verification
+
+`down --volumes --remove-orphans` returning 0 is not evidence. `residual_resources()`
+checks both Compose labels **and** a name-prefix scan, so a resource whose labels were
+stripped or which was created out of band is still caught. `destroy()` retries with
+escalating force-removal, and the manifest records `cleanupVerified` only after a clean
+scan.
+
+### Image and package policy
+
+All dependencies are baked in at build time. A scored trial fetches nothing, so trial
+timing cannot be polluted by a slow or failing package mirror, and a mirror change
+cannot alter the fixture mid-experiment.
+
+Microsoft Container Registry is used where an image exists:
+
+- `mcr.microsoft.com/oss/go/microsoft/golang:1.23-bookworm` (builder)
+- `mcr.microsoft.com/azurelinux/distroless/base:3.0` (runtime)
+- `mcr.microsoft.com/oss/v2/prometheus/prometheus:v3.5.0`
+
+**MCR has no MySQL or Valkey equivalent** (8 path variants probed, all absent), so those
+two come from Docker Hub and are digest-pinned. This is a known gap, not an oversight.
+
+The Python package itself has **zero runtime dependencies** — stdlib only — so it needs
+no package index at all. Tests use stdlib `unittest` for the same reason.
+
+Two consequences of the distroless choice are worth knowing before editing
+`compose/base.yml`: the Prometheus image has no shell and no `wget`, so its healthcheck
+uses `promtool check ready`; and the catalog-api image has no shell at all, so its
+readiness must be probed over HTTP from the driver rather than with a container
+healthcheck.
+
+### Network posture
+
+Two networks, and the split is a real constraint rather than a preference:
+
+- `data` — `internal: true`. MySQL and Valkey live here with no egress.
+- `edge` — catalog-api and Prometheus additionally join this, because **Docker cannot
+  publish host ports from an `internal` network** (`docker compose port` returns
+  `invalid IP:0`).
+
+So the honest claim is per-service, and the manifest records it that way: the data tier
+is verifiably egress-free; the two services that must publish ports are not. The driver
+does not claim a blanket egress block it cannot deliver.
+
+The Docker socket is never mounted into any container.
+
+### Credentials
+
+MySQL passwords are generated per run with `secrets.token_hex(16)`, prefixed and
+alphanumeric-only so they need no escaping inside the Go DSN. They are passed to the
+`mysql` client via `--env MYSQL_PWD` so they never appear in a container command line,
+and they are never written to disk or committed. They are throwaway, local-only, and
+die with the Compose project.
+
+### Usage
+
+Requires Python 3.12+ and a running Docker daemon. No install step.
+
+```bash
+cd benchmark
+
+python3.12 -m radius_perf_eval.cli doctor            # is the daemon reachable?
+python3.12 -m radius_perf_eval.cli trial --run-id smoke01 --revert
+python3.12 -m radius_perf_eval.cli determinism --cycles 10
+python3.12 -m radius_perf_eval.cli cleanup           # remove stray radius-eval-* projects
+```
+
+Useful flags: `--no-pull` (use local images, skip registry pulls), `--results-dir`,
+`--scenario`, `--suite-id`.
+
+Artifacts land in `benchmark/results/<run-id>/`:
+`environment-manifest.json`, `measurements.json`, and for a suite,
+`<suite-id>/determinism-report.json`.
+
+Run the Docker-free tests with:
+
+```bash
+cd /path/to/repo && python3.12 -m unittest discover -s benchmark/tests -t benchmark
+```
+
+### Exit criterion
+
+Ten consecutive cycles must all sign off, all verify cleanup, all verify the incident,
+stay inside `DECLARED_TOLERANCES`, keep both phases inside the error budget, and show
+the incident actually degrading performance. `determinism-report.json` reports
+`exitCriterionMet` plus the measured coefficient of variation per metric, so the
+variance is written down rather than assumed.
+
+Tolerances live in `trials.py::DECLARED_TOLERANCES`, each with a stated rationale.
+Measured values from the ten-cycle run are in the pull request description.
+
+### A note on the cache
+
+`CACHE_ENABLED` defaults to `false`, which keeps MySQL on the hot path — necessary,
+because a warm cache over a 10-row fixture would mask the `mysql-pool-delay` incident
+almost entirely. Valkey still runs and is still verified empty before load, and
+`cacheHitRatio` / `valkeyP95Seconds` are therefore legitimately `null` rather than `0`,
+per the telemetry contract. Incident variants that exercise the cache will want to flip
+this.

@@ -1,0 +1,133 @@
+# Benchmark trial environment - base topology.
+#
+# This file is NEVER used as a developer convenience stack. It is rendered only
+# by radius_perf_eval's environment driver, which supplies every interpolated
+# variable, a unique project name, digest-pinned images, ephemeral loopback-only
+# host ports, and per-run throwaway credentials.
+#
+# Image policy: references are injected already pinned. Registry images use
+# repo@sha256:...; the locally built application image uses its content-addressed
+# sha256:<image-id>. There are no floating tags and no fixed host ports here.
+#
+# Network policy: the data tier (mysql, valkey) sits on an `internal` network
+# with no gateway, so those containers have verifiably zero egress. catalog-api
+# and prometheus additionally join `edge` because Docker cannot publish a host
+# port from an internal-only network. No trial container fetches packages at
+# runtime; all dependencies are baked into the images at build time.
+
+services:
+  mysql:
+    image: ${MYSQL_IMAGE}
+    command:
+      - --max-connections=${MYSQL_MAX_CONNECTIONS}
+      - --skip-log-bin
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_APP_USER}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - ${FIXTURE_ROOT}/deploy/mysql/init:/docker-entrypoint-initdb.d:ro
+      - mysql-data:/var/lib/mysql
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 3s
+      timeout: 5s
+      retries: 60
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "${MYSQL_CPUS}"
+          memory: ${MYSQL_MEMORY}
+    restart: "no"
+
+  valkey:
+    image: ${VALKEY_IMAGE}
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          cpus: "${VALKEY_CPUS}"
+          memory: ${VALKEY_MEMORY}
+    restart: "no"
+
+  catalog-api:
+    image: ${CATALOG_API_IMAGE}
+    environment:
+      LISTEN_ADDRESS: ":8080"
+      MYSQL_DSN: "${MYSQL_APP_USER}:${MYSQL_APP_PASSWORD}@tcp(mysql:3306)/${MYSQL_DATABASE}?parseTime=true"
+      VALKEY_ADDRESS: "valkey:6379"
+      CACHE_ENABLED: "${CACHE_ENABLED}"
+      CACHE_TTL: "${CACHE_TTL}"
+      DB_READ_DELAY: "${DB_READ_DELAY}"
+      DB_MAX_OPEN_CONNS: "${DB_MAX_OPEN_CONNS}"
+      DB_MAX_IDLE_CONNS: "${DB_MAX_IDLE_CONNS}"
+      DB_CONN_MAX_LIFETIME: "${DB_CONN_MAX_LIFETIME}"
+      DEPENDENCY_TIMEOUT: "${DEPENDENCY_TIMEOUT}"
+      MAX_LIST_LIMIT: "${MAX_LIST_LIMIT}"
+    ports:
+      - "127.0.0.1::8080"
+    networks:
+      - data
+      - edge
+    depends_on:
+      mysql:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "${CATALOG_API_CPUS}"
+          memory: ${CATALOG_API_MEMORY}
+    restart: "no"
+
+  prometheus:
+    image: ${PROMETHEUS_IMAGE}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=1h
+    volumes:
+      - ${FIXTURE_ROOT}/deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1::9090"
+    networks:
+      - data
+      - edge
+    depends_on:
+      catalog-api:
+        condition: service_started
+    healthcheck:
+      # The MCR Prometheus image is distroless: no shell, no wget, no curl.
+      # promtool ships in the image and exits non-zero until /-/ready succeeds.
+      test: ["CMD", "/bin/promtool", "check", "ready", "--url", "http://127.0.0.1:9090"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          cpus: "${PROMETHEUS_CPUS}"
+          memory: ${PROMETHEUS_MEMORY}
+    restart: "no"
+
+networks:
+  data:
+    internal: true
+  edge: {}
+
+volumes:
+  mysql-data:
+  prometheus-data:
