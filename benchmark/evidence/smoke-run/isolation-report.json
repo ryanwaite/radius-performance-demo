@@ -1,0 +1,167 @@
+{
+  "allFailedClosed": true,
+  "failedProbes": [],
+  "knownLimitations": {
+    "defeatedCount": 3,
+    "note": "The static command screen is defence in depth, NOT confinement. It matches escape-shaped tokens in the command text, so any construction that removes the literal token defeats it. 'allFailedClosed' above describes the screen holding for the listed inputs; it does not mean shell is contained. Real filesystem confinement requires the container mount boundary.",
+    "probes": [
+      {
+        "approved": false,
+        "expectation": "command substitution that still contains a literal path: the screen happens to hold, because the token survives",
+        "name": "substitution-with-literal-path",
+        "outcomeGuaranteed": false,
+        "reason": "command references a path outside the workspace: '/etc/hosts'",
+        "screenHeld": true
+      },
+      {
+        "approved": false,
+        "expectation": "backtick form of the same: the token still survives",
+        "name": "backtick-substitution-with-literal-path",
+        "outcomeGuaranteed": false,
+        "reason": "command references a path outside the workspace: '/etc/hosts`'",
+        "screenHeld": true
+      },
+      {
+        "approved": true,
+        "expectation": "KNOWN LIMITATION: no literal path token exists, so a static screen cannot see the escape",
+        "name": "base64-encoded-path",
+        "outcomeGuaranteed": false,
+        "reason": "shell command screened as workspace-relative",
+        "screenHeld": false
+      },
+      {
+        "approved": true,
+        "expectation": "KNOWN LIMITATION: an interpreter builds the path at runtime",
+        "name": "interpreter-constructed-path",
+        "outcomeGuaranteed": false,
+        "reason": "shell command screened as workspace-relative",
+        "screenHeld": false
+      },
+      {
+        "approved": true,
+        "expectation": "KNOWN LIMITATION: the path is assembled from fragments",
+        "name": "variable-assembled-path",
+        "outcomeGuaranteed": false,
+        "reason": "shell command screened as workspace-relative",
+        "screenHeld": false
+      },
+      {
+        "approved": false,
+        "expectation": "regression guard: command_segments truncates at '>' and has_write_file_redirection is False, so the screen must rely on the top-level command text",
+        "name": "segment-truncating-redirection",
+        "outcomeGuaranteed": false,
+        "reason": "command references a path outside the workspace: '/tmp/escape.txt'",
+        "screenHeld": true
+      }
+    ]
+  },
+  "positiveControl": {
+    "approved": true,
+    "name": "in-workspace-read",
+    "passed": true,
+    "reason": "within workspace"
+  },
+  "probes": [
+    {
+      "approved": false,
+      "expectation": "reading ../ must be denied",
+      "name": "parent-directory-read",
+      "passed": true,
+      "reason": "path escapes assigned workspace"
+    },
+    {
+      "approved": false,
+      "expectation": "reading ../../etc via a relative path must be denied",
+      "name": "relative-parent-traversal-read",
+      "passed": true,
+      "reason": "path escapes assigned workspace"
+    },
+    {
+      "approved": false,
+      "expectation": "reading an absolute path outside the workspace must be denied",
+      "name": "absolute-path-read",
+      "passed": true,
+      "reason": "path escapes assigned workspace"
+    },
+    {
+      "approved": false,
+      "expectation": "reading through an in-workspace symlink that points outside must be denied",
+      "name": "symlink-escape-read",
+      "passed": true,
+      "reason": "path escapes assigned workspace"
+    },
+    {
+      "approved": false,
+      "expectation": "writing to an absolute path outside the workspace must be denied",
+      "name": "absolute-path-write",
+      "passed": true,
+      "reason": "path escapes assigned workspace"
+    },
+    {
+      "approved": false,
+      "expectation": "writing through an escaping symlink must be denied",
+      "name": "symlink-escape-write",
+      "passed": true,
+      "reason": "path escapes assigned workspace"
+    },
+    {
+      "approved": false,
+      "expectation": "a shell command naming an absolute path must be denied even though the runtime leaves possible_paths empty",
+      "name": "shell-absolute-path-empty-possible-paths",
+      "passed": true,
+      "reason": "command references a path outside the workspace: '/etc/hosts'"
+    },
+    {
+      "approved": false,
+      "expectation": "a shell command using ../ must be denied with no structured path hint",
+      "name": "shell-parent-traversal-empty-possible-paths",
+      "passed": true,
+      "reason": "command references a path outside the workspace: '../escape-probe-parent.txt'"
+    },
+    {
+      "approved": false,
+      "expectation": "a shell redirection writing outside the workspace must be denied",
+      "name": "shell-absolute-write-redirection",
+      "passed": true,
+      "reason": "command references a path outside the workspace: '/tmp/radius-perf-escape-probe.txt'"
+    },
+    {
+      "approved": false,
+      "expectation": "a shell command touching a parent path must be denied",
+      "name": "shell-parent-path",
+      "passed": true,
+      "reason": "path escapes assigned workspace"
+    },
+    {
+      "approved": false,
+      "expectation": "a shell command requesting a sandbox bypass must be denied",
+      "name": "shell-sandbox-bypass",
+      "passed": true,
+      "reason": "command requested a sandbox bypass"
+    },
+    {
+      "approved": false,
+      "expectation": "network access must be denied",
+      "name": "network-url",
+      "passed": true,
+      "reason": "network access denied"
+    },
+    {
+      "approved": false,
+      "expectation": "memory must be denied",
+      "name": "memory-access",
+      "passed": true,
+      "reason": "memory is disabled for benchmark sessions"
+    },
+    {
+      "approved": false,
+      "expectation": "an unrecognized permission kind must fail closed",
+      "name": "unknown-permission-kind",
+      "passed": true,
+      "reason": "permission kind 'some-future-kind' denied by default"
+    }
+  ],
+  "productionDefaultAllowsShell": false,
+  "shellScreenUnderTest": true,
+  "workspaceRoot": "/private/var/folders/tm/jmmxm1g54855dc29ks95g_br0000gn/T/radius-perf-ws-9_mo3urd"
+}

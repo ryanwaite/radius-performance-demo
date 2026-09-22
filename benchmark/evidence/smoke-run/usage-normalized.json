@@ -1,0 +1,144 @@
+{
+  "agentWallClockMs": 6211.66525,
+  "ambiguities": [
+    "providerReportedTotalTokens is null: assistant.usage exposes no provider grand total, and deriving one would sum overlapping fields"
+  ],
+  "cost": {
+    "actualUSD": null,
+    "estimatedUSD": null,
+    "pricingVersion": "sha256:4c219774e61a8067585a3a90dddc978e4e61717ab13f5983ae0d153643f0461e"
+  },
+  "credits": {
+    "aiCredits": 2.2861,
+    "premiumRequestMultiplier": null
+  },
+  "logicalToolCalls": 1,
+  "model": "gpt-5.4",
+  "modelApiDurationMs": 3363,
+  "modelRequests": 2,
+  "premiumRequestsCharged": 1.0,
+  "reconciliation": {
+    "agreed": true,
+    "fields": [
+      {
+        "delta": null,
+        "field": "inputUncachedTokens",
+        "from_events": 6944,
+        "from_metrics": null,
+        "status": "metrics-null"
+      },
+      {
+        "delta": 0.0,
+        "field": "inputCachedReadTokens",
+        "from_events": 11264,
+        "from_metrics": 11264,
+        "status": "match"
+      },
+      {
+        "delta": 0.0,
+        "field": "inputCacheWriteTokens",
+        "from_events": 0,
+        "from_metrics": 0,
+        "status": "match"
+      },
+      {
+        "delta": 0.0,
+        "field": "outputVisibleTokens",
+        "from_events": 74,
+        "from_metrics": 74,
+        "status": "match"
+      },
+      {
+        "delta": 0.0,
+        "field": "outputReasoningTokens",
+        "from_events": 105,
+        "from_metrics": 105,
+        "status": "match"
+      },
+      {
+        "delta": 0.0,
+        "field": "modelRequests",
+        "from_events": 2,
+        "from_metrics": 2,
+        "status": "match"
+      },
+      {
+        "delta": 0.0,
+        "field": "aiCredits",
+        "from_events": 2.2861,
+        "from_metrics": 2.2861,
+        "status": "match"
+      },
+      {
+        "delta": 0.0,
+        "field": "premiumRequestsCharged",
+        "from_events": 1.0,
+        "from_metrics": 1.0,
+        "status": "match"
+      }
+    ],
+    "mismatchCount": 0
+  },
+  "runtime": "github-copilot-sdk",
+  "sources": {
+    "assistantUsageEvents": {
+      "aiCredits": 2.2861,
+      "ambiguities": [
+        "providerReportedTotalTokens is null: assistant.usage exposes no provider grand total, and deriving one would sum overlapping fields"
+      ],
+      "apiDurationMs": 3363,
+      "modelRequests": 2,
+      "modelsSeen": [
+        "gpt-5.4"
+      ],
+      "premiumMultiplierSumAllCalls": 2.0,
+      "premiumRequestsCharged": 1.0,
+      "providerReportedInputTokens": 18208,
+      "providerReportedOutputTokens": 179,
+      "source": "assistant.usage-events",
+      "usage": {
+        "inputCacheWriteTokens": 0,
+        "inputCachedReadTokens": 11264,
+        "inputUncachedTokens": 6944,
+        "outputReasoningTokens": 105,
+        "outputVisibleTokens": 74,
+        "providerReportedTotalTokens": null
+      }
+    },
+    "sessionUsageMetrics": {
+      "aiCredits": 2.2861,
+      "ambiguities": [
+        "inputUncachedTokens is null: cacheReadTokens is non-zero and the inputTokens/cacheReadTokens overlap is undocumented under TokenOverlapPolicy.UNKNOWN",
+        "providerReportedTotalTokens is null: session.usage.getMetrics exposes no provider grand total"
+      ],
+      "apiDurationMs": 3363,
+      "modelRequests": 2,
+      "modelsSeen": [
+        "gpt-5.4"
+      ],
+      "premiumMultiplierSumAllCalls": null,
+      "premiumRequestsCharged": 1.0,
+      "providerReportedInputTokens": 18208,
+      "providerReportedOutputTokens": 179,
+      "source": "session.usage.getMetrics",
+      "usage": {
+        "inputCacheWriteTokens": 0,
+        "inputCachedReadTokens": 11264,
+        "inputUncachedTokens": null,
+        "outputReasoningTokens": 105,
+        "outputVisibleTokens": 74,
+        "providerReportedTotalTokens": null
+      }
+    }
+  },
+  "toolAttempts": 1,
+  "usage": {
+    "inputCacheWriteTokens": 0,
+    "inputCachedReadTokens": 11264,
+    "inputUncachedTokens": 6944,
+    "outputReasoningTokens": 105,
+    "outputVisibleTokens": 74,
+    "providerReportedTotalTokens": null
+  },
+  "usageSource": "assistant.usage-events"
+}

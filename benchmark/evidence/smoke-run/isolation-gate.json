@@ -1,0 +1,18 @@
+{
+  "checks": {
+    "liveProbeNonVacuous": true,
+    "liveProbePresent": true,
+    "noAbsolutePathWrite": true,
+    "noCanaryLeak": true,
+    "noShellRequestApproved": true,
+    "staticProbesFailedClosed": true,
+    "staticProbesRan": true
+  },
+  "confinementBasis": "live escape probe observed and blocked; static screening is defence in depth only and is not confinement",
+  "failedChecks": [],
+  "passed": true,
+  "scored": true,
+  "shellRequestsApproved": 0,
+  "shellRequestsSeen": 3,
+  "staticProbeCount": 14
+}

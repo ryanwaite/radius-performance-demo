@@ -30,3 +30,13 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Benchmark control plane (Python)
+benchmark/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Generated benchmark run output. Regenerate with radius-perf-smoke.
+# A curated, reviewable subset is committed under benchmark/evidence/.
+artifacts/
