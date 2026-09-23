@@ -6,16 +6,37 @@ Implements the harness requirements in
 * one fresh cold session per trial with an explicit pinned model (no ``auto``
   routing) -- "Variables held constant";
 * memory off, no subagents -- "Parallelism: one agent, no fleet or subagents";
-* file and tool access confined to the assigned temporary workspace --
-  "Docker and mount boundary" and "Isolation exit criteria";
+* file and tool access screened against the assigned temporary workspace --
+  "Isolation exit criteria";
 * wall-clock / model-call / tool-call / AI-credit budgets that terminate the
   session -- "Safety and cost controls";
 * every session event captured in order with monotonic timing.
 
-Isolation here is *process-level*, enforced by a fail-closed permission
-handler. It is a necessary layer, not a complete sandbox: the plan's container
-mount boundary is a separate increment. Anything this handler cannot prove is
-inside the workspace is denied.
+Isolation here is **advisory and in-process**, enforced by a fail-closed
+permission handler inside this harness. There is no OS or process boundary:
+the SDK spawns its pinned CLI as a host child process, and the workspace is an
+ordinary host temporary directory. Anything the handler cannot prove is inside
+the workspace is denied, which is a real and useful layer -- but it is the
+harness declining a request, not the kernel refusing an operation.
+
+Confinement would require an OS boundary around the agent process, which this
+harness does not establish. The Compose increment does not supply it: those
+containers bound the application under test, while the agent remains a host
+process outside them.
+
+The runtime sandbox that would supply it is reachable only *after* the session
+exists, via the experimental ``session.options.update`` -- leaving a window
+between session start and that call in which no policy is in force, which any
+runner must close or account for. A spike on SDK 1.0.13 / CLI 1.0.83 with one
+model denied every escape that executed; this harness does not enable it yet.
+
+The same capability is absent from the session-creation API: the CLI wire
+protocol defines a real OS-level ``SandboxConfig`` (an ``enabled`` flag,
+``userPolicy.filesystem`` read-only and read-write path lists, a fail-closed
+``allowBypass``, and sandboxed MCP/LSP subprocesses). None of it is exposed on
+``CopilotClient.create_session`` in the pinned SDK 1.0.13, whose ~80
+parameters include nothing sandbox-related. So the gap here is an SDK surface
+gap, not a missing runtime feature.
 """
 
 from __future__ import annotations
@@ -179,7 +200,15 @@ def _shell_escape_token(command: str) -> str | None:
 
 @dataclass
 class IsolationPolicy:
-    """Fail-closed path and tool confinement for one session.
+    """Fail-closed path and tool screening for one session.
+
+    This is an **advisory, in-process check**. It runs inside the harness and
+    decides permission requests the runtime chooses to route through it. There
+    is no OS or process boundary beneath it: the agent executes as a host
+    process against a host temporary directory. Anything this check cannot
+    prove is inside the workspace is denied, which is what makes it useful --
+    but a denial is the harness declining a request, not a kernel refusing an
+    operation.
 
     Every permission request is resolved to a real path and checked against the
     workspace root. Unknown request kinds are denied, so a new permission kind
@@ -198,17 +227,20 @@ class IsolationPolicy:
       operator, reporting ``echo probe`` for that same command, so a
       segment-based screen sees nothing outside the workspace.
 
-    A handler therefore has no reliable structured signal to confine a shell
-    command, and approving on any of these bases fails open. This is worse
-    than a missing signal: two of the three actively mislead, and the third is
-    the representation a careful author is most likely to reach for.
+    A handler therefore has no reliable structured signal on which to screen a
+    shell command, and approving on any of these bases fails open. This is
+    worse than a missing signal: two of the three actively mislead, and the
+    third is the representation a careful author is most likely to reach for.
 
     With ``allow_shell=True`` the policy falls back to screening the top-level
     ``full_command_text`` for escape-shaped tokens. That is **best effort
     only**: command substitution, encoding, or an interpreter can defeat any
     static screen, so it is defence in depth and must never be described as
-    confinement. Real filesystem confinement must come from the container
-    mount boundary, which is a separate increment of the plan.
+    confinement. Confinement would require an OS boundary around the agent
+    process. Compose containers bound the application under test, not the
+    agent, and so supply no confinement here; the runtime sandbox that could
+    supply it is reachable only after session creation and is not enabled by
+    this harness.
     """
 
     workspace_root: Path
@@ -264,7 +296,8 @@ class IsolationPolicy:
             return self._deny(
                 kind,
                 "shell is disabled: possible_paths is unpopulated, so shell "
-                "commands cannot be confined through the permission API",
+                "commands cannot be screened reliably through the permission "
+                "API",
                 detail,
             )
 

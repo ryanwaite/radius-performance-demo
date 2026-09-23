@@ -1,5 +1,5 @@
 {
-  "catalogDigest": "sha256:4c219774e61a8067585a3a90dddc978e4e61717ab13f5983ae0d153643f0461e",
+  "catalogDigest": "sha256:bcc350437c3bcc2ea6aeeaa46c8f616fd46d9c987767a2f1c75ec3a3ff40d7a5",
   "modelCount": 23,
   "normalized": [
     {
@@ -952,7 +952,7 @@
         "limits": {
           "max_context_window_tokens": 1000000,
           "max_output_tokens": 128000,
-          "max_prompt_tokens": 872000,
+          "max_prompt_tokens": 1000000,
           "vision": {
             "max_prompt_image_size": 3145728,
             "max_prompt_images": 1,
@@ -996,9 +996,9 @@
           "cachePrice": 20.0,
           "cacheReadPrice": 20.0,
           "cacheWritePrice": 500.0,
-          "contextMax": 872000,
+          "contextMax": 1000000,
           "inputPrice": 400.0,
-          "maxPromptTokens": 872000,
+          "maxPromptTokens": 1000000,
           "outputPrice": 2000.0
         },
         "maxPromptTokens": 200000,
@@ -2250,9 +2250,9 @@
             "cachePrice": 20.0,
             "cacheReadPrice": 20.0,
             "cacheWritePrice": 500.0,
-            "contextMax": 872000,
+            "contextMax": 1000000,
             "inputPrice": 400.0,
-            "maxPromptTokens": 872000,
+            "maxPromptTokens": 1000000,
             "outputPrice": 2000.0
           },
           "maxPromptTokens": 200000,
@@ -2263,7 +2263,7 @@
         "limits": {
           "max_context_window_tokens": 1000000,
           "max_output_tokens": 128000,
-          "max_prompt_tokens": 872000,
+          "max_prompt_tokens": 1000000,
           "vision": {
             "max_prompt_image_size": 3145728,
             "max_prompt_images": 1,
@@ -2357,12 +2357,6 @@
         "high",
         "xhigh",
         "max"
-      ],
-      "warningMessages": [
-        {
-          "code": "model_degraded_github",
-          "message": "GPT-6 Astra is currently experiencing issues. We are actively working to resolve the issue. In the meantime, you might want to use a different model."
-        }
       ]
     },
     {

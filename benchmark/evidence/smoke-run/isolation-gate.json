@@ -8,9 +8,9 @@
     "staticProbesFailedClosed": true,
     "staticProbesRan": true
   },
-  "confinementBasis": "live escape probe observed and blocked; static screening is defence in depth only and is not confinement",
   "failedChecks": [],
   "passed": true,
+  "permissionHandlerBasis": "live escape probe observed and denied by the permission handler; static screening is defence in depth only. This is a handler wiring check, not confinement: the agent runs as a host process against a host temporary directory, with no OS or process boundary beneath the handler",
   "scored": true,
   "shellRequestsApproved": 0,
   "shellRequestsSeen": 3,

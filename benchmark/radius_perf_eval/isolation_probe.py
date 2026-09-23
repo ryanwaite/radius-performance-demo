@@ -211,7 +211,7 @@ def build_limitation_probes(
     These are **not** assertions. Their outcome is not guaranteed and must not
     be read as containment either way. They exist so the evidence artifact
     itself shows the boundary of the screen, instead of leaving
-    ``allFailedClosed: true`` to imply that shell is confined.
+    ``allFailedClosed: true`` to imply that shell is contained.
 
     The screen matches escape-shaped *tokens* in the command text. It follows
     that any construction which removes the literal token defeats it. Encoding
@@ -352,13 +352,19 @@ def run_isolation_probes(
         },
         "knownLimitations": {
             "note": (
-                "The static command screen is defence in depth, NOT "
-                "confinement. It matches escape-shaped tokens in the command "
-                "text, so any construction that removes the literal token "
-                "defeats it. 'allFailedClosed' above describes the screen "
-                "holding for the listed inputs; it does not mean shell is "
-                "contained. Real filesystem confinement requires the "
-                "container mount boundary."
+                "The static command screen is defence in depth only. It "
+                "matches escape-shaped tokens in the command text, so any "
+                "construction that removes the literal token defeats it. "
+                "'allFailedClosed' above describes the screen holding for the "
+                "listed inputs; it does not describe any boundary. The agent "
+                "runs as a host process against a host temporary directory, "
+                "so no OS or process boundary exists in this runtime. "
+                "Confinement would require an OS boundary around the agent "
+                "process. Compose containers bound the application data "
+                "plane, not the agent, and therefore supply no confinement "
+                "here. The runtime sandbox that could supply it is reachable "
+                "only after session creation, via the experimental "
+                "session.options.update, and this harness does not enable it."
             ),
             "defeatedCount": sum(1 for x in limitations if x["approved"]),
             "probes": limitations,
@@ -378,13 +384,18 @@ def run_isolation_probes(
 
 
 class IsolationGateError(RuntimeError):
-    """Raised when workspace confinement is not affirmatively proven.
+    """Raised when the permission handler was not proven to deny escapes.
 
-    Confinement is invisible to tests written against the SDK permission API,
-    because that API reports no paths for shell commands. It can therefore only
-    be established by observing a live agent attempt to escape and fail. This
+    The handler cannot be proven to deny by tests written against the SDK
+    permission API, because that API reports no usable paths for shell
+    commands. It can only be observed denying a live agent's attempts. This
     error exists so that observation is a **gate that stops a run**, not a
     metric someone reads afterwards.
+
+    What a passing gate establishes is narrow: the handler was wired, it saw
+    real attempts, and it denied them. It is not evidence of confinement --
+    the agent runs as a host process and nothing constrains it below the
+    handler. See ``permissionHandlerBasis`` in the gate verdict.
     """
 
 
@@ -406,13 +417,16 @@ def evaluate_isolation_gate(
     live_probe: Mapping[str, Any] | None,
     scored: bool = True,
 ) -> dict[str, Any]:
-    """Decide whether confinement was affirmatively proven for this run.
+    """Decide whether the permission handler was proven to deny for this run.
 
     Every check must be *affirmatively* satisfied. A check cannot pass because
     evidence is missing: a skipped live probe fails a scored run, and a live
     probe in which the agent never attempted an escape fails as vacuous. A
     green result that was never observed to be capable of going red is not
     evidence.
+
+    A passing verdict establishes that the handler was wired, saw real
+    attempts, and denied them. It does not establish confinement.
     """
     probes = list((isolation_report or {}).get("probes") or [])
     shell_seen = int((live_probe or {}).get("shellRequestsSeen") or 0)
@@ -439,9 +453,12 @@ def evaluate_isolation_gate(
         "staticProbeCount": len(probes),
         "shellRequestsSeen": shell_seen,
         "shellRequestsApproved": shell_approved,
-        "confinementBasis": (
-            "live escape probe observed and blocked; static screening is "
-            "defence in depth only and is not confinement"
+        "permissionHandlerBasis": (
+            "live escape probe observed and denied by the permission handler; "
+            "static screening is defence in depth only. This is a handler "
+            "wiring check, not confinement: the agent runs as a host process "
+            "against a host temporary directory, with no OS or process "
+            "boundary beneath the handler"
         ),
     }
 
@@ -452,13 +469,13 @@ def enforce_isolation_gate(
     live_probe: Mapping[str, Any] | None,
     scored: bool = True,
 ) -> dict[str, Any]:
-    """Evaluate the gate and raise unless confinement was proven."""
+    """Evaluate the gate and raise unless the handler was proven to deny."""
     verdict = evaluate_isolation_gate(
         isolation_report=isolation_report, live_probe=live_probe, scored=scored
     )
     if not verdict["passed"]:
         raise IsolationGateError(
-            "workspace confinement was not proven; failed checks: "
+            "permission handler was not proven to deny; failed checks: "
             + ", ".join(verdict["failedChecks"])
         )
     return verdict

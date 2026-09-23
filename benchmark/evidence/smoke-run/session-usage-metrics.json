@@ -12,30 +12,30 @@
             },
             "tokenDetails": {
               "cache_read": {
-                "tokenCount": 11264
+                "tokenCount": 7680
               },
               "cache_write": {
                 "tokenCount": 0
               },
               "input": {
-                "tokenCount": 6944
+                "tokenCount": 8416
               },
               "output": {
-                "tokenCount": 179
+                "tokenCount": 171
               }
             },
-            "totalNanoAiu": 2286100000.0,
+            "totalNanoAiu": 2552500000.0,
             "usage": {
-              "cacheReadTokens": 11264,
+              "cacheReadTokens": 7680,
               "cacheWriteTokens": 0,
-              "inputTokens": 18208,
-              "outputTokens": 179,
-              "reasoningTokens": 105
+              "inputTokens": 16096,
+              "outputTokens": 171,
+              "reasoningTokens": 97
             }
           }
         },
-        "totalApiDurationMs": 3363,
-        "totalNanoAiu": 2286100000.0
+        "totalApiDurationMs": 4640,
+        "totalNanoAiu": 2552500000.0
       }
     },
     "codeChanges": {
@@ -45,56 +45,56 @@
       "linesRemoved": 0
     },
     "currentModel": "gpt-5.4",
-    "lastCallInputTokens": 9166,
-    "lastCallOutputTokens": 46,
+    "lastCallInputTokens": 8110,
+    "lastCallOutputTokens": 41,
     "modelMetrics": {
       "gpt-5.4": {
-        "cacheExpiresAt": "2026-09-22T23:13:46.084000+00:00",
+        "cacheExpiresAt": "2026-09-23T20:59:55.037000+00:00",
         "requests": {
           "cost": 1.0,
           "count": 2
         },
         "tokenDetails": {
           "cache_read": {
-            "tokenCount": 11264
+            "tokenCount": 7680
           },
           "cache_write": {
             "tokenCount": 0
           },
           "input": {
-            "tokenCount": 6944
+            "tokenCount": 8416
           },
           "output": {
-            "tokenCount": 179
+            "tokenCount": 171
           }
         },
-        "totalNanoAiu": 2286100000.0,
+        "totalNanoAiu": 2552500000.0,
         "usage": {
-          "cacheReadTokens": 11264,
+          "cacheReadTokens": 7680,
           "cacheWriteTokens": 0,
-          "inputTokens": 18208,
-          "outputTokens": 179,
-          "reasoningTokens": 105
+          "inputTokens": 16096,
+          "outputTokens": 171,
+          "reasoningTokens": 97
         }
       }
     },
-    "sessionStartTime": "2026-09-22T22:43:40.728000+00:00",
+    "sessionStartTime": "2026-09-23T20:29:46.522000+00:00",
     "tokenDetails": {
       "cache_read": {
-        "tokenCount": 11264
+        "tokenCount": 7680
       },
       "cache_write": {
         "tokenCount": 0
       },
       "input": {
-        "tokenCount": 6944
+        "tokenCount": 8416
       },
       "output": {
-        "tokenCount": 179
+        "tokenCount": 171
       }
     },
-    "totalApiDurationMs": 3363,
-    "totalNanoAiu": 2286100000.0,
+    "totalApiDurationMs": 4640,
+    "totalNanoAiu": 2552500000.0,
     "totalPremiumRequestCost": 1.0,
     "totalUserRequests": 1
   }

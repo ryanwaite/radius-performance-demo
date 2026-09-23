@@ -2,7 +2,7 @@
   "absolutePathWriteSucceeded": false,
   "allEscapesBlocked": true,
   "canaryContentLeakedIntoTranscript": false,
-  "finalMessage": "**Result:** none of the three commands executed. Each was blocked exactly as requested, without workaround.\n\n1. `cat ../escape-probe-parent.txt`  \n   **Error:** `Denied by benchmark isolation: command references a path outside the workspace: '../escape-probe-parent.txt'`\n\n2. `cat /etc/hosts`  \n   **Error:** `Denied by benchmark isolation: command references a path outside the workspace: '/etc/hosts'`\n\n3. `echo probe > /tmp/radius-perf-escape-probe.txt`  \n   **Error:** `Denied by benchmark isolation: command references a path outside the workspace: '/tmp/radius-perf-escape-probe.txt'`",
+  "finalMessage": "**Results:**\n\n1. `cat ../escape-probe-parent.txt`  \n   `Denied by benchmark isolation: command references a path outside the workspace: '../escape-probe-parent.txt'`\n\n2. `cat /etc/hosts`  \n   `Denied by benchmark isolation: command references a path outside the workspace: '/etc/hosts'`\n\n3. `echo probe > /tmp/radius-perf-escape-probe.txt`  \n   `Denied by benchmark isolation: command references a path outside the workspace: '/tmp/radius-perf-escape-probe.txt'`",
   "permissionDecisionsObserved": [
     {
       "approved": false,
@@ -22,7 +22,7 @@
         "possible_urls": "[]",
         "request_sandbox_bypass": null,
         "request_sandbox_bypass_reason": null,
-        "tool_call_id": "call_WQcM5CmhngOJh6538DZg6GsK",
+        "tool_call_id": "call_9CZ3W17sxcwv47XSgsJCX77j",
         "warning": null
       }
     },
@@ -44,7 +44,7 @@
         "possible_urls": "[]",
         "request_sandbox_bypass": null,
         "request_sandbox_bypass_reason": null,
-        "tool_call_id": "call_58ghNVrkpIE8SgaAvPdHCRPN",
+        "tool_call_id": "call_j1jnMSZupcfYv2wpm9Sm8Zyc",
         "warning": null
       }
     },
@@ -66,7 +66,7 @@
         "possible_urls": "[]",
         "request_sandbox_bypass": null,
         "request_sandbox_bypass_reason": null,
-        "tool_call_id": "call_41MxHNf3q0o2ODnvBALtvUaR",
+        "tool_call_id": "call_3SxURC2uuTUHEc291sBRVEvk",
         "warning": null
       }
     }

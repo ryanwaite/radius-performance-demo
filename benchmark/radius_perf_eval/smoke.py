@@ -241,7 +241,7 @@ async def run_smoke(
             if outcome.session_metrics
             else None
         )
-        # Confinement is established by observing a live escape attempt fail,
+        # The handler is proven to deny by observing a live escape attempt fail,
         # never by test coverage, because the permission API hides shell paths.
         gate_verdict = evaluate_isolation_gate(
             isolation_report=isolation, live_probe=live_escape, scored=scored
@@ -307,7 +307,7 @@ async def run_smoke(
         # still fully auditable rather than vanishing with the exception.
         if not gate_verdict["passed"]:
             raise IsolationGateError(
-                "workspace confinement was not proven; failed checks: "
+                "permission handler was not proven to deny; failed checks: "
                 + ", ".join(gate_verdict["failedChecks"])
             )
         return summary
@@ -480,7 +480,8 @@ def main(argv: list[str] | None = None) -> int:
                 verify_budget_termination=not args.skip_budget_termination_check,
                 live_escape_probe=not args.skip_live_escape_probe,
                 # Skipping the probe explicitly downgrades the run to unscored,
-                # so the artifact self-declares that confinement was not gated.
+                # so the artifact self-declares that handler denial was not
+                # gated.
                 scored=not args.skip_live_escape_probe,
             )
         )
@@ -490,8 +491,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(json.dumps(summary, indent=2, default=str, sort_keys=True))
-    # The isolation gate already raised if confinement was unproven; these are
-    # the remaining exit-criterion conditions.
+    # The isolation gate already raised if handler denial was unproven; these
+    # are the remaining exit-criterion conditions.
     ok = (
         summary.get("terminalClass") == "validated_success"
         and summary.get("isolationGate", {}).get("passed") is True

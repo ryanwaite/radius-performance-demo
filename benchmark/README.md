@@ -18,8 +18,8 @@ needed to account for a trial in time, tokens, tool calls, and AI credits.
 > `docs/specs/copilot-radius-experiment-plan.md`.
 
 Increment 1 deliberately excludes fixtures, Inspect tasks, scenarios, and
-validators. The Compose trial driver referenced above as a security control
-landed separately as Increment 2.
+validators. The Compose trial driver landed separately as Increment 2. It
+isolates the application under test, not the agent.
 
 ## Layout
 
@@ -89,7 +89,14 @@ These are the invariants the unit tests exist to defend:
   by partition, never addition.
 - **Never double count.** `session.usage.getMetrics` `agentMetrics` is a
   breakdown of the same spend as `modelMetrics`, not an addition. Only
-  user-initiated calls are charged as premium requests.
+  user-initiated calls are charged as premium requests: summing every call's
+  `cost` overcounts. Measured over a 4-turn session that produced 8
+  `assistant.usage` events alternating `user`/`agent`, each `cost: 1.0` —
+  filtering on `initiator == "user"` gives **4.0**, matching the runtime's
+  `totalPremiumRequestCost` of 4.0, while the unfiltered sum gives 8.0. That
+  session also rules out the rival reading that only the *first* call is
+  charged, which would have predicted 1.0. Verified for the pinned runtime and
+  model family; re-verify on change.
 - **Reconcile, never merge.** Token totals come from exactly one source,
   recorded in `usageSource`. The other source is retained verbatim and
   compared; disagreement is reported, not resolved.
@@ -108,12 +115,21 @@ only durable copy.
 
 ## Isolation: what actually holds
 
-File reads and writes are confined to the assigned temporary workspace, and
-symlink escapes are defeated by resolving paths before checking them.
+**There is no OS or process boundary.** The SDK spawns its pinned CLI as a
+host child process, and the workspace is an ordinary host temporary directory.
+Everything below rests on an advisory, in-process permission handler: a denial
+is this harness declining a request, not the kernel refusing an operation.
 
-**Shell commands cannot be confined through the permission API.** Three
-fields of `PermissionRequestShell` are unreliable on CLI 1.0.83, and two of
-them actively mislead:
+Tool-mediated file reads and writes are screened against the assigned
+temporary workspace, and symlink escapes are defeated by resolving paths
+before checking them. That holds for access the runtime routes through the
+permission API, and only while shell is disabled — a shell command can read or
+write anywhere the host user can, and the screen below is not a reliable
+barrier.
+
+**Shell commands cannot be screened reliably through the permission API.**
+Three fields of `PermissionRequestShell` are unreliable on CLI 1.0.83, and two
+of them actively mislead:
 
 | Field | For `echo probe > /tmp/x` | Consequence |
 |---|---|---|
@@ -138,21 +154,33 @@ statically for absolute, `~`, and `..` path tokens.
 probes are observations, never assertions, and are excluded from
 `allFailedClosed` so a lucky denial cannot read as proof.
 
-Real filesystem confinement requires a sandbox that the agent's own processes run
-inside. **The Compose environment in Increment 2 is not that sandbox**, and an
-earlier version of this file said it was. The Copilot CLI and its tools run as
-host processes against a host temporary directory; the containers hold the
-application under test, not the agent. Their mounts bound what the *application*
-can reach, which is worth having for the data plane, but they say nothing about
-what an agent shell can reach.
+Real confinement requires an OS boundary around the agent process, which this
+harness does not yet establish. The Compose increment does not supply it:
+those containers bound the application under test, while the agent stays a
+host process outside them.
 
-No agent sandbox exists yet. Shell-enabled scored runs stay blocked until one
-does.
+The runtime sandbox that would supply it is **reachable only after the session
+exists, via the experimental `session.options.update`** — so there is a window
+between session start and that call in which no policy is in force, which a
+runner must close or account for. A spike on SDK 1.0.13 / CLI 1.0.83 with one
+model denied every escape that executed. The harness does not enable it yet,
+so shell stays disabled for scored runs until it does. See the runtime-sandbox
+section of `docs/specs/copilot-radius-experiment-plan.md` for the conditions
+that adoption is gated on.
 
-### Confinement is a run gate, not a metric
+The same capability is absent from the session-creation API. The CLI wire
+protocol defines an OS-level `SandboxConfig` — an `enabled` flag,
+`userPolicy.filesystem` read-only and read-write path lists, a fail-closed
+`allowBypass`, and sandboxed MCP/LSP subprocesses. None of it is exposed on
+`CopilotClient.create_session` in the pinned SDK 1.0.13, whose ~80 parameters
+include nothing sandbox-related. So this is an **SDK surface gap, not a
+missing runtime feature** — confirmed by the spike, which drove the sandbox
+successfully through the update call.
 
-Because the gap is invisible to tests written against the API, confinement is
-established by a **live escape probe in every scored run**, and the verdict
+### Handler denial is a run gate, not a metric
+
+Because the gap is invisible to tests written against the API, the handler is
+proven to deny by a **live escape probe in every scored run**, and the verdict
 **stops the run**. `evaluate_isolation_gate` requires every check to be
 *affirmatively* satisfied:
 
@@ -167,6 +195,16 @@ so a programmatic caller cannot bypass it by not checking an exit code, and it
 raises only *after* the run record is written so a failed run stays auditable.
 `--skip-live-escape-probe` explicitly downgrades the run to `scored: false`,
 recorded in the artifact, so the degradation is visible rather than silent.
+
+This design is **under review**: the sandbox spike found that the runtime's
+denial text asks the agent not to attempt workarounds, and the agent complies,
+so a per-run probe may stop attempting escapes for reasons unrelated to the
+harness. That behaviour is unchanged here and is being scoped separately.
+
+What a passing gate establishes is narrow and worth stating exactly: the
+handler was wired, it saw real attempts, and it denied them. That is a
+**wiring check**. It is not evidence of confinement, and `isolation-gate.json`
+says so in `permissionHandlerBasis`.
 
 ---
 
