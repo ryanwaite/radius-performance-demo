@@ -71,7 +71,14 @@ These are the invariants the unit tests exist to defend:
   by partition, never addition.
 - **Never double count.** `session.usage.getMetrics` `agentMetrics` is a
   breakdown of the same spend as `modelMetrics`, not an addition. Only
-  user-initiated calls are charged as premium requests.
+  user-initiated calls are charged as premium requests: summing every call's
+  `cost` overcounts. Measured over a 4-turn session that produced 8
+  `assistant.usage` events alternating `user`/`agent`, each `cost: 1.0` —
+  filtering on `initiator == "user"` gives **4.0**, matching the runtime's
+  `totalPremiumRequestCost` of 4.0, while the unfiltered sum gives 8.0. That
+  session also rules out the rival reading that only the *first* call is
+  charged, which would have predicted 1.0. Verified for the pinned runtime and
+  model family; re-verify on change.
 - **Reconcile, never merge.** Token totals come from exactly one source,
   recorded in `usageSource`. The other source is retained verbatim and
   compared; disagreement is reported, not resolved.
@@ -90,12 +97,21 @@ only durable copy.
 
 ## Isolation: what actually holds
 
-File reads and writes are confined to the assigned temporary workspace, and
-symlink escapes are defeated by resolving paths before checking them.
+**There is no OS or process boundary.** The SDK spawns its pinned CLI as a
+host child process, and the workspace is an ordinary host temporary directory.
+Everything below rests on an advisory, in-process permission handler: a denial
+is this harness declining a request, not the kernel refusing an operation.
 
-**Shell commands cannot be confined through the permission API.** Three
-fields of `PermissionRequestShell` are unreliable on CLI 1.0.83, and two of
-them actively mislead:
+Tool-mediated file reads and writes are screened against the assigned
+temporary workspace, and symlink escapes are defeated by resolving paths
+before checking them. That holds for access the runtime routes through the
+permission API, and only while shell is disabled — a shell command can read or
+write anywhere the host user can, and the screen below is not a reliable
+barrier.
+
+**Shell commands cannot be screened reliably through the permission API.**
+Three fields of `PermissionRequestShell` are unreliable on CLI 1.0.83, and two
+of them actively mislead:
 
 | Field | For `echo probe > /tmp/x` | Consequence |
 |---|---|---|
@@ -120,13 +136,25 @@ statically for absolute, `~`, and `..` path tokens.
 probes are observations, never assertions, and are excluded from
 `allFailedClosed` so a lucky denial cannot read as proof.
 
-Real filesystem confinement requires the container mount boundary, which makes
-the Compose increment a security control rather than a convenience.
+Real confinement would require executing the agent **inside a mount
+boundary** — a dedicated agent runner, which is not built. The Compose
+increment does not supply it: those containers bound the application under
+test, while the agent stays a host process outside them. Until that runner
+exists, shell should remain disabled for scored runs.
 
-### Confinement is a run gate, not a metric
+The capability does exist one layer down, and is only out of reach. The CLI
+wire protocol defines an OS-level `SandboxConfig` — an `enabled` flag,
+`userPolicy.filesystem` read-only and read-write path lists, a fail-closed
+`allowBypass`, and sandboxed MCP/LSP subprocesses. None of it is exposed on
+`CopilotClient.create_session` in the pinned SDK 1.0.13, whose ~80 parameters
+include nothing sandbox-related. So this is an **SDK surface gap, not a
+missing runtime feature**, and that is worth confirming before a runner is
+scoped from scratch.
 
-Because the gap is invisible to tests written against the API, confinement is
-established by a **live escape probe in every scored run**, and the verdict
+### Handler denial is a run gate, not a metric
+
+Because the gap is invisible to tests written against the API, the handler is
+proven to deny by a **live escape probe in every scored run**, and the verdict
 **stops the run**. `evaluate_isolation_gate` requires every check to be
 *affirmatively* satisfied:
 
@@ -141,3 +169,8 @@ so a programmatic caller cannot bypass it by not checking an exit code, and it
 raises only *after* the run record is written so a failed run stays auditable.
 `--skip-live-escape-probe` explicitly downgrades the run to `scored: false`,
 recorded in the artifact, so the degradation is visible rather than silent.
+
+What a passing gate establishes is narrow and worth stating exactly: the
+handler was wired, it saw real attempts, and it denied them. That is a
+**wiring check**. It is not evidence of confinement, and `isolation-gate.json`
+says so in `permissionHandlerBasis`.

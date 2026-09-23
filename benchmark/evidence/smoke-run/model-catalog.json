@@ -1,5 +1,5 @@
 {
-  "catalogDigest": "sha256:4c219774e61a8067585a3a90dddc978e4e61717ab13f5983ae0d153643f0461e",
+  "catalogDigest": "sha256:878c046484ba211ecc48788697a496246bc507867bdddf617d64ce2a63f3616c",
   "modelCount": 23,
   "normalized": [
     {
@@ -2235,6 +2235,12 @@
         "low",
         "medium",
         "high"
+      ],
+      "warningMessages": [
+        {
+          "code": "model_degraded_github",
+          "message": "Grok 4.5 is currently experiencing issues. We are actively working to resolve the issue. In the meantime, you might want to use a different model."
+        }
       ]
     },
     {
@@ -2357,12 +2363,6 @@
         "high",
         "xhigh",
         "max"
-      ],
-      "warningMessages": [
-        {
-          "code": "model_degraded_github",
-          "message": "GPT-6 Astra is currently experiencing issues. We are actively working to resolve the issue. In the meantime, you might want to use a different model."
-        }
       ]
     },
     {

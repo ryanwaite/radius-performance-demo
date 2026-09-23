@@ -531,6 +531,24 @@ def test_gate_passes_only_with_a_live_blocked_probe():
     assert evaluate_isolation_gate(isolation_report=report, live_probe=probe)["passed"]
 
 
+def test_gate_verdict_does_not_claim_confinement():
+    """The verdict names what it proves: handler denial, not confinement.
+
+    The agent runs as a host process, so nothing in this runtime confines it.
+    A field called ``confinementBasis`` invited exactly the misreading that a
+    passing gate means shell is contained, and consumers key off these names.
+    """
+    from radius_perf_eval.isolation_probe import evaluate_isolation_gate
+
+    report, probe = _gate_inputs()
+    verdict = evaluate_isolation_gate(isolation_report=report, live_probe=probe)
+
+    assert "confinementBasis" not in verdict
+    basis = verdict["permissionHandlerBasis"]
+    assert "not confinement" in basis
+    assert "host process" in basis
+
+
 def test_scored_run_may_not_skip_the_live_probe():
     from radius_perf_eval.isolation_probe import evaluate_isolation_gate
 
@@ -603,7 +621,7 @@ def test_cli_exits_nonzero_when_the_gate_fails(monkeypatch, capsys):
     from radius_perf_eval import smoke
 
     async def _raise(**_kwargs):
-        raise smoke.IsolationGateError("workspace confinement was not proven")
+        raise smoke.IsolationGateError("permission handler was not proven to deny")
 
     monkeypatch.setattr(smoke, "run_smoke", _raise)
     assert smoke.main(["--model", "gpt-5.4"]) == 1

@@ -1,7 +1,7 @@
 {
-  "capturedAt": "2026-09-22T22:43:41.103098+00:00",
+  "capturedAt": "2026-09-23T17:03:12.308818+00:00",
   "model": "gpt-5.4",
-  "provenanceDigest": "sha256:e26ae78eeb74a4cbe4f23c8655317442560620cb08c8538d5b2abea9c400d14f",
+  "provenanceDigest": "sha256:b046d0dbf650f1d6582ccb8d7c04a33e48d94e014754f2a0b88b92ba14d6c116",
   "reasoningEffort": null,
   "runtime": {
     "machine": "arm64",
@@ -16,9 +16,9 @@
     "autoRouting": false,
     "contextPolicy": "cold",
     "memoryEnabled": false,
-    "sessionId": "19e1ac4b-218b-4ecc-969f-d0267da4d866",
+    "sessionId": "65a25a36-36c3-4a28-8757-7b11f13d5018",
     "subagentsEnabled": false,
-    "workspaceRoot": "/private/var/folders/tm/jmmxm1g54855dc29ks95g_br0000gn/T/radius-perf-ws-9_mo3urd"
+    "workspaceRoot": "/private/var/folders/tm/jmmxm1g54855dc29ks95g_br0000gn/T/radius-perf-ws-xe9dig0i"
   },
   "supplyChain": {
     "compliant": true,
