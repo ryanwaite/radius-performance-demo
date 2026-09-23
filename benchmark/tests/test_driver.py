@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import math
 import statistics
+import subprocess
 import sys
 import tempfile
 import time
@@ -63,7 +64,12 @@ from radius_perf_eval.trials import (  # noqa: E402
     CycleResult,
     build_report,
     UNEXPLAINED_STALL,
+    _write_json,
+    annotate_power,
+    host_power_state,
+    parse_power_state,
     host_suspension_seconds,
+    suite_provenance,
     summarise,
 )
 
@@ -1066,3 +1072,199 @@ class RunLoadStallWiringTests(unittest.TestCase):
         self.assertGreaterEqual(result.excursion_count, 1)
         self.assertGreaterEqual(result.stall_count, 1)
         self.assertIsNone(result.stall_events[0].suite_elapsed_seconds)
+
+
+class PowerStateTests(unittest.TestCase):
+    """The drift observation that prompted this was unfalsifiable after the
+    fact, because nothing recorded whether the host was on battery."""
+
+    AC = (
+        "Now drawing from 'AC Power'\n"
+        " -InternalBattery-0 (id=36438115)\t100%; finishing charge; "
+        "0:00 remaining present: true\n"
+    )
+    BATTERY = (
+        "Now drawing from 'Battery Power'\n"
+        " -InternalBattery-0 (id=36438115)\t92%; discharging; "
+        "3:41 remaining present: true\n"
+    )
+
+    def test_reads_ac(self) -> None:
+        state = parse_power_state(self.AC, None)
+        self.assertEqual(state["source"], "ac")
+        self.assertEqual(state["batteryPercent"], 100)
+
+    def test_reads_battery(self) -> None:
+        state = parse_power_state(self.BATTERY, None)
+        self.assertEqual(state["source"], "battery")
+        self.assertEqual(state["batteryPercent"], 92)
+
+    def test_ac_and_battery_are_distinguished(self) -> None:
+        """The whole point is telling these apart; a parser that matched
+        'Power' in both would satisfy every other assertion here."""
+        self.assertNotEqual(
+            parse_power_state(self.AC, None)["source"],
+            parse_power_state(self.BATTERY, None)["source"],
+        )
+
+    def test_throttling_is_visible_when_the_os_reports_it(self) -> None:
+        state = parse_power_state(None, "CPU_Speed_Limit \t= 70\n")
+        self.assertEqual(state["cpuSpeedLimitPercent"], 70)
+        self.assertTrue(state["thermalWarningsRecorded"])
+
+    def test_absent_thermal_limit_is_none_not_a_hundred(self) -> None:
+        """An unthrottled host must not be recorded as a measured 100%: that
+        would make 'no data' and 'verified fine' indistinguishable."""
+        state = parse_power_state(None, "Note: No thermal warning level has been recorded\n")
+        self.assertIsNone(state["cpuSpeedLimitPercent"])
+        self.assertFalse(state["thermalWarningsRecorded"])
+
+    def test_missing_probe_output_does_not_raise(self) -> None:
+        self.assertEqual(parse_power_state(None, None), {})
+
+    def test_live_capture_reports_this_host(self) -> None:
+        state = host_power_state()
+        self.assertIn("platform", state)
+        if state["platform"] == "Darwin":
+            # If pmset is present this must resolve; 'unknown' on a Mac means
+            # the parser silently stopped working.
+            self.assertIn(state["source"], {"ac", "battery"})
+
+    def test_power_change_during_a_suite_is_flagged(self) -> None:
+        report = annotate_power({}, {"source": "ac"}, {"source": "battery"})
+        self.assertTrue(report["hostPower"]["changedDuringSuite"])
+
+    def test_stable_power_is_not_flagged(self) -> None:
+        report = annotate_power({}, {"source": "ac"}, {"source": "ac"})
+        self.assertFalse(report["hostPower"]["changedDuringSuite"])
+        self.assertEqual(report["hostPower"]["atStart"]["source"], "ac")
+
+    def test_power_is_not_a_gate(self) -> None:
+        """Explicitly pinned: recording power must never fail a suite, or a
+        laptop unplugged mid-run would invalidate a valid measurement."""
+        report = annotate_power(
+            {"exitCriterionMet": True}, {"source": "ac"}, {"source": "battery"}
+        )
+        self.assertTrue(report["exitCriterionMet"])
+
+
+class SuiteProvenanceTests(unittest.TestCase):
+    """A holdout that cannot name the commit it ran against is not a holdout."""
+
+    def _repo(self, tmp: str) -> Path:
+        root = Path(tmp)
+        env = {"GIT_CONFIG_GLOBAL": str(root / "gitconfig"), "HOME": tmp, "PATH": "/usr/bin:/bin"}
+        subprocess.run(["git", "init", "-q", str(root)], check=True, env=env)
+        (root / "a.txt").write_text("one\n", encoding="utf-8")
+        for args in (
+            ["config", "user.email", "t@example.com"],
+            ["config", "user.name", "t"],
+            ["add", "-A"],
+            ["commit", "-qm", "init"],
+        ):
+            subprocess.run(["git", "-C", str(root), *args], check=True, env=env)
+        return root
+
+    def test_clean_tree_records_a_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp)
+            prov = suite_provenance(root, "suite-x", root / "out")
+            self.assertTrue(prov["worktreeClean"])
+            self.assertEqual(prov["worktreeDiff"], "")
+            self.assertEqual(len(prov["commit"]), 40)
+            self.assertEqual(prov["suiteId"], "suite-x")
+
+    def test_dirty_tree_is_reported_with_the_diff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp)
+            (root / "a.txt").write_text("two\n", encoding="utf-8")
+            prov = suite_provenance(root, "suite-x", root / "out")
+            self.assertFalse(prov["worktreeClean"])
+            self.assertIn("a.txt", prov["worktreeDiff"])
+
+    def test_a_non_repository_is_not_reported_clean(self) -> None:
+        """Absent git output must not read as 'no changes'. Defaulting to
+        clean would let an unknown tree pass as a verified one."""
+        with tempfile.TemporaryDirectory() as tmp:
+            prov = suite_provenance(Path(tmp), "suite-x", Path(tmp))
+            self.assertFalse(prov["worktreeClean"])
+            self.assertIsNone(prov["commit"])
+
+
+class ReportPersistenceTests(unittest.TestCase):
+    """The README documented a report path the code did not write. The suite's
+    own report survived only because an external harness wrote it."""
+
+    def test_write_json_creates_parents_and_round_trips(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "suite-1" / "determinism-report.json"
+            _write_json(target, {"exitCriterionMet": True, "b": 1, "a": 2})
+            self.assertTrue(target.exists())
+            self.assertEqual(
+                json.loads(target.read_text(encoding="utf-8"))["exitCriterionMet"], True
+            )
+
+    def test_written_report_is_stable_across_writes(self) -> None:
+        """Sorted keys, so two reports of the same suite diff on content
+        rather than on dict ordering."""
+        with tempfile.TemporaryDirectory() as tmp:
+            first, second = Path(tmp) / "one.json", Path(tmp) / "two.json"
+            _write_json(first, {"b": 1, "a": 2})
+            _write_json(second, {"a": 2, "b": 1})
+            self.assertEqual(first.read_text(), second.read_text())
+
+    def test_non_serialisable_values_do_not_lose_the_report(self) -> None:
+        """A report is written after ten cycles of real work; a stray Path in
+        it must not raise and discard the run."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "r.json"
+            _write_json(target, {"dir": Path("/tmp/x")})
+            self.assertIn("/tmp/x", target.read_text(encoding="utf-8"))
+
+    def test_run_suite_writes_the_path_the_readme_documents(self) -> None:
+        """Pins the contract rather than the prose: the README tells operators
+        to look in <suite-id>/determinism-report.json."""
+        readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("<suite-id>/determinism-report.json", readme)
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "radius_perf_eval"
+            / "trials.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('suite_dir / "determinism-report.json"', source)
+        self.assertIn('suite_dir / "provenance.json"', source)
+
+
+class DaemonVersionCaptureTests(unittest.TestCase):
+    """build_report runs after every cycle is finished. Raising there would
+    discard a completed suite over a version string."""
+
+    def test_an_unreachable_daemon_is_recorded_not_raised(self) -> None:
+        import radius_perf_eval.trials as trials_module
+
+        original = trials_module.daemon_info
+        trials_module.daemon_info = lambda: (_ for _ in ()).throw(
+            RuntimeError("Docker daemon is not reachable.\nsecond line")
+        )
+        try:
+            versions = trials_module._daemon_versions()
+        finally:
+            trials_module.daemon_info = original
+        self.assertIn("error", versions)
+        self.assertNotIn("second line", versions["error"])
+
+    def test_report_is_still_produced_without_a_daemon(self) -> None:
+        import radius_perf_eval.trials as trials_module
+
+        original = trials_module.daemon_info
+        trials_module.daemon_info = lambda: (_ for _ in ()).throw(RuntimeError("down"))
+        try:
+            report = build_report(
+                [_cycle(i) for i in range(1, 11)], suite_id="s", cycles=10
+            )
+        finally:
+            trials_module.daemon_info = original
+        self.assertTrue(report["exitCriterionMet"])
+        self.assertEqual(report["dockerVersions"], {"error": "down"})

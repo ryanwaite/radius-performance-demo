@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import json
 import math
+import platform
+import re
 import statistics
+import subprocess
 import time
 import traceback
 from dataclasses import dataclass, field
@@ -361,6 +364,93 @@ def host_suspension_seconds(
     return max(0.0, (wall_end - wall_start) - (mono_end - mono_start))
 
 
+def host_power_state() -> dict[str, Any]:
+    """Whether the host is on AC or battery, and any thermal limit in force.
+
+    Not a gate, and deliberately not one: this records a fact about the host
+    rather than judging it. The first holdout's last cycles drifted in one
+    direction -- incident throughput 7.914 -> 7.886 -> 7.857 -> 7.829, incident
+    p50 rising 0.5058 -> 0.5112, and the suite's lowest healthy throughput in
+    the final cycle -- on a machine that happened to be on battery. Power and
+    thermal state are the first thing to suspect there, and they cannot be
+    reconstructed after the run, so they are captured rather than remembered.
+    """
+    state: dict[str, Any] = {"platform": platform.system(), "source": "unknown"}
+    if platform.system() != "Darwin":
+        state["note"] = "power state capture is implemented for macOS only"
+        return state
+    state.update(parse_power_state(_run_text(["pmset", "-g", "batt"]), _run_text(["pmset", "-g", "therm"])))
+    return state
+
+
+def parse_power_state(batt: str | None, therm: str | None) -> dict[str, Any]:
+    """Parse ``pmset`` output. Split out so it can be tested off a Mac."""
+    state: dict[str, Any] = {}
+    if batt is not None:
+        state["raw"] = batt.strip()
+        match = re.search(r"Now drawing from '([^']+)'", batt)
+        if match:
+            drawing = match.group(1)
+            state["drawingFrom"] = drawing
+            state["source"] = "ac" if "AC" in drawing else "battery"
+        percent = re.search(r"(\d+)%", batt)
+        if percent:
+            state["batteryPercent"] = int(percent.group(1))
+    if therm is not None:
+        limit = re.search(r"CPU_Speed_Limit\s*=\s*(\d+)", therm)
+        # Absent on a healthy Apple Silicon host; present and below 100 when
+        # the OS is actively throttling, which is the case worth seeing.
+        state["cpuSpeedLimitPercent"] = int(limit.group(1)) if limit else None
+        state["thermalWarningsRecorded"] = "No thermal warning level" not in therm
+    return state
+
+
+def _run_text(command: list[str]) -> str | None:
+    """Best-effort capture of a host probe. Never fails the suite."""
+    try:
+        completed = subprocess.run(
+            command, capture_output=True, text=True, timeout=15, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return completed.stdout if completed.returncode == 0 else None
+
+
+def _daemon_versions() -> dict[str, str]:
+    """Daemon identity for the report, or a recorded failure.
+
+    ``build_report`` runs after every cycle has finished, so raising here
+    would discard a completed suite over a daemon that has since gone away --
+    losing the measurements rather than the version string. It also made the
+    "Docker-free" unit tests silently daemon-dependent: they passed on a
+    machine with Docker running and errored on one without.
+    """
+    try:
+        return daemon_info()
+    except Exception as exc:  # noqa: BLE001 - provenance must not fail a suite
+        return {"error": str(exc).splitlines()[0]}
+
+
+def suite_provenance(repo_root: Path, suite_id: str, artifact_dir: Path) -> dict[str, Any]:
+    """Which commit produced a suite, and whether the tree was modified.
+
+    A holdout tests gates that were frozen beforehand, so a report that cannot
+    name the commit it ran against is not a holdout -- it is a measurement of
+    something unknown. ``worktreeClean`` is recorded rather than enforced here;
+    the caller decides whether a dirty tree is disqualifying.
+    """
+    head = _run_text(["git", "-C", str(repo_root), "rev-parse", "HEAD"])
+    dirty = _run_text(["git", "-C", str(repo_root), "status", "--porcelain"])
+    return {
+        "suiteId": suite_id,
+        "commit": head.strip() if head else None,
+        "worktreeClean": (dirty is not None and not dirty.strip()),
+        "worktreeDiff": dirty.strip() if dirty else "",
+        "startedAt": datetime.now(timezone.utc).isoformat(),
+        "artifactDir": str(artifact_dir),
+    }
+
+
 def run_cycle(
     index: int,
     *,
@@ -507,9 +597,15 @@ def run_suite(
     spec = spec or EnvironmentSpec()
     results_dir = Path(results_dir) if results_dir else repo_root / "benchmark" / "results"
     suite_id = suite_id or f"suite-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
+    suite_dir = results_dir / suite_id
+    suite_dir.mkdir(parents=True, exist_ok=True)
     # Anchors every stall timestamp, so an anomaly can be placed against the
     # other cycles in this suite and against suites that ran at other times.
     suite_start_epoch = time.time()
+    started_mono = time.monotonic()
+    provenance = suite_provenance(repo_root, suite_id, suite_dir)
+    power_before = host_power_state()
+    _write_json(suite_dir / "provenance.json", provenance)
 
     # Setup phase: acquire every image once, measured by nobody. Done through a
     # throwaway cycle so the build path exercised here is the same one the
@@ -592,8 +688,54 @@ def run_suite(
         warmups=warmups,
         suite_start_epoch=suite_start_epoch,
     )
-
+    report["provenance"] = provenance
+    report["wallClockSeconds"] = round(time.time() - suite_start_epoch, 1)
+    # Per-cycle suspension cannot see a host that slept *between* cycles, in
+    # the teardown-to-setup gap. Measuring across the whole suite closes that
+    # window. Reported, not gated: the per-cycle bound is the gate.
+    report["hostSuspension"]["suiteLevelSeconds"] = round(
+        host_suspension_seconds(
+            suite_start_epoch, time.time(), started_mono, time.monotonic()
+        ),
+        3,
+    )
+    annotate_power(report, power_before, host_power_state())
+    # The README documents this path, and for a while the code did not
+    # produce it: run_suite returned the report and only the CLI printed it,
+    # mixed into progress output. The holdout's report survived because an
+    # external harness wrote it, which is not a property to depend on.
+    _write_json(suite_dir / "determinism-report.json", report)
     return report
+
+
+def annotate_power(
+    report: dict[str, Any], before: dict[str, Any], after: dict[str, Any]
+) -> dict[str, Any]:
+    """Attach the power readings taken at both ends of a suite.
+
+    Captured twice rather than once so a change during the run is visible
+    rather than inferred. A suite that starts on AC and ends on battery is not
+    the same experiment throughout, and the report should say so.
+    """
+    report["hostPower"] = {
+        "atStart": before,
+        "atEnd": after,
+        "changedDuringSuite": before.get("source") != after.get("source"),
+        "note": (
+            "Recorded, never gated. A monotonic drift across the last cycles of "
+            "a suite is what this is for: power and thermal state are the first "
+            "thing to suspect and cannot be reconstructed afterwards."
+        ),
+    }
+    return report
+
+
+def _write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n",
+        encoding="utf-8",
+    )
 
 
 def build_report(
@@ -834,7 +976,7 @@ def build_report(
         "cycles": cycles,
         "successfulCycles": len(successful),
         "exitCriterionMet": exit_criterion_met,
-        "dockerVersions": daemon_info(),
+        "dockerVersions": _daemon_versions(),
         "suiteStartedAt": (
             None
             if suite_start_epoch is None

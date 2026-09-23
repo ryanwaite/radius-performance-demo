@@ -370,8 +370,20 @@ Useful flags: `--no-pull` (use local images, skip registry pulls), `--results-di
 `--scenario`, `--suite-id`.
 
 Artifacts land in `benchmark/results/<run-id>/`:
-`environment-manifest.json`, `measurements.json`, and for a suite,
-`<suite-id>/determinism-report.json`.
+`environment-manifest.json` and `measurements.json`. A suite additionally
+writes `benchmark/results/<suite-id>/determinism-report.json` and
+`provenance.json` — the commit it ran against and whether the worktree was
+modified.
+
+For a holdout — a suite run against gates frozen beforehand — use the harness,
+which refuses a dirty tree and exits non-zero when the criterion is not met:
+
+```bash
+python3.12 benchmark/tools/run_holdout.py "$PWD" /path/outside/the/repo holdout-01
+```
+
+Point the artifact directory outside the worktree. Results are gitignored, and
+an earlier holdout's evidence was lost to a routine clean-up.
 
 Run the Docker-free tests with:
 
@@ -489,6 +501,21 @@ for the next 109 minutes. That cycle passed all 17 gates and reported a throughp
 figure computed over a wall-clock window the machine had mostly slept through, and
 nothing in the driver noticed. Note that AC power sets `sleep 0` while battery sets
 `sleep 1`, and clamshell sleep on battery is unconditional — so run suites on AC.
+`caffeinate` does not help: it holds `PreventUserIdleSystemSleep`, not
+`PreventSystemSleep`. A suite-level suspension figure is also reported, since the
+per-cycle measurement cannot see a host that slept in the gap between cycles.
+
+### Power state is recorded, not gated
+
+`hostPower` records AC or battery, battery percentage, and any CPU speed limit, at
+both the start and the end of a suite, with `changedDuringSuite` when the two differ.
+Nothing fails on it. It is there because the holdout's last four cycles drifted in one
+direction — incident throughput 7.914 → 7.886 → 7.857 → 7.829, incident p50 rising
+0.5058 → 0.5112, and the suite's lowest healthy throughput in the final cycle — on a
+host that happened to be on battery. Power and thermal state are the first thing to
+suspect for a monotonic drift, and they are unreconstructable once the run is over.
+Whether that drift is throttling or coincidence is unresolved; recording the state is
+what makes the next suite able to answer it.
 
 ### A note on the cache
 
