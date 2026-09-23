@@ -8,7 +8,10 @@ the artifact it describes.
 
 Usage::
 
-    python tools/summarize_events.py evidence/smoke-run
+    python tools/summarize_events.py [run-dir]
+
+``run-dir`` defaults to ``artifacts/smoke``, the documented ``--output``
+location for ``radius-perf-smoke``.
 """
 
 from __future__ import annotations
@@ -18,12 +21,14 @@ import json
 import sys
 from pathlib import Path
 
+DEFAULT_RUN_DIR = Path("artifacts/smoke")
+
 NOTE = (
-    "Summary of the full events.jsonl. The full log is generated output and is "
-    "left untracked (it is not covered by a gitignore rule, so do not stage it). "
-    "Regenerate the log with: uv run radius-perf-smoke --model gpt-5.4 --output "
-    "<dir>; then regenerate this summary with: python tools/summarize_events.py "
-    "<dir>"
+    "Summary of the full events.jsonl. The full log is generated output, written "
+    "under artifacts/, which the root .gitignore ignores. Regenerate the log "
+    "with: uv run radius-perf-smoke --model gpt-5.4 --output ../artifacts/smoke; "
+    "then regenerate this summary with: python tools/summarize_events.py "
+    "../artifacts/smoke"
 )
 
 
@@ -55,10 +60,10 @@ def summarize(events: list[dict]) -> dict:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
+    if len(argv) > 2:
         print(__doc__, file=sys.stderr)
         return 2
-    run_dir = Path(argv[1])
+    run_dir = Path(argv[1]) if len(argv) == 2 else DEFAULT_RUN_DIR
     log = run_dir / "events.jsonl"
     if not log.is_file():
         print(f"no events.jsonl in {run_dir}", file=sys.stderr)

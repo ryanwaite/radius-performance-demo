@@ -1,5 +1,5 @@
 {
-  "note": "Summary of the full events.jsonl. The full log is generated output and is left untracked (it is not covered by a gitignore rule, so do not stage it). Regenerate the log with: uv run radius-perf-smoke --model gpt-5.4 --output <dir>; then regenerate this summary with: python tools/summarize_events.py <dir>",
+  "note": "Summary of the full events.jsonl. The full log is generated output, written under artifacts/, which the root .gitignore ignores. Regenerate the log with: uv run radius-perf-smoke --model gpt-5.4 --output ../artifacts/smoke; then regenerate this summary with: python tools/summarize_events.py ../artifacts/smoke",
   "eventCount": 1245,
   "seqIsDenseAndOrdered": true,
   "elapsedIsMonotonic": true,
