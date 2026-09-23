@@ -24,3 +24,102 @@ jobs:
         run: go test ./...
       - name: Build
         run: go build ./...
+
+  python:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: benchmark
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Positive control -- confirm the Docker daemon is unreachable
+        # The step below claims to run without a daemon. GitHub-hosted Ubuntu
+        # runners have one running, so without this the claim is untested and
+        # a test that quietly starts calling Docker would pass here forever.
+        # That is the failure this control exists to prevent, one level up
+        # from the tests themselves: assert the mechanism is engaged rather
+        # than assume the setting worked.
+        env:
+          DOCKER_HOST: unix:///nonexistent/docker.sock
+        run: |
+          set -o pipefail
+          if ! command -v docker >/dev/null 2>&1; then
+            # Without this, `docker info` would fail because the binary is
+            # missing and the control would pass for the wrong reason, which
+            # is the exact failure it is here to rule out.
+            echo "::error::docker CLI is absent, so an unreachable daemon cannot be demonstrated"
+            exit 1
+          fi
+          if docker info >/dev/null 2>&1; then
+            echo "::error::DOCKER_HOST did not hide the daemon; the Docker-free claim is untested"
+            exit 1
+          fi
+          echo "docker is installed and docker info fails under DOCKER_HOST=${DOCKER_HOST}, as required"
+
+      - name: Compose trial driver tests
+        # Run with the stdlib only, deliberately. The driver package has zero
+        # runtime dependencies, so these tests need no package index and no
+        # Docker daemon, and therefore cannot be broken by a mirror outage.
+        #
+        # DOCKER_HOST is pointed at a socket that does not exist so that
+        # "needs no Docker daemon" is enforced rather than asserted. Nine of
+        # these tests once required a daemon without saying so; they passed
+        # for months because one happened to be running, and errored the
+        # first time it was not. The driver shells out to `docker`, which
+        # reads DOCKER_HOST ahead of any context, and docker_cli inherits
+        # os.environ, so setting it here reaches every call the tests make.
+        env:
+          DOCKER_HOST: unix:///nonexistent/docker.sock
+        run: |
+          set -o pipefail
+          python -m unittest tests.test_driver -v 2>&1 | tee driver-tests.log
+          echo "DRIVER_TESTS_RAN=$(grep -cE '^test_[A-Za-z0-9_]+ \(' driver-tests.log)" >> "$GITHUB_ENV"
+
+      - name: Report what this job did not run
+        # This job is NOT "Python CI green". It runs one of five test modules.
+        # Saying so in the summary, with counts and names, is the point: a job
+        # that silently omits a test set reads as coverage it does not have,
+        # which is the same vacuity problem as a check that passes because the
+        # thing it checks never ran.
+        if: always()
+        run: |
+          set -o pipefail
+          skipped_total=0
+          rows=""
+          for module in test_events test_isolation test_usage test_versions; do
+            count=$(grep -cE '^[[:space:]]*def test_' "tests/${module}.py")
+            skipped_total=$(( skipped_total + count ))
+            rows="${rows}| \`tests.${module}\` | **NOT RUN** | ${count} |"$'\n'
+          done
+          {
+            echo "### Python job coverage"
+            echo
+            echo "| test module | status | tests |"
+            echo "|---|---|---|"
+            echo "| \`tests.test_driver\` | run | ${DRIVER_TESTS_RAN:-0} |"
+            printf '%s' "${rows}"
+            echo
+            echo "**Ran ${DRIVER_TESTS_RAN:-0}. Did not run ${skipped_total}.**"
+            echo
+            echo "The driver suite ran with the Docker daemon deliberately unreachable"
+            echo "(\`DOCKER_HOST\` pointed at a socket that does not exist, checked by a"
+            echo "positive control first), so its independence from Docker is enforced"
+            echo "here rather than assumed."
+            echo
+            echo "The four modules above are not skipped at runtime — they are never"
+            echo "collected. They import \`github-copilot-sdk\` and \`inspect-ai\`, which"
+            echo "come from the CFS proxy, and CFS access depends on network context"
+            echo "rather than on a credential: it resolves from a managed machine and"
+            echo "returns 401 to a GitHub-hosted runner. Adding a token will not fix it."
+            echo "The fix is a CFS-capable runner or a prebuilt test image, and that"
+            echo "decision belongs to the repository owner, not to this job."
+            echo
+            echo "Until it is made, a green tick here means the Compose trial driver"
+            echo "tests passed. It says nothing about the other ${skipped_total}."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "ran=${DRIVER_TESTS_RAN:-0} not_run=${skipped_total}"
+
