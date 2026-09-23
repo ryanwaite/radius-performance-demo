@@ -379,7 +379,19 @@ Shell therefore defaults to denied. Static command screening is defence in depth
 
 No agent confinement boundary exists yet. In Increment 1 the Copilot CLI and every tool it runs are host processes working in a host temporary directory. The Compose containers hold the application under test, not the agent, so their mounts bound the application data plane and say nothing about what an agent shell can reach on the host. Shell-enabled scored runs are therefore blocked until an OS-enforced agent boundary exists. It must confine the SDK-side CLI process and every tool it runs, allow writes only to the standalone fixture workspace, reach only the declared application endpoints, and deny the host home directory, Docker socket, benchmark checkout, and credentials.
 
-Two designs can supply that boundary. The first is a dedicated agent runner: a container or VM that runs the CLI and its tools. The second is the Copilot runtime's own sandbox. The CLI wire protocol defines a `SandboxConfig` with filesystem read-only and read-write path lists, network policy, a fail-closed per-command bypass flag, confinement of the MCP and LSP servers the session launches, and a macOS seatbelt backend. The pinned Python SDK doesn't accept it at session creation, but its experimental `session.options.update` RPC carries a `sandboxConfig` field. Nobody has yet shown that the pinned CLI accepts the setting on a running session, or that it confines shell against the commands the static screen misses. The runtime sandbox would be cheaper than a runner if it works, so test it first. Test it with the static screen disabled, so the sandbox is the only thing under test, and include a positive control showing that an in-workspace write still succeeds. If it can't be verified, build the runner.
+Two designs can supply that boundary: a dedicated agent runner (a container or VM that runs the CLI and its tools), or the Copilot runtime's own sandbox. The CLI wire protocol defines a `SandboxConfig` with filesystem path lists, network policy, a fail-closed bypass flag, and a macOS seatbelt backend. The pinned Python SDK doesn't accept it at session creation, but its experimental `session.options.update` RPC carries a `sandboxConfig` field.
+
+A spike on 2026-09-23 tested the runtime sandbox on one Mac, with SDK 1.0.13, CLI 1.0.83, and one model. The static screen was off and the permission handler approved every shell request, so the sandbox was the only thing that could refuse. An in-workspace write succeeded. Every escape that executed failed at the operating system: a read of a canary file in the parent directory, writes to a path built from shell variables and from a perl script, a write to `/tmp`, and a request to bypass the sandbox. The perl write exited 0; only the check that the target file was absent showed that it failed. Changing only `network.allowOutbound` changed the network outcome, so the runtime applies individual fields and not just the on/off switch. Evidence is in `radius-perf-eval-artifacts/sandbox-spike/`.
+
+The runtime sandbox is therefore the chosen agent boundary. Build a runner only if the conditions below can't be met:
+
+- **Apply it before the first prompt.** The runner calls `session.options.update` before sending anything, so no agent tool runs unconfined. MCP or LSP servers started at session creation may run before the setting applies, so trials configure none until that is shown otherwise.
+- **Verify it on every command.** `options.update` returns only `success: true`, and the `SANDBOX_DECISION` events carry empty payloads, so neither is evidence. The runtime reports `sandboxApplied: "true"` in each tool execution's completion telemetry. A scored trial fails if any tool execution lacks it.
+- **Claim what was shown.** Writes outside the workspace and reads elsewhere under the home directory were denied, but `/etc/hosts` was readable, so the sandbox does not confine every read. Keep hidden validators and answer material in locations the sandbox was shown to deny.
+- **Don't probe through the model.** Each denial tells the agent not to attempt workarounds, and after the first denial the agent declined 4 of 11 probes. A probe the model can decline cannot separate "blocked" from "never tried." Calibration probes run one per fresh session, record "not executed" separately from "blocked," and a probe with only "not executed" results fails.
+- **Declare toolchain access.** With `allowDevToolAccess: false`, Python could not load its own shared library. Trials that build or test code declare the Go toolchain paths read-only, with a positive control showing that an in-workspace build succeeds.
+
+Still unverified: the agent declined to run the base64-decoded path in three attempts, so that case is untested. Process, IPC, and environment-variable exfiltration were not probed. Verify again whenever the SDK, CLI, or model pin changes.
 
 The live escape probe in Increment 1 is a permission-handler wiring check, not evidence of confinement. It shows that the static screen rejected three literal paths, and its prompt tells the agent not to work around a denial. Confinement evidence must come from escape tests against the agent runner's actual boundary, exercised by commands the static screen cannot catch. Because the permission-API failures are invisible to unit tests, that boundary test runs as a gate in each scored run and must pass affirmatively: missing evidence or a skipped probe fails the trial.
 
@@ -846,7 +858,7 @@ Work:
 - Implement unique-project Compose driver, dynamic ports, fresh volumes, digest pinning, and cleanup verification.
 - Implement independent collector and hidden diagnosis validator.
 - Implement one hidden `mysql-pool-delay/v1` variant.
-- Establish the OS-enforced agent boundary: verify the runtime sandbox, or else build a dedicated agent runner.
+- Establish the OS-enforced agent boundary: enable the runtime sandbox before the first prompt and fail any trial whose tool executions lack `sandboxApplied`; build a dedicated runner only if those conditions can't be met.
 - Pin every base image by digest and record hashes of the application source, driver, load profile, incident declaration, and rendered Compose configuration.
 - Run randomized native/Radius pairs repeatedly.
 
@@ -935,7 +947,7 @@ Exit criteria:
 | Python runtime | 3.12 | `>=3.12,<3.13` is a compatibility range; pin the harness image and patch version by digest before scored runs |
 | Dependency pins | `inspect-ai==0.3.263`, `github-copilot-sdk==1.0.13` | Verified installable via CFS |
 | Agent CLI runtime | SDK-pinned CLI, not the host CLI | Recommended; both pairings verified working |
-| Shell tool | Denied by default; permitted only inside an OS-enforced agent boundary | Required; permission API cannot confine shell; runtime sandbox reachable but unverified; runner not built |
+| Shell tool | Denied by default; permitted only inside the runtime sandbox, verified per command | Required; permission API cannot confine shell; runtime sandbox denied every executed escape in one spike on one pin; write confinement shown, read confinement partial |
 | Fixture documentation | Neutral README and healthy manifest defaults | Required; current demo files disclose the incident |
 | Human review | Optional, blinded, separate from deterministic score | Recommended |
 
