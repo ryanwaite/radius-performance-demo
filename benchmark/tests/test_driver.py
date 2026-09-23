@@ -14,6 +14,7 @@ import math
 import statistics
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -35,11 +36,15 @@ from radius_perf_eval.incidents import (  # noqa: E402
 )
 from radius_perf_eval.load import (  # noqa: E402
     LoadProfile,
+    Sample,
     detect_stalls,
     percentile,
+    run_load,
+    stall_events,
 )
 from radius_perf_eval.manifest import (  # noqa: E402
     FIXTURE_PATHS,
+    REQUIRED_GATES,
     EnvironmentManifest,
     canonical_json,
     fixture_files,
@@ -52,11 +57,13 @@ from radius_perf_eval.trials import (  # noqa: E402
     DRIFT_SENSITIVE_METRICS,
     INCIDENT_PROFILE,
     MAX_ERROR_RATE,
+    MAX_HOST_SUSPENSION_SECONDS,
     MAX_STALL_RATE,
     STRUCTURAL_EXPECTATIONS,
     CycleResult,
     build_report,
     UNEXPLAINED_STALL,
+    host_suspension_seconds,
     summarise,
 )
 
@@ -199,16 +206,94 @@ class ManifestTests(unittest.TestCase):
         ):
             self.assertIn(key, payload)
 
+    def _complete(self) -> EnvironmentManifest:
+        """A manifest with every required gate recorded and passing."""
+        manifest = self._manifest()
+        for name in sorted(REQUIRED_GATES):
+            manifest.add_gate(name, True)
+        return manifest
+
     def test_unsigned_without_any_gate(self) -> None:
         self.assertFalse(self._manifest().signed_off)
 
     def test_signed_only_when_every_gate_passes(self) -> None:
-        manifest = self._manifest()
-        manifest.add_gate("a", True)
+        manifest = self._complete()
         self.assertTrue(manifest.signed_off)
         manifest.add_gate("b", False, "seed rows 9 != 10")
         self.assertFalse(manifest.signed_off)
         self.assertEqual([g.name for g in manifest.failed_gates], ["b"])
+
+    def test_unsigned_when_a_required_gate_was_never_recorded(self) -> None:
+        """The defect that seven interrupted cycles signed off through.
+
+        A cycle that died before `compose up` still reached teardown, recorded
+        `cleanup-verified`, and signed off on that one gate while reporting
+        readinessVerified false and seedCount 0. Nothing had failed, because
+        almost nothing had run.
+        """
+        manifest = self._manifest()
+        manifest.add_gate("cleanup-verified", True, "no residue")
+
+        self.assertEqual([g.name for g in manifest.failed_gates], [])
+        self.assertFalse(
+            manifest.signed_off,
+            "a manifest must earn sign-off by recording every verification, "
+            "not by avoiding a failed one",
+        )
+        self.assertNotIn("cleanup-verified", manifest.missing_gates)
+        self.assertIn("application-readiness", manifest.missing_gates)
+        self.assertEqual(len(manifest.missing_gates), len(REQUIRED_GATES) - 1)
+
+    def test_every_required_gate_is_individually_load_bearing(self) -> None:
+        """Positive control: drop exactly one gate at a time and confirm each
+        one alone is enough to withhold sign-off. Without this, REQUIRED_GATES
+        could name a gate the driver never emits and nobody would notice."""
+        for omitted in sorted(REQUIRED_GATES):
+            with self.subTest(omitted=omitted):
+                manifest = self._manifest()
+                for name in sorted(REQUIRED_GATES - {omitted}):
+                    manifest.add_gate(name, True)
+                self.assertFalse(manifest.signed_off)
+                self.assertEqual(manifest.missing_gates, [omitted])
+
+    def test_extra_gates_do_not_block_sign_off(self) -> None:
+        """`trial --revert` adds incident-inactive-verified. Required is a
+        floor, not an exact set."""
+        manifest = self._complete()
+        manifest.add_gate("incident-inactive-verified", True)
+        self.assertTrue(manifest.signed_off)
+
+    def test_missing_gates_are_reported_in_the_manifest_body(self) -> None:
+        manifest = self._manifest()
+        manifest.add_gate("cleanup-verified", True)
+        payload = manifest.to_dict()
+        self.assertFalse(payload["signedOff"])
+        self.assertIn("application-readiness", payload["missingGates"])
+
+    def test_required_gates_match_what_the_driver_emits(self) -> None:
+        """REQUIRED_GATES is a hand-written list, so it can drift away from the
+        gates the driver actually records. Pin it against the gate set of a
+        real signed-off manifest from a completed cycle."""
+        observed = {
+            "image-pinned:mysql",
+            "image-pinned:valkey",
+            "image-pinned:catalog-api",
+            "image-pinned:prometheus",
+            "resource-limits:mysql",
+            "resource-limits:valkey",
+            "resource-limits:catalog-api",
+            "resource-limits:prometheus",
+            "environment-variables:catalog-api",
+            "application-readiness",
+            "mysql-seed-rows",
+            "valkey-empty",
+            "egress-blocked:mysql",
+            "egress-blocked:valkey",
+            "catalog-api-image-hermetic",
+            "incident-active-verified",
+            "cleanup-verified",
+        }
+        self.assertEqual(set(REQUIRED_GATES), observed)
 
     def test_digest_changes_when_body_changes(self) -> None:
         manifest = self._manifest()
@@ -229,8 +314,7 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(canonical_json({"b": 1, "a": 2}), canonical_json({"a": 2, "b": 1}))
 
     def test_written_manifest_round_trips(self) -> None:
-        manifest = self._manifest()
-        manifest.add_gate("a", True)
+        manifest = self._complete()
         with tempfile.TemporaryDirectory() as tmp:
             path = manifest.write(Path(tmp) / "nested" / "environment-manifest.json")
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -741,3 +825,244 @@ class FixtureHashScopeTests(unittest.TestCase):
             source.write_text("package thing // changed")
             after, _ = hash_fixture(root)
             self.assertNotEqual(before, after)
+
+
+class StallTimestampTests(unittest.TestCase):
+    """Stalls were recorded as bare latencies, which can say that one happened
+    and how big it was but nothing about when. Two stalls at a similar elapsed
+    time would implicate a periodic host or database event; two at unrelated
+    times would not. Recording the timestamps makes that claim testable. It
+    changes no gate."""
+
+    EPOCH_OFFSET = 1_700_000_000.0
+
+    def _samples(self) -> list[Sample]:
+        # started_at is monotonic; the phase window opens at 100.0.
+        return [
+            Sample(started_at=100.0, latency_seconds=0.50, status=200, path="/a"),
+            Sample(started_at=112.5, latency_seconds=1.85, status=200, path="/b"),
+            Sample(started_at=130.0, latency_seconds=0.48, status=200, path="/c"),
+        ]
+
+    def _events(self, suite_start_epoch=None):
+        return stall_events(
+            self._samples(),
+            1.5,
+            epoch_offset=self.EPOCH_OFFSET,
+            phase_start=100.0,
+            suite_start_epoch=suite_start_epoch,
+        )
+
+    def test_only_stalls_are_timestamped(self) -> None:
+        events = self._events()
+        self.assertEqual([e.latency_seconds for e in events], [1.85])
+
+    def test_records_wall_clock_and_both_elapsed_clocks(self) -> None:
+        suite_start = self.EPOCH_OFFSET + 40.0
+        (event,) = self._events(suite_start_epoch=suite_start)
+
+        self.assertEqual(event.epoch, self.EPOCH_OFFSET + 112.5)
+        self.assertEqual(event.wall_clock, "2023-11-14T22:15:12.500000+00:00")
+        # 12.5s into the measured phase, 72.5s into the suite.
+        self.assertAlmostEqual(event.phase_elapsed_seconds, 12.5)
+        self.assertAlmostEqual(event.suite_elapsed_seconds, 72.5)
+
+    def test_suite_elapsed_is_null_for_a_standalone_trial(self) -> None:
+        (event,) = self._events()
+        self.assertIsNone(event.suite_elapsed_seconds)
+        self.assertIsNone(event.to_dict()["suiteElapsedSeconds"])
+
+    def test_events_are_ordered_by_occurrence_not_magnitude(self) -> None:
+        """Stall *latencies* are sorted worst-first for reading. Stall *events*
+        must be chronological, or comparing elapsed times across cycles reads
+        the wrong row."""
+        samples = [
+            Sample(started_at=150.0, latency_seconds=2.0, status=200, path="/a"),
+            Sample(started_at=110.0, latency_seconds=3.0, status=200, path="/b"),
+        ]
+        events = stall_events(
+            samples,
+            1.5,
+            epoch_offset=0.0,
+            phase_start=100.0,
+            suite_start_epoch=None,
+        )
+        self.assertEqual([e.phase_elapsed_seconds for e in events], [10.0, 50.0])
+
+    def test_no_events_when_the_threshold_is_undefined(self) -> None:
+        self.assertEqual(
+            stall_events(
+                [],
+                float("nan"),
+                epoch_offset=0.0,
+                phase_start=0.0,
+                suite_start_epoch=None,
+            ),
+            [],
+        )
+
+    def test_threshold_agrees_with_the_stall_counter(self) -> None:
+        """The count and the timestamps are produced by two functions. If they
+        disagree, the report says one stall happened and lists none."""
+        samples = self._samples()
+        latencies = [s.latency_seconds for s in samples]
+        threshold, stalls = detect_stalls(latencies, 3.0)
+        events = stall_events(
+            samples,
+            threshold,
+            epoch_offset=0.0,
+            phase_start=100.0,
+            suite_start_epoch=None,
+        )
+        self.assertEqual(len(events), len(stalls))
+
+
+class HostSuspensionTests(unittest.TestCase):
+    """A cycle is only a measurement if the host was awake for all of it.
+
+    An earlier holdout attempt entered clamshell sleep 90 seconds into cycle 3
+    and alternated sleep and darkwake for 109 minutes. That cycle passed all
+    17 gates and reported a throughput computed over a wall-clock window the
+    machine had mostly slept through. Nothing noticed.
+    """
+
+    def test_no_suspension_when_both_clocks_advance_together(self) -> None:
+        self.assertEqual(host_suspension_seconds(1000.0, 1180.0, 50.0, 230.0), 0.0)
+
+    def test_measures_the_gap_between_wall_and_monotonic(self) -> None:
+        # 94 minutes of wall clock, 3 minutes of process time.
+        self.assertAlmostEqual(
+            host_suspension_seconds(1000.0, 1000.0 + 5640.0, 50.0, 50.0 + 180.0),
+            5460.0,
+        )
+
+    def test_backwards_clock_skew_is_not_reported_as_suspension(self) -> None:
+        self.assertEqual(host_suspension_seconds(1000.0, 1100.0, 50.0, 200.0), 0.0)
+
+    def test_scheduling_jitter_stays_under_the_bound(self) -> None:
+        jitter = host_suspension_seconds(1000.0, 1180.4, 50.0, 230.0)
+        self.assertLess(jitter, MAX_HOST_SUSPENSION_SECONDS)
+
+    def test_suite_fails_when_a_cycle_was_suspended(self) -> None:
+        """Positive control for the gate, not just the arithmetic: a suite
+        that is otherwise perfect must still fail on a suspended cycle."""
+        clean = [_cycle(i) for i in (1, 2)]
+        report = build_report(clean, suite_id="s", cycles=2)
+        self.assertTrue(report["hostSuspension"]["hostAwakeThroughout"])
+
+        clean[1].host_suspension_seconds = 5460.0
+        suspended = build_report(clean, suite_id="s", cycles=2)
+        self.assertFalse(suspended["hostSuspension"]["hostAwakeThroughout"])
+        self.assertFalse(suspended["exitCriterionMet"])
+        self.assertEqual(
+            [entry["runId"] for entry in suspended["hostSuspension"]["suspendedCycles"]],
+            [clean[1].run_id],
+        )
+
+
+class RunLoadStallWiringTests(unittest.TestCase):
+    """Drive run_load against a real server with one deliberately slow reply.
+
+    detect_stalls and stall_events are unit-tested above, but that proves the
+    detector, not the caller. run_load is where the sample list, the phase
+    start and the epoch offset are handed over, and a wrong argument there
+    would produce a plausible-looking count with nonsense timestamps that no
+    detector test would catch. This is the positive control for that seam: a
+    stall is injected, so the assertions cannot pass on an empty result.
+    """
+
+    STALL_SECONDS = 0.9
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import http.server
+        import threading as _threading
+
+        state = {"served": 0, "stall_on": 6}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                state["served"] += 1
+                if state["served"] == state["stall_on"]:
+                    time.sleep(RunLoadStallWiringTests.STALL_SECONDS)
+                body = b'{"ok":true}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args: object) -> None:
+                pass
+
+        cls._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        cls._thread = _threading.Thread(target=cls._server.serve_forever, daemon=True)
+        cls._thread.start()
+        cls._port = cls._server.server_address[1]
+        cls._state = state
+
+    def setUp(self) -> None:
+        # Reset per test: the counter is shared by the server thread, and a
+        # previous test consuming the trigger would leave this one asserting
+        # against a stall that never happened.
+        self._state["served"] = 0
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._server.shutdown()
+        cls._server.server_close()
+
+    def test_injected_stall_is_counted_and_timestamped(self) -> None:
+        suite_start = time.time() - 30.0
+        before = time.time()
+        result = run_load(
+            f"http://127.0.0.1:{self._port}",
+            LoadProfile(
+                name="wiring",
+                concurrency=1,
+                duration_seconds=2.5,
+                warmup_seconds=0.0,
+                stall_factor=3.0,
+                absolute_excursion_seconds=0.5,
+            ),
+            suite_start_epoch=suite_start,
+        )
+        after = time.time()
+
+        # Positive control: the injected stall must actually have been seen,
+        # otherwise every assertion below is vacuous.
+        self.assertGreaterEqual(result.stall_count, 1)
+        self.assertEqual(len(result.stall_events), result.stall_count)
+
+        event = max(result.stall_events, key=lambda e: e.latency_seconds)
+        self.assertGreaterEqual(event.latency_seconds, self.STALL_SECONDS)
+
+        # The epoch must land inside the wall-clock bracket of this call. A
+        # monotonic value leaked in place of an epoch fails here.
+        self.assertGreaterEqual(event.epoch, before)
+        self.assertLessEqual(event.epoch, after)
+        self.assertTrue(event.wall_clock.endswith("+00:00"))
+
+        # Elapsed clocks must be consistent with each other and with the call.
+        self.assertGreaterEqual(event.phase_elapsed_seconds, 0.0)
+        self.assertLessEqual(event.phase_elapsed_seconds, 3.0)
+        self.assertAlmostEqual(
+            event.suite_elapsed_seconds, event.epoch - suite_start, places=6
+        )
+        self.assertGreater(event.suite_elapsed_seconds, 30.0)
+
+    def test_absolute_excursion_counts_the_same_injected_stall(self) -> None:
+        """The absolute bound is frozen at 0.5s here and the stall is 0.9s, so
+        a relative threshold that drifted upward could not hide it."""
+        result = run_load(
+            f"http://127.0.0.1:{self._port}",
+            LoadProfile(
+                name="wiring-absolute",
+                concurrency=1,
+                duration_seconds=2.5,
+                warmup_seconds=0.0,
+                absolute_excursion_seconds=0.5,
+            ),
+        )
+        self.assertGreaterEqual(result.excursion_count, 1)
+        self.assertGreaterEqual(result.stall_count, 1)
+        self.assertIsNone(result.stall_events[0].suite_elapsed_seconds)

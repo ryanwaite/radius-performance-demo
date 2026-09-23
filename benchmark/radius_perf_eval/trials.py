@@ -278,6 +278,11 @@ class CycleResult:
     duration_seconds: float
     metrics: dict[str, float] = field(default_factory=dict)
     failed_gates: list[str] = field(default_factory=list)
+    missing_gates: list[str] = field(default_factory=list)
+    stalls: list[dict[str, Any]] = field(default_factory=list)
+    host_suspension_seconds: float = 0.0
+    started_wall_clock: str = ""
+    suite_elapsed_seconds: float | None = None
     error: str | None = None
     artifacts_dir: str | None = None
 
@@ -290,11 +295,35 @@ class CycleResult:
             "cleanupVerified": self.cleanup_verified,
             "incidentVerified": self.incident_verified,
             "durationSeconds": round(self.duration_seconds, 3),
+            "startedWallClock": self.started_wall_clock,
+            "suiteElapsedSeconds": (
+                None
+                if self.suite_elapsed_seconds is None
+                else round(self.suite_elapsed_seconds, 3)
+            ),
+            "hostSuspensionSeconds": round(self.host_suspension_seconds, 3),
             "metrics": self.metrics,
             "failedGates": self.failed_gates,
+            "missingGates": self.missing_gates,
+            "stalls": self.stalls,
             "error": self.error,
             "artifactsDir": self.artifacts_dir,
         }
+
+
+# A cycle is only a measurement if the host was awake for all of it. macOS
+# advances time.time() across sleep and does not advance time.monotonic(), so
+# their divergence over a cycle is the time the host spent suspended.
+#
+# This is not hypothetical. An earlier holdout attempt had the lid closed on
+# battery; the host entered clamshell sleep 90 seconds into cycle 3 and
+# alternated sleep and darkwake for the next 109 minutes. That cycle passed
+# every gate and reported a throughput figure computed across a wall-clock
+# window the machine had mostly slept through. Nothing in the driver noticed.
+#
+# The bound is generous because it is discriminating between "scheduling
+# jitter" and "the machine was off", not measuring anything.
+MAX_HOST_SUSPENSION_SECONDS = 5.0
 
 
 def summarise(values: Sequence[float]) -> dict[str, float]:
@@ -320,6 +349,18 @@ def summarise(values: Sequence[float]) -> dict[str, float]:
     }
 
 
+def host_suspension_seconds(
+    wall_start: float, wall_end: float, mono_start: float, mono_end: float
+) -> float:
+    """Seconds the host spent suspended between two paired clock readings.
+
+    ``time.monotonic()`` does not advance while a macOS host is asleep and
+    ``time.time()`` does, so the gap between them is time the process was not
+    running. Clamped at zero: ordinary clock skew is not suspension.
+    """
+    return max(0.0, (wall_end - wall_start) - (mono_end - mono_start))
+
+
 def run_cycle(
     index: int,
     *,
@@ -329,9 +370,11 @@ def run_cycle(
     incident: IncidentVariant,
     results_dir: Path,
     pull: bool,
+    suite_start_epoch: float | None = None,
 ) -> CycleResult:
     run_id = f"{suite_id}-c{index:02d}"
     started = time.monotonic()
+    started_wall = time.time()
     environment = TrialEnvironment(
         run_id,
         repo_root=repo_root,
@@ -339,9 +382,11 @@ def run_cycle(
         incident=incident,
         results_dir=results_dir,
         pull=pull,
+        suite_start_epoch=suite_start_epoch,
     )
     error: str | None = None
     metrics: dict[str, float] = {}
+    stalls: list[dict[str, Any]] = []
     incident_verified = False
 
     try:
@@ -379,6 +424,18 @@ def run_cycle(
             "incident.promMysqlP95Seconds": incident_phase.telemetry.value("mysqlP95Seconds")
             or math.nan,
         }
+
+        # Timestamped per stall rather than reduced to a count, so a
+        # recurrence can be tested against a periodic host or database
+        # event instead of being left as an anecdote.
+        stalls = [
+            {**event.to_dict(), "phase": phase, "runId": run_id}
+            for phase, measurement in (
+                ("healthy", healthy),
+                ("incident", incident_phase),
+            )
+            for event in measurement.load.stall_events
+        ]
     except Exception:
         error = traceback.format_exc()
     finally:
@@ -389,6 +446,16 @@ def run_cycle(
         artifacts = environment.write_artifacts()
 
     manifest = environment.manifest
+    duration = time.monotonic() - started
+    suspended = host_suspension_seconds(
+        started_wall, time.time(), started, time.monotonic()
+    )
+    if suspended > MAX_HOST_SUSPENSION_SECONDS:
+        error = (error or "") + (
+            f"\nhost suspended for {suspended:.1f}s during this cycle "
+            f"(bound {MAX_HOST_SUSPENSION_SECONDS}s); the measurement window "
+            f"does not describe a running system"
+        )
     return CycleResult(
         index=index,
         run_id=run_id,
@@ -396,9 +463,16 @@ def run_cycle(
         signed_off=manifest.signed_off,
         cleanup_verified=manifest.cleanup_verified,
         incident_verified=incident_verified,
-        duration_seconds=time.monotonic() - started,
+        duration_seconds=duration,
+        started_wall_clock=datetime.fromtimestamp(started_wall, tz=timezone.utc).isoformat(),
+        suite_elapsed_seconds=(
+            None if suite_start_epoch is None else started_wall - suite_start_epoch
+        ),
+        host_suspension_seconds=suspended,
         metrics=metrics,
+        stalls=stalls,
         failed_gates=[gate.name for gate in manifest.failed_gates],
+        missing_gates=manifest.missing_gates,
         error=error,
         artifacts_dir=str(artifacts),
     )
@@ -433,6 +507,9 @@ def run_suite(
     spec = spec or EnvironmentSpec()
     results_dir = Path(results_dir) if results_dir else repo_root / "benchmark" / "results"
     suite_id = suite_id or f"suite-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
+    # Anchors every stall timestamp, so an anomaly can be placed against the
+    # other cycles in this suite and against suites that ran at other times.
+    suite_start_epoch = time.time()
 
     # Setup phase: acquire every image once, measured by nobody. Done through a
     # throwaway cycle so the build path exercised here is the same one the
@@ -448,6 +525,7 @@ def run_suite(
             incident=incident,
             results_dir=results_dir,
             pull=True,
+            suite_start_epoch=suite_start_epoch,
         )
         setup_cycles.append(
             {"runId": setup.run_id, "ok": setup.ok, "role": "image-acquisition"}
@@ -471,6 +549,7 @@ def run_suite(
             incident=incident,
             results_dir=results_dir,
             pull=False,
+            suite_start_epoch=suite_start_epoch,
         )
         warmups.append(
             {
@@ -494,6 +573,7 @@ def run_suite(
             # Never conditional on the index: every measured cycle must be the
             # same experiment as every other measured cycle.
             pull=False,
+            suite_start_epoch=suite_start_epoch,
         )
         cycle_results.append(result)
         status = "ok" if result.ok else f"FAILED ({result.failed_gates or result.error})"
@@ -510,6 +590,7 @@ def run_suite(
         cycles=cycles,
         setup_cycles=setup_cycles,
         warmups=warmups,
+        suite_start_epoch=suite_start_epoch,
     )
 
     return report
@@ -522,6 +603,7 @@ def build_report(
     cycles: int,
     setup_cycles: list[dict[str, Any]] | None = None,
     warmups: list[dict[str, Any]] | None = None,
+    suite_start_epoch: float | None = None,
 ) -> dict[str, Any]:
     """Assemble the determinism report from finished cycles.
 
@@ -630,6 +712,13 @@ def build_report(
             "phase": phase,
             "count": int(c.metrics.get(f"{phase}.stallCount", 0) or 0),
             "maxLatencySeconds": c.metrics.get(f"{phase}.latencyMaxSeconds"),
+            # Every stall in this phase, timestamped. n=2 across two suites was
+            # not a pattern worth acting on, but it was cheap to make testable:
+            # if a later suite puts an anomaly at a similar suiteElapsedSeconds,
+            # look at periodic host or database work -- a Docker Desktop VM
+            # task, a macOS background job, a MySQL purge or checkpoint -- before
+            # anything else. If it does not recur, the pattern is not real.
+            "events": [e for e in c.stalls if e.get("phase") == phase],
         }
         for c in successful
         for phase in ("healthy", "incident")
@@ -680,6 +769,11 @@ def build_report(
         },
         "preRegistration": GATE_PRE_REGISTRATION,
         "unexplainedObservation": UNEXPLAINED_STALL,
+        "timingNote": (
+            "Each stall carries wallClock and suiteElapsedSeconds so a "
+            "recurrence can be checked against periodic host or database work "
+            "rather than inferred. Recording them changes no gate."
+        ),
     }
 
     error_rates = {
@@ -697,6 +791,32 @@ def build_report(
         ),
     }
 
+    # A suite is only a measurement if the host was awake throughout. Reported
+    # unconditionally, so a clean run states the fact rather than leaving a
+    # reader to assume it.
+    suspension_audit = {
+        "maxSuspensionSeconds": MAX_HOST_SUSPENSION_SECONDS,
+        "observedMaxSeconds": max(
+            (c.host_suspension_seconds for c in cycle_results), default=0.0
+        ),
+        "suspendedCycles": [
+            {
+                "runId": c.run_id,
+                "seconds": round(c.host_suspension_seconds, 3),
+                "startedWallClock": c.started_wall_clock,
+            }
+            for c in cycle_results
+            if c.host_suspension_seconds > MAX_HOST_SUSPENSION_SECONDS
+        ],
+        "note": (
+            "time.time() advances across macOS sleep and time.monotonic() does "
+            "not, so their divergence over a cycle is time the host spent "
+            "suspended. An earlier holdout attempt slept 109 minutes mid-suite "
+            "and every gate still passed."
+        ),
+    }
+    suspension_audit["hostAwakeThroughout"] = not suspension_audit["suspendedCycles"]
+
     exit_criterion_met = bool(
         len(successful) == cycles
         and all(c.cleanup_verified for c in cycle_results)
@@ -705,6 +825,7 @@ def build_report(
         and degradation["incidentDegradedPerformance"]
         and error_budget["withinBudget"]
         and stall_budget["withinBudget"]
+        and suspension_audit["hostAwakeThroughout"]
     )
 
     report = {
@@ -714,6 +835,12 @@ def build_report(
         "successfulCycles": len(successful),
         "exitCriterionMet": exit_criterion_met,
         "dockerVersions": daemon_info(),
+        "suiteStartedAt": (
+            None
+            if suite_start_epoch is None
+            else datetime.fromtimestamp(suite_start_epoch, tz=timezone.utc).isoformat()
+        ),
+        "hostSuspension": suspension_audit,
         "degradation": degradation,
         "errorBudget": error_budget,
         "stallBudget": stall_budget,

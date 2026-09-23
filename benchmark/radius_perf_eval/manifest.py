@@ -91,6 +91,41 @@ def hash_fixture(
     return hash_text(combined), per_file
 
 
+# The gates that must be *present* for a manifest to mean anything. Sign-off
+# used to require only that no recorded gate had failed, which quietly made an
+# empty-ish manifest a passing one: a cycle that died before `compose up` still
+# reached its teardown, recorded `cleanup-verified`, and signed off on the
+# strength of that single gate while reporting readinessVerified false,
+# seedCount 0 and no images at all. Seven cycles of an interrupted holdout run
+# did exactly that.
+#
+# This is the same vacuity failure as a negative test that passes because its
+# setup was a no-op: the check reports success because the thing it checks
+# never ran. Absence is now a failure, so a manifest has to earn sign-off by
+# demonstrating every verification, not by avoiding a recorded one.
+REQUIRED_GATES: frozenset[str] = frozenset(
+    {
+        "image-pinned:mysql",
+        "image-pinned:valkey",
+        "image-pinned:catalog-api",
+        "image-pinned:prometheus",
+        "resource-limits:mysql",
+        "resource-limits:valkey",
+        "resource-limits:catalog-api",
+        "resource-limits:prometheus",
+        "environment-variables:catalog-api",
+        "application-readiness",
+        "mysql-seed-rows",
+        "valkey-empty",
+        "egress-blocked:mysql",
+        "egress-blocked:valkey",
+        "catalog-api-image-hermetic",
+        "incident-active-verified",
+        "cleanup-verified",
+    }
+)
+
+
 def canonical_json(payload: Mapping[str, Any]) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
 
@@ -140,8 +175,13 @@ class EnvironmentManifest:
         return [gate for gate in self.gates if not gate.passed]
 
     @property
+    def missing_gates(self) -> list[str]:
+        """Required gates that were never recorded at all."""
+        return sorted(REQUIRED_GATES - {gate.name for gate in self.gates})
+
+    @property
     def signed_off(self) -> bool:
-        return bool(self.gates) and not self.failed_gates
+        return not self.missing_gates and not self.failed_gates
 
     def body(self) -> dict[str, Any]:
         return {
@@ -166,6 +206,7 @@ class EnvironmentManifest:
             "daemon": self.daemon,
             "timingsMs": self.timings_ms,
             "gates": [gate.to_dict() for gate in self.gates],
+            "missingGates": self.missing_gates,
         }
 
     def to_dict(self) -> dict[str, Any]:

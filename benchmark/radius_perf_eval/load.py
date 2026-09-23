@@ -17,6 +17,7 @@ import statistics
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 
@@ -75,6 +76,40 @@ class Sample:
 
 
 @dataclass(frozen=True)
+class StallEvent:
+    """One stalled request, with enough time context to test a periodicity claim.
+
+    A stall was previously recorded as a bare latency. That is enough to say a
+    stall happened and how big it was, and not enough to say anything about
+    *when*. Two stalls at a similar elapsed time into a suite would point at a
+    periodic host or database event -- a Docker Desktop VM task, a macOS
+    background job, a MySQL purge or checkpoint -- and two at unrelated times
+    would not. Both timestamps are kept because they answer different
+    questions: wall clock is comparable against host logs, and suite-elapsed is
+    comparable across suites that started at different times of day.
+    """
+
+    latency_seconds: float
+    epoch: float
+    wall_clock: str
+    phase_elapsed_seconds: float
+    suite_elapsed_seconds: float | None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "latencySeconds": round(self.latency_seconds, 6),
+            "epoch": self.epoch,
+            "wallClock": self.wall_clock,
+            "phaseElapsedSeconds": round(self.phase_elapsed_seconds, 3),
+            "suiteElapsedSeconds": (
+                None
+                if self.suite_elapsed_seconds is None
+                else round(self.suite_elapsed_seconds, 3)
+            ),
+        }
+
+
+@dataclass(frozen=True)
 class LoadResult:
     profile: LoadProfile
     started_at: float
@@ -99,6 +134,7 @@ class LoadResult:
     excursion_count: int = 0
     excursion_rate: float = 0.0
     stall_latencies_seconds: tuple[float, ...] = ()
+    stall_events: tuple[StallEvent, ...] = ()
     latency_distribution: tuple[float, ...] = ()
     status_counts: dict[str, int] = field(default_factory=dict)
 
@@ -128,6 +164,7 @@ class LoadResult:
                 "count": self.stall_count,
                 "rate": self.stall_rate,
                 "latenciesSeconds": list(self.stall_latencies_seconds),
+                "events": [event.to_dict() for event in self.stall_events],
             },
             "absoluteExcursions": {
                 "thresholdSeconds": self.profile.absolute_excursion_seconds,
@@ -159,6 +196,36 @@ def detect_stalls(
     return threshold, sorted(
         (value for value in latencies if value > threshold), reverse=True
     )
+
+
+def stall_events(
+    samples: list[Sample],
+    threshold: float,
+    *,
+    epoch_offset: float,
+    phase_start: float,
+    suite_start_epoch: float | None,
+) -> list[StallEvent]:
+    """Timestamp every stalled request, ordered by when it happened."""
+    if math.isnan(threshold):
+        return []
+    events = []
+    for sample in samples:
+        if sample.latency_seconds <= threshold:
+            continue
+        epoch = sample.started_at + epoch_offset
+        events.append(
+            StallEvent(
+                latency_seconds=sample.latency_seconds,
+                epoch=epoch,
+                wall_clock=datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat(),
+                phase_elapsed_seconds=sample.started_at - phase_start,
+                suite_elapsed_seconds=(
+                    None if suite_start_epoch is None else epoch - suite_start_epoch
+                ),
+            )
+        )
+    return sorted(events, key=lambda event: event.epoch)
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -220,7 +287,12 @@ def _worker(
         sink.extend(local)
 
 
-def run_load(base_url: str, profile: LoadProfile) -> LoadResult:
+def run_load(
+    base_url: str,
+    profile: LoadProfile,
+    *,
+    suite_start_epoch: float | None = None,
+) -> LoadResult:
     """Drive the profile against ``base_url`` and reduce it to statistics."""
     parts = urlsplit(base_url)
     host = parts.hostname or "127.0.0.1"
@@ -270,6 +342,13 @@ def run_load(base_url: str, profile: LoadProfile) -> LoadResult:
     # robust to a rare stall, which is the point, but it also means a rising
     # stall rate would be quietly absorbed. Counting them restores that signal.
     stall_threshold, stalls = detect_stalls(latencies, profile.stall_factor)
+    events = stall_events(
+        measured,
+        stall_threshold,
+        epoch_offset=epoch_offset,
+        phase_start=measured_start,
+        suite_start_epoch=suite_start_epoch,
+    )
     excursions = [
         value for value in latencies if value > profile.absolute_excursion_seconds
     ]
@@ -296,6 +375,7 @@ def run_load(base_url: str, profile: LoadProfile) -> LoadResult:
         stall_count=len(stalls),
         stall_rate=(len(stalls) / len(measured)) if measured else math.nan,
         stall_latencies_seconds=tuple(stalls[:10]),
+        stall_events=tuple(events),
         excursion_count=len(excursions),
         excursion_rate=(len(excursions) / len(measured)) if measured else math.nan,
         latency_distribution=tuple(sorted(latencies)),

@@ -35,18 +35,52 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - name: Compose trial driver tests
         # Run with the stdlib only, deliberately. The driver package has zero
         # runtime dependencies, so these tests need no package index and no
         # Docker daemon, and therefore cannot be broken by a mirror outage.
-        #
-        # The rest of the suite (tests importing github-copilot-sdk and
-        # inspect-ai) is NOT run here yet. Installing it needs the CFS proxy,
-        # which requires authentication -- it answers 401 to an unauthenticated
-        # request -- so a GitHub-hosted runner cannot reach it as configured.
-        # Wiring that up needs a credential decision that belongs with the
-        # instrumentation increment; until then those tests run locally only,
-        # and this job covers what it can honestly cover rather than being
-        # permanently red.
-        run: python -m unittest tests.test_driver -v
+        run: |
+          set -o pipefail
+          python -m unittest tests.test_driver -v 2>&1 | tee driver-tests.log
+          echo "DRIVER_TESTS_RAN=$(grep -cE '^test_[A-Za-z0-9_]+ \(' driver-tests.log)" >> "$GITHUB_ENV"
+
+      - name: Report what this job did not run
+        # This job is NOT "Python CI green". It runs one of five test modules.
+        # Saying so in the summary, with counts and names, is the point: a job
+        # that silently omits a test set reads as coverage it does not have,
+        # which is the same vacuity problem as a check that passes because the
+        # thing it checks never ran.
+        if: always()
+        run: |
+          set -o pipefail
+          skipped_total=0
+          rows=""
+          for module in test_events test_isolation test_usage test_versions; do
+            count=$(grep -cE '^[[:space:]]*def test_' "tests/${module}.py")
+            skipped_total=$(( skipped_total + count ))
+            rows="${rows}| \`tests.${module}\` | **NOT RUN** | ${count} |"$'\n'
+          done
+          {
+            echo "### Python job coverage"
+            echo
+            echo "| test module | status | tests |"
+            echo "|---|---|---|"
+            echo "| \`tests.test_driver\` | run | ${DRIVER_TESTS_RAN:-0} |"
+            printf '%s' "${rows}"
+            echo
+            echo "**Ran ${DRIVER_TESTS_RAN:-0}. Did not run ${skipped_total}.**"
+            echo
+            echo "The four modules above are not skipped at runtime — they are never"
+            echo "collected. They import \`github-copilot-sdk\` and \`inspect-ai\`, which"
+            echo "come from the CFS proxy, and CFS access depends on network context"
+            echo "rather than on a credential: it resolves from a managed machine and"
+            echo "returns 401 to a GitHub-hosted runner. Adding a token will not fix it."
+            echo "The fix is a CFS-capable runner or a prebuilt test image, and that"
+            echo "decision belongs to the repository owner, not to this job."
+            echo
+            echo "Until it is made, a green tick here means the Compose trial driver"
+            echo "tests passed. It says nothing about the other ${skipped_total}."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "ran=${DRIVER_TESTS_RAN:-0} not_run=${skipped_total}"
 

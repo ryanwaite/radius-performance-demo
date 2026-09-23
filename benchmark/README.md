@@ -210,9 +210,18 @@ pin images -> create -> verify start state -> measure (healthy)
 ```
 
 Each stage appends gates to an environment manifest. The manifest is signed off
-(`"signedOff": true`) only if **every** gate passed. A failed gate does not degrade the
-run to a warning — it un-signs the manifest, and `trials.py` refuses to count that
-cycle.
+(`"signedOff": true`) only if every gate in `REQUIRED_GATES` was **recorded** and
+**passed**. A failed gate does not degrade the run to a warning — it un-signs the
+manifest, and `trials.py` refuses to count that cycle.
+
+Requiring presence, not just absence of failure, is the load-bearing half. Sign-off
+used to mean "some gate ran and none failed", which made a nearly empty manifest a
+passing one: when a suite was interrupted mid-run, seven cycles that never reached
+`compose up` still reached teardown, recorded `cleanup-verified`, and signed off on
+that single gate while reporting `readinessVerified: false`, `seedCount: 0` and no
+images at all. That is the same vacuity as a negative test that passes because its
+setup was a no-op — the check reported success because almost nothing it checks had
+run. Absence is now failure, and `missingGates` names what was never recorded.
 
 ### Verified properties
 
@@ -370,6 +379,22 @@ Run the Docker-free tests with:
 cd /path/to/repo && python3.12 -m unittest discover -s benchmark/tests -t benchmark
 ```
 
+### What CI does and does not cover
+
+The `python` CI job runs `tests.test_driver` (101 tests) and **not** the four
+instrumentation modules — `test_events`, `test_isolation`, `test_usage`,
+`test_versions` (119 tests). Those are not skipped at runtime; they are never
+collected, because they import `github-copilot-sdk` and `inspect-ai`.
+
+A job that quietly omits a test set reads as coverage it does not have, so the job
+prints both counts and names the omitted modules in the GitHub step summary. A green
+tick there means the driver tests passed and says nothing about the other 119.
+
+Those packages come from CFS, and CFS access depends on **network context rather than
+a credential**: it resolves from a managed machine and returns 401 to a GitHub-hosted
+runner. Adding a token does not fix it. The fix is a CFS-capable runner or a prebuilt
+test image, which is a repository-owner decision.
+
 ### Every measured cycle is the same experiment
 
 A suite runs in three parts, and only the third is measured:
@@ -440,6 +465,30 @@ The stall definition, the 3x factor and the 0.5% budget were all fitted **after*
 the first ten-cycle result. They are frozen in `GATE_PRE_REGISTRATION` and echoed into
 every report, and the holdout run changed nothing between freeze and execution — so the
 holdout tests the gate rather than continuing to fit it.
+
+### Stalls are timestamped
+
+Each stall carries `wallClock` and `suiteElapsedSeconds` alongside its latency. Two
+stalls at a similar elapsed time would point at periodic work — a Docker Desktop VM
+task, a macOS background job, a MySQL purge or checkpoint — and two at unrelated times
+would not. With n=2 across two suites there is no pattern worth acting on; recording the
+timestamps only makes the claim testable later, at no cost. It changes no gate and no
+threshold. The wall clock is what lets a stall be lined up against a host log; the
+suite-elapsed clock is what makes suites that started at different times comparable.
+
+### A cycle only counts if the host was awake
+
+`time.time()` advances across macOS sleep and `time.monotonic()` does not, so their
+divergence over a cycle is time the process was not running. Cycles exceeding
+`MAX_HOST_SUSPENSION_SECONDS` (5s) fail, and `hostSuspension` in the report states the
+observed maximum whether or not anything tripped.
+
+This exists because an earlier holdout attempt ran with the lid closed on battery. The
+host entered clamshell sleep 90 seconds into cycle 3 and alternated sleep and darkwake
+for the next 109 minutes. That cycle passed all 17 gates and reported a throughput
+figure computed over a wall-clock window the machine had mostly slept through, and
+nothing in the driver noticed. Note that AC power sets `sleep 0` while battery sets
+`sleep 1`, and clamshell sleep on battery is unconditional — so run suites on AC.
 
 ### A note on the cache
 

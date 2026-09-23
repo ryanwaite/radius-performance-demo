@@ -61,7 +61,9 @@ def cmd_trial(args: argparse.Namespace) -> int:
     if not manifest.signed_off:
         print(
             "manifest NOT signed off; failed gates: "
-            + ", ".join(gate.name for gate in manifest.failed_gates),
+            + (", ".join(gate.name for gate in manifest.failed_gates) or "none")
+            + "; gates never recorded: "
+            + (", ".join(manifest.missing_gates) or "none"),
             file=sys.stderr,
         )
         return 1

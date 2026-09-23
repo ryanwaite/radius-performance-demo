@@ -166,6 +166,7 @@ class TrialEnvironment:
         incident: IncidentVariant = MYSQL_POOL_DELAY_V1,
         results_dir: Path | None = None,
         pull: bool = True,
+        suite_start_epoch: float | None = None,
     ) -> None:
         self.run_id = run_id
         self.repo_root = Path(repo_root).resolve()
@@ -173,6 +174,7 @@ class TrialEnvironment:
         self.incident = incident
         self.results_dir = Path(results_dir) if results_dir else self.repo_root / "benchmark" / "results"
         self.pull = pull
+        self.suite_start_epoch = suite_start_epoch
 
         self.compose_project_name = f"radius-eval-{run_id}"
         self.mysql_app_user = "catalog"
@@ -484,7 +486,9 @@ class TrialEnvironment:
     def measure(self, phase: str, profile: LoadProfile) -> PhaseMeasurement:
         assert self.prometheus is not None
         self._start(f"measure:{phase}")
-        load_result = run_load(self.api_base_url, profile)
+        load_result = run_load(
+            self.api_base_url, profile, suite_start_epoch=self.suite_start_epoch
+        )
         window = capture_window(
             self.prometheus,
             phase=phase,
