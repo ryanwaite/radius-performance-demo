@@ -3,7 +3,7 @@
   "failedProbes": [],
   "knownLimitations": {
     "defeatedCount": 3,
-    "note": "The static command screen is defence in depth only. It matches escape-shaped tokens in the command text, so any construction that removes the literal token defeats it. 'allFailedClosed' above describes the screen holding for the listed inputs; it does not describe any boundary. The agent runs as a host process against a host temporary directory, so no OS or process boundary exists in this runtime. Confinement would require a dedicated agent runner that executes the agent inside a mount boundary; that runner is not built. Compose containers bound the application data plane, not the agent, and therefore supply no confinement here.",
+    "note": "The static command screen is defence in depth only. It matches escape-shaped tokens in the command text, so any construction that removes the literal token defeats it. 'allFailedClosed' above describes the screen holding for the listed inputs; it does not describe any boundary. The agent runs as a host process against a host temporary directory, so no OS or process boundary exists in this runtime. Confinement would require an OS boundary around the agent process. Compose containers bound the application data plane, not the agent, and therefore supply no confinement here. The runtime sandbox that could supply it is reachable only after session creation, via the experimental session.options.update, and this harness does not enable it.",
     "probes": [
       {
         "approved": false,
@@ -163,5 +163,5 @@
   ],
   "productionDefaultAllowsShell": false,
   "shellScreenUnderTest": true,
-  "workspaceRoot": "/private/var/folders/tm/jmmxm1g54855dc29ks95g_br0000gn/T/radius-perf-ws-xe9dig0i"
+  "workspaceRoot": "/private/var/folders/tm/jmmxm1g54855dc29ks95g_br0000gn/T/radius-perf-ws-yg36e81o"
 }

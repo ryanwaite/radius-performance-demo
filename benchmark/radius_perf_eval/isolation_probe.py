@@ -359,11 +359,12 @@ def run_isolation_probes(
                 "listed inputs; it does not describe any boundary. The agent "
                 "runs as a host process against a host temporary directory, "
                 "so no OS or process boundary exists in this runtime. "
-                "Confinement would require a dedicated agent runner that "
-                "executes the agent inside a mount boundary; that runner is "
-                "not built. Compose containers bound the application data "
+                "Confinement would require an OS boundary around the agent "
+                "process. Compose containers bound the application data "
                 "plane, not the agent, and therefore supply no confinement "
-                "here."
+                "here. The runtime sandbox that could supply it is reachable "
+                "only after session creation, via the experimental "
+                "session.options.update, and this harness does not enable it."
             ),
             "defeatedCount": sum(1 for x in limitations if x["approved"]),
             "probes": limitations,

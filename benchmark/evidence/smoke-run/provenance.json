@@ -1,24 +1,24 @@
 {
-  "capturedAt": "2026-09-23T17:03:12.308818+00:00",
+  "capturedAt": "2026-09-23T20:29:46.792774+00:00",
   "model": "gpt-5.4",
-  "provenanceDigest": "sha256:b046d0dbf650f1d6582ccb8d7c04a33e48d94e014754f2a0b88b92ba14d6c116",
+  "provenanceDigest": "sha256:770b9beea7ee79a3a72e0dcc1a63b1bfb45be69a1cdc74469e5519446b1fad4b",
   "reasoningEffort": null,
   "runtime": {
     "machine": "arm64",
-    "platform": "macOS-27.0-arm64-arm-64bit",
+    "platform": "macOS-27.2-arm64-arm-64bit",
     "processor": "arm",
     "pythonImplementation": "CPython",
     "pythonVersion": "3.12.13",
-    "release": "27.0.0",
+    "release": "27.2.0",
     "system": "Darwin"
   },
   "session": {
     "autoRouting": false,
     "contextPolicy": "cold",
     "memoryEnabled": false,
-    "sessionId": "65a25a36-36c3-4a28-8757-7b11f13d5018",
+    "sessionId": "073607f7-c8ba-4898-838f-8a10103b369d",
     "subagentsEnabled": false,
-    "workspaceRoot": "/private/var/folders/tm/jmmxm1g54855dc29ks95g_br0000gn/T/radius-perf-ws-xe9dig0i"
+    "workspaceRoot": "/private/var/folders/tm/jmmxm1g54855dc29ks95g_br0000gn/T/radius-perf-ws-yg36e81o"
   },
   "supplyChain": {
     "compliant": true,

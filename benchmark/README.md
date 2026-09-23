@@ -136,20 +136,28 @@ statically for absolute, `~`, and `..` path tokens.
 probes are observations, never assertions, and are excluded from
 `allFailedClosed` so a lucky denial cannot read as proof.
 
-Real confinement would require executing the agent **inside a mount
-boundary** — a dedicated agent runner, which is not built. The Compose
-increment does not supply it: those containers bound the application under
-test, while the agent stays a host process outside them. Until that runner
-exists, shell should remain disabled for scored runs.
+Real confinement requires an OS boundary around the agent process, which this
+harness does not yet establish. The Compose increment does not supply it:
+those containers bound the application under test, while the agent stays a
+host process outside them.
 
-The capability does exist one layer down, and is only out of reach. The CLI
-wire protocol defines an OS-level `SandboxConfig` — an `enabled` flag,
+The runtime sandbox that would supply it is **reachable only after the session
+exists, via the experimental `session.options.update`** — so there is a window
+between session start and that call in which no policy is in force, which a
+runner must close or account for. A spike on SDK 1.0.13 / CLI 1.0.83 with one
+model denied every escape that executed. The harness does not enable it yet,
+so shell stays disabled for scored runs until it does. See the runtime-sandbox
+section of `docs/specs/copilot-radius-experiment-plan.md` for the conditions
+that adoption is gated on.
+
+The same capability is absent from the session-creation API. The CLI wire
+protocol defines an OS-level `SandboxConfig` — an `enabled` flag,
 `userPolicy.filesystem` read-only and read-write path lists, a fail-closed
 `allowBypass`, and sandboxed MCP/LSP subprocesses. None of it is exposed on
 `CopilotClient.create_session` in the pinned SDK 1.0.13, whose ~80 parameters
 include nothing sandbox-related. So this is an **SDK surface gap, not a
-missing runtime feature**, and that is worth confirming before a runner is
-scoped from scratch.
+missing runtime feature** — confirmed by the spike, which drove the sandbox
+successfully through the update call.
 
 ### Handler denial is a run gate, not a metric
 
@@ -169,6 +177,11 @@ so a programmatic caller cannot bypass it by not checking an exit code, and it
 raises only *after* the run record is written so a failed run stays auditable.
 `--skip-live-escape-probe` explicitly downgrades the run to `scored: false`,
 recorded in the artifact, so the degradation is visible rather than silent.
+
+This design is **under review**: the sandbox spike found that the runtime's
+denial text asks the agent not to attempt workarounds, and the agent complies,
+so a per-run probe may stop attempting escapes for reasons unrelated to the
+harness. That behaviour is unchanged here and is being scoped separately.
 
 What a passing gate establishes is narrow and worth stating exactly: the
 handler was wired, it saw real attempts, and it denied them. That is a

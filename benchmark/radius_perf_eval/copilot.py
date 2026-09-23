@@ -19,19 +19,24 @@ ordinary host temporary directory. Anything the handler cannot prove is inside
 the workspace is denied, which is a real and useful layer -- but it is the
 harness declining a request, not the kernel refusing an operation.
 
-Confinement would require executing the agent inside a mount boundary, which
-means a dedicated agent runner that does not exist yet. The Compose increment
-does not supply it: those containers bound the application under test, while
-the agent remains a host process outside them.
+Confinement would require an OS boundary around the agent process, which this
+harness does not establish. The Compose increment does not supply it: those
+containers bound the application under test, while the agent remains a host
+process outside them.
 
-Note that the *capability* exists one layer down and is simply out of reach: the
-CLI wire protocol defines a real OS-level ``SandboxConfig`` (an ``enabled``
-flag, ``userPolicy.filesystem`` read-only and read-write path lists, a
-fail-closed ``allowBypass``, and sandboxed MCP/LSP subprocesses). None of it is
-exposed on ``CopilotClient.create_session`` in the pinned SDK 1.0.13, whose
-~80 parameters include nothing sandbox-related. So the gap here is an SDK
-surface gap, not a missing runtime feature -- worth checking before anyone
-scopes a runner from scratch.
+The runtime sandbox that would supply it is reachable only *after* the session
+exists, via the experimental ``session.options.update`` -- leaving a window
+between session start and that call in which no policy is in force, which any
+runner must close or account for. A spike on SDK 1.0.13 / CLI 1.0.83 with one
+model denied every escape that executed; this harness does not enable it yet.
+
+The same capability is absent from the session-creation API: the CLI wire
+protocol defines a real OS-level ``SandboxConfig`` (an ``enabled`` flag,
+``userPolicy.filesystem`` read-only and read-write path lists, a fail-closed
+``allowBypass``, and sandboxed MCP/LSP subprocesses). None of it is exposed on
+``CopilotClient.create_session`` in the pinned SDK 1.0.13, whose ~80
+parameters include nothing sandbox-related. So the gap here is an SDK surface
+gap, not a missing runtime feature.
 """
 
 from __future__ import annotations
@@ -231,10 +236,11 @@ class IsolationPolicy:
     ``full_command_text`` for escape-shaped tokens. That is **best effort
     only**: command substitution, encoding, or an interpreter can defeat any
     static screen, so it is defence in depth and must never be described as
-    confinement. Confinement would require executing the agent inside a mount
-    boundary -- a dedicated agent runner, which is not built. Compose
-    containers bound the application under test, not the agent, and so supply
-    no confinement here.
+    confinement. Confinement would require an OS boundary around the agent
+    process. Compose containers bound the application under test, not the
+    agent, and so supply no confinement here; the runtime sandbox that could
+    supply it is reachable only after session creation and is not enabled by
+    this harness.
     """
 
     workspace_root: Path

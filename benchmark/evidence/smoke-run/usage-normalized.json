@@ -1,20 +1,20 @@
 {
-  "agentWallClockMs": 7222.086208,
+  "agentWallClockMs": 9347.176,
   "ambiguities": [
     "providerReportedTotalTokens is null: assistant.usage exposes no provider grand total, and deriving one would sum overlapping fields"
   ],
   "cost": {
     "actualUSD": null,
     "estimatedUSD": null,
-    "pricingVersion": "sha256:878c046484ba211ecc48788697a496246bc507867bdddf617d64ce2a63f3616c"
+    "pricingVersion": "sha256:bcc350437c3bcc2ea6aeeaa46c8f616fd46d9c987767a2f1c75ec3a3ff40d7a5"
   },
   "credits": {
-    "aiCredits": 2.7661,
+    "aiCredits": 2.5525,
     "premiumRequestMultiplier": null
   },
   "logicalToolCalls": 1,
   "model": "gpt-5.4",
-  "modelApiDurationMs": 3421,
+  "modelApiDurationMs": 4640,
   "modelRequests": 2,
   "premiumRequestsCharged": 1.0,
   "reconciliation": {
@@ -23,15 +23,15 @@
       {
         "delta": null,
         "field": "inputUncachedTokens",
-        "from_events": 9510,
+        "from_events": 8416,
         "from_metrics": null,
         "status": "metrics-null"
       },
       {
         "delta": 0.0,
         "field": "inputCachedReadTokens",
-        "from_events": 8704,
-        "from_metrics": 8704,
+        "from_events": 7680,
+        "from_metrics": 7680,
         "status": "match"
       },
       {
@@ -44,15 +44,15 @@
       {
         "delta": 0.0,
         "field": "outputVisibleTokens",
-        "from_events": 72,
-        "from_metrics": 72,
+        "from_events": 74,
+        "from_metrics": 74,
         "status": "match"
       },
       {
         "delta": 0.0,
         "field": "outputReasoningTokens",
-        "from_events": 42,
-        "from_metrics": 42,
+        "from_events": 97,
+        "from_metrics": 97,
         "status": "match"
       },
       {
@@ -65,8 +65,8 @@
       {
         "delta": 0.0,
         "field": "aiCredits",
-        "from_events": 2.7661,
-        "from_metrics": 2.7661,
+        "from_events": 2.5525,
+        "from_metrics": 2.5525,
         "status": "match"
       },
       {
@@ -82,51 +82,51 @@
   "runtime": "github-copilot-sdk",
   "sources": {
     "assistantUsageEvents": {
-      "aiCredits": 2.7661,
+      "aiCredits": 2.5525,
       "ambiguities": [
         "providerReportedTotalTokens is null: assistant.usage exposes no provider grand total, and deriving one would sum overlapping fields"
       ],
-      "apiDurationMs": 3421,
+      "apiDurationMs": 4640,
       "modelRequests": 2,
       "modelsSeen": [
         "gpt-5.4"
       ],
       "premiumMultiplierSumAllCalls": 2.0,
       "premiumRequestsCharged": 1.0,
-      "providerReportedInputTokens": 18214,
-      "providerReportedOutputTokens": 114,
+      "providerReportedInputTokens": 16096,
+      "providerReportedOutputTokens": 171,
       "source": "assistant.usage-events",
       "usage": {
         "inputCacheWriteTokens": 0,
-        "inputCachedReadTokens": 8704,
-        "inputUncachedTokens": 9510,
-        "outputReasoningTokens": 42,
-        "outputVisibleTokens": 72,
+        "inputCachedReadTokens": 7680,
+        "inputUncachedTokens": 8416,
+        "outputReasoningTokens": 97,
+        "outputVisibleTokens": 74,
         "providerReportedTotalTokens": null
       }
     },
     "sessionUsageMetrics": {
-      "aiCredits": 2.7661,
+      "aiCredits": 2.5525,
       "ambiguities": [
         "inputUncachedTokens is null: cacheReadTokens is non-zero and the inputTokens/cacheReadTokens overlap is undocumented under TokenOverlapPolicy.UNKNOWN",
         "providerReportedTotalTokens is null: session.usage.getMetrics exposes no provider grand total"
       ],
-      "apiDurationMs": 3421,
+      "apiDurationMs": 4640,
       "modelRequests": 2,
       "modelsSeen": [
         "gpt-5.4"
       ],
       "premiumMultiplierSumAllCalls": null,
       "premiumRequestsCharged": 1.0,
-      "providerReportedInputTokens": 18214,
-      "providerReportedOutputTokens": 114,
+      "providerReportedInputTokens": 16096,
+      "providerReportedOutputTokens": 171,
       "source": "session.usage.getMetrics",
       "usage": {
         "inputCacheWriteTokens": 0,
-        "inputCachedReadTokens": 8704,
+        "inputCachedReadTokens": 7680,
         "inputUncachedTokens": null,
-        "outputReasoningTokens": 42,
-        "outputVisibleTokens": 72,
+        "outputReasoningTokens": 97,
+        "outputVisibleTokens": 74,
         "providerReportedTotalTokens": null
       }
     }
@@ -134,10 +134,10 @@
   "toolAttempts": 1,
   "usage": {
     "inputCacheWriteTokens": 0,
-    "inputCachedReadTokens": 8704,
-    "inputUncachedTokens": 9510,
-    "outputReasoningTokens": 42,
-    "outputVisibleTokens": 72,
+    "inputCachedReadTokens": 7680,
+    "inputUncachedTokens": 8416,
+    "outputReasoningTokens": 97,
+    "outputVisibleTokens": 74,
     "providerReportedTotalTokens": null
   },
   "usageSource": "assistant.usage-events"
