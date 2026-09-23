@@ -393,7 +393,7 @@ cd /path/to/repo && python3.12 -m unittest discover -s benchmark/tests -t benchm
 
 ### What CI does and does not cover
 
-The `python` CI job runs `tests.test_driver` (101 tests) and **not** the four
+The `python` CI job runs `tests.test_driver` (120 tests) and **not** the four
 instrumentation modules — `test_events`, `test_isolation`, `test_usage`,
 `test_versions` (119 tests). Those are not skipped at runtime; they are never
 collected, because they import `github-copilot-sdk` and `inspect-ai`.
