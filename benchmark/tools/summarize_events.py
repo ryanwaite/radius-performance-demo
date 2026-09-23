@@ -10,8 +10,10 @@ Usage::
 
     python tools/summarize_events.py [run-dir]
 
-``run-dir`` defaults to ``artifacts/smoke``, the documented ``--output``
-location for ``radius-perf-smoke``.
+``run-dir`` defaults to the repository's ``artifacts/smoke``, the documented
+``--output`` location for ``radius-perf-smoke``. The default is anchored to
+this file rather than the working directory, so it resolves to the same place
+regardless of where the command is invoked from.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ import json
 import sys
 from pathlib import Path
 
-DEFAULT_RUN_DIR = Path("artifacts/smoke")
+DEFAULT_RUN_DIR = Path(__file__).resolve().parents[2] / "artifacts" / "smoke"
 
 NOTE = (
     "Summary of the full events.jsonl. The full log is generated output, written "
