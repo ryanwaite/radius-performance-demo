@@ -446,6 +446,12 @@ Per-run adversarial probes carry costs: they consume model requests, can warm ca
 
 Hermetic builds illustrate the positive-control requirement. A test asserting that a Go build fails without network access passed while its cache-eviction step removed nothing, because the module cache lived at `/go/pkg/mod`, not the assumed `/root/go/pkg/mod`. The build succeeded from the populated cache and was nearly recorded as failing closed. The control that prevents this asserts the cache is empty after eviction and before the build.
 
+The same failure appears in the checks that guard the checks. Three cases from Increment 2:
+
+- **Sign-off.** A trial cycle that crashed before its environment came up recorded one gate, none failed, and so it signed off. Sign-off now requires every declared gate to be recorded and passing, and names any gate that is missing.
+- **Environment preconditions of tests.** Nine driver tests documented as running without Docker passed only because a Docker daemon happened to be running. They failed when the daemon was stopped. A test that claims independence from a service is run with that service absent, in CI or before merge.
+- **Test collection.** CI stayed green while 119 Python tests were never collected, and the green result says nothing about them. CI reports the tests it did not collect, by module, beside the ones it ran.
+
 ## Scenarios and task modes
 
 ### MVP scenarios
