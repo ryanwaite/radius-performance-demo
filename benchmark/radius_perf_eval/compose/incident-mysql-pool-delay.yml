@@ -1,0 +1,16 @@
+# Incident overlay: mysql-pool-delay
+#
+# Applied from the control plane only. This file lives under benchmark/ and is
+# excluded from every agent-visible fixture, so the agent can observe the
+# symptom but not read the injection controls.
+#
+# The overlay is a pure environment override on one service. Reverting is
+# therefore exact: re-converging without this file restores the declared
+# baseline environment byte-for-byte.
+
+services:
+  catalog-api:
+    environment:
+      DB_READ_DELAY: "${INCIDENT_DB_READ_DELAY}"
+      DB_MAX_OPEN_CONNS: "${INCIDENT_DB_MAX_OPEN_CONNS}"
+      DB_MAX_IDLE_CONNS: "${INCIDENT_DB_MAX_IDLE_CONNS}"

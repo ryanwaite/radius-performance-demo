@@ -40,3 +40,13 @@ __pycache__/
 # Generated benchmark run output. Regenerate with radius-perf-smoke.
 # A curated, reviewable subset is committed under benchmark/evidence/.
 artifacts/
+
+# Per-run trial artifacts from the Compose trial driver. The signed-off
+# evidence for a suite is committed as
+# benchmark/results/<suite-id>/determinism-report.json; the per-run directories
+# are regenerated on every execution and are not committed.
+benchmark/results/*
+!benchmark/results/*/
+benchmark/results/*/environment-manifest.json
+benchmark/results/*/measurements.json
+!benchmark/results/*/determinism-report.json
