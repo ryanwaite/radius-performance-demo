@@ -169,7 +169,7 @@ npm consumption uses the CFS proxy registry:
 registry=https://packagefeedproxy.microsoft.io/npm/
 ```
 
-The CFS proxy is anonymous-readable per package, so no personal access token or credential provider is required for this endpoint. A dedicated Azure Artifacts feed would require authentication; the proxy deliberately avoids introducing a credential into the benchmark.
+From the approved managed developer machine, the CFS proxy serves per-package requests without a personal access token or credential provider. That access appears to depend on network context rather than per-user identity: an unauthenticated GitHub-hosted runner receives HTTP 401 from the same endpoint. Access from GitHub-hosted runners and other off-network build environments is therefore not established, and CI that installs benchmark dependencies needs either a CFS-capable runner or a prebuilt, digest-pinned benchmark test image. A dedicated Azure Artifacts feed would require authentication; the proxy avoids introducing a credential into the benchmark.
 
 ### Prohibited patterns
 
@@ -222,7 +222,14 @@ Go is not covered by the CFS controls above, and this exception is recorded rath
 
 Go module download therefore occurs at image build time against the public proxy, outside scored trials. Module integrity rests on `go.sum` verification, and builds use a read-only module mode and a pinned toolchain. Modules are pre-populated into a builder layer so the application build itself resolves nothing from the network.
 
-Vendoring is deliberately rejected. Committing a vendor tree would enlarge the fixture the agent explores during trials, changing exploration cost and task difficulty in order to satisfy a requirement that policy does not impose.
+Where the sealed Go dependency set lives is an open design decision, not a settled rejection of vendoring. An agent-visible vendor tree would enlarge the fixture the agent explores and change exploration cost, but the allowlisted fixture builder means a vendor tree committed to the source repository need not appear in the agent workspace. Remediation validation also needs the dependencies: rebuilding an agent-modified application without network access requires a sealed dependency source. The candidates are:
+
+1. a digest-pinned builder image containing the exact module cache;
+2. a content-addressed dependency artifact mounted only into the patch validator;
+3. a vendor tree kept in the build inputs and excluded from the agent-visible fixture;
+4. an agent-visible vendor tree, treated explicitly as part of the benchmark fixture.
+
+Choose one before remediation trials begin in Phase 3. Diagnosis-only trials do not rebuild the application and are unaffected.
 
 Revisit this exception if Go onboards to CFS quarantine, if an internally reachable Go proxy becomes available to this repository, or if the benchmark moves into a 1ES pipeline.
 
@@ -271,6 +278,10 @@ Explicitly exclude:
 - load-injector controls or hidden incident parameters that reveal the cause.
 
 The agent may receive developer-realistic runtime tools, application logs, metrics, traces, and ordinary manifests. The control plane injects the incident from outside the mounted repository.
+
+The current demo repository cannot be exported as the native fixture, because its ordinary files already disclose the incident. The root README describes a slow service-to-database dependency, calls the default stack a deterministic slow-database baseline, states `DB_READ_DELAY=250ms`, and presents Valkey as the remediation. The same delay is the default in `docker-compose.yml` and in the Kubernetes catalog ConfigMap. Both conditions would see this text, so it would not bias the comparison between them, but it would let the native agent answer by reading rather than diagnosing and could push both conditions to a ceiling that hides any treatment effect.
+
+The fixture therefore gets its own neutral documentation and healthy manifest defaults. The fixture README describes the service without naming a bottleneck, a diagnosis, or a preferred remediation. Agent-visible manifests carry baseline values that no hidden incident reuses. The leakage scan runs against the final sealed fixture artifact, not the source checkout, and searches for hidden parameter values, scenario identifiers, expected causal categories, and remediation language. Mutation tests plant each of these and prove the scan rejects them.
 
 ### Per-trial workspace creation
 
@@ -366,7 +377,9 @@ The agent harness permission API cannot confine shell execution. Three structure
 
 Shell therefore defaults to denied. Static command screening is defence in depth only, and probing established its boundary precisely: the screen holds against command substitution, because a literal path token survives it, and fails whenever no literal token is present — base64-encoded, interpreter-constructed, and variable-assembled paths all pass the screen. The weakness is the absence of a literal path, not substitution as such. These limitation probes are recorded as observations with no guaranteed outcome and are excluded from the pass criterion, so a screen that happens to deny one cannot be read as proof of confinement.
 
-The container mount boundary is the actual confinement boundary for shell, which makes the Compose runtime a security control rather than a convenience: any scenario that enables shell must execute inside that boundary. Because this failure is invisible to unit tests written against the permission API, confinement is asserted by a live escape probe in each scored run rather than by test coverage alone. The assertion is a run gate that fails the trial and must be satisfied affirmatively: absent evidence, a skipped probe, or a run in which the agent attempted no escape all fail rather than pass vacuously.
+No agent confinement boundary exists yet. In Increment 1 the Copilot CLI and every tool it runs are host processes working in a host temporary directory. The Compose containers hold the application under test, not the agent, so their mounts bound the application data plane and say nothing about what an agent shell can reach on the host. Shell-enabled scored runs are therefore blocked until a dedicated agent runner exists: a container or VM that runs the SDK-side CLI process and its tools, mounts only the standalone fixture workspace, reaches only the declared application endpoints, and has no access to the host home directory, Docker socket, benchmark checkout, or credentials.
+
+The live escape probe in Increment 1 is a permission-handler wiring check, not evidence of confinement. It shows that the static screen rejected three literal paths, and its prompt tells the agent not to work around a denial. Confinement evidence must come from escape tests against the agent runner's actual boundary, exercised by commands the static screen cannot catch. Because the permission-API failures are invisible to unit tests, that boundary test runs as a gate in each scored run and must pass affirmatively: missing evidence or a skipped probe fails the trial.
 
 ### MVP environment: Docker Compose
 
@@ -413,15 +426,23 @@ For remediation, use SWE-bench-style clean patch validation:
 
 The headless benchmark remains separate from the interactive Radius Canvas demo described in [demo-spec.md](demo-spec.md). Canvas may visualize benchmark artifacts later but is not part of timed execution.
 
-### Negative assertions require an attempt
+### Negative assertions must not pass vacuously
 
-Any check of the form "nothing bad happened" passes when nothing was tried, so every negative assertion pairs with an affirmative record that the attempt occurred. A confinement probe in which the agent never attempted an escape, a validator that observes no forbidden write because the scenario never reached the code path, and a leakage scan over an artifact that was never produced all report success on no evidence.
+A check of the form "nothing bad happened" can pass because nothing was examined. A validator that sees no forbidden write because the scenario never reached the code path, a leakage scan over an artifact that was never produced, and a hermetic-build test whose setup silently did nothing all report success on no evidence. This failure can decay without announcing itself: a check that depends on attempts trends green as attempts become rarer, which looks the same as a system that is getting better.
 
-This failure mode decays rather than announcing itself. As the surrounding harness improves at constraining the agent, attempts become rarer and the check trends green for the same reason the system is getting better, which makes a weakening signal indistinguishable from a strengthening result. Treat absent evidence, a skipped probe, and an unexercised path as failures, and record attempt counts alongside outcomes so a check that has quietly stopped testing anything is visible in the run record.
+Each negative assertion declares which of these it needs, and only what it needs:
 
-This applies to the isolation gate, the hidden scenario validators, the patch-scope rejection checks, and the committed-configuration leakage scan.
+| Requirement | Meaning | Where it runs |
+|---|---|---|
+| Liveness | The artifact or record under inspection exists and is nonempty | Every scored run |
+| Coverage | The scenario or validator path was exercised, with counts recorded | Every scored run |
+| Complete inventory | An authoritative enumeration shows no forbidden item | Every scored run, where such an enumeration exists |
+| Positive control or mutation test | The checker rejects a planted violation, and the setup is shown to have engaged the mechanism | CI and calibration |
+| Per-run adversarial probe | A deliberate violation is attempted during the run | Only where the property cannot be inferred from authoritative state |
 
-The same rule governs negative build and runtime tests, where the usual failure is that the setup did not do what the author believed. A test asserting that a build fails without network access passed while the cache-eviction step silently removed nothing, because the module cache lived at a different path than assumed; the build succeeded from a populated cache and the result was nearly recorded as proof of failing closed. Every negative test therefore carries a positive control demonstrating that the mechanism under test was actually engaged, and the control is asserted rather than inspected by hand.
+Per-run adversarial probes carry costs: they consume model requests, can warm caches or change state before the measured task, and add risk. Use them only where the table says to, and account for their usage separately from the scored task. Missing evidence and skipped checks fail rather than pass.
+
+Hermetic builds illustrate the positive-control requirement. A test asserting that a Go build fails without network access passed while its cache-eviction step removed nothing, because the module cache lived at `/go/pkg/mod`, not the assumed `/root/go/pkg/mod`. The build succeeded from the populated cache and was nearly recorded as failing closed. The control that prevents this asserts the cache is empty after eviction and before the build.
 
 ## Scenarios and task modes
 
@@ -538,7 +559,7 @@ Normalized nullable fields:
 
 The accumulated usage RPC is experimental; pin the SDK/CLI and record schema/version changes. Reconciliation mismatches are artifacts, not values to overwrite.
 
-Premium-request cost is not a sum over calls. Only model calls whose initiator is the user are charged; summing per-call `assistant.usage.cost` across every call overcounts, measured as 2.0 against a runtime-reported 1.0 on a two-call session. Normalize by filtering on initiator before summing, retain the unfiltered sum as a raw artifact, and treat any disagreement with `session.usage.getMetrics` as a finding rather than a value to correct silently.
+Premium-request normalization is provisional. In one two-call session on SDK 1.0.13 with its pinned CLI 1.0.83 and one model, summing per-call `assistant.usage.cost` gave 2.0, summing only calls whose initiator is the user gave 1.0, and the runtime total was 1.0. The harness therefore filters on initiator before summing, but this rests on a single observation. Before it is used for cost estimands, validate it across sessions with no tools, multi-tool loops, retries and failed calls, each pilot model, and any later subagent-enabled configuration. Retain the unfiltered sum and the runtime total as raw artifacts. When the normalized value disagrees with `session.usage.getMetrics`, mark the cost metric unavailable for that trial rather than reporting the normalized value.
 
 Cache overlap is resolved empirically rather than assumed. For the pinned SDK/CLI, `copilotUsage.tokenDetails` shows input tokens to be inclusive of cache-read tokens, so uncached input is a computed value rather than `null`. This resolution is specific to the pinned runtime and model family and must be re-verified whenever either changes; the general rule that overlapping fields are never summed still governs.
 
@@ -807,6 +828,7 @@ Exit criteria:
 - Event ordering and monotonic timing are complete.
 - Raw and normalized usage records are preserved without double counting.
 - No App UI, auto routing, memory, fleet, or subagents are involved.
+- A required CI check installs the locked Python dependencies and runs the harness tests. A check that builds only the Go application does not validate harness changes.
 
 ### Phase 2: Deterministic Compose reset and one diagnosis scenario
 
@@ -816,7 +838,11 @@ Work:
 - Implement unique-project Compose driver, dynamic ports, fresh volumes, digest pinning, and cleanup verification.
 - Implement independent collector and hidden diagnosis validator.
 - Implement one hidden `mysql-pool-delay/v1` variant.
+- Build the dedicated agent runner that confines the Copilot CLI and its tools.
+- Pin every base image by digest and record hashes of the application source, driver, load profile, incident declaration, and rendered Compose configuration.
 - Run randomized native/Radius pairs repeatedly.
+
+Determinism suites pull and build every image in an unmeasured setup phase, run one or more discarded warm-up cycles, and then run identical measured cycles with pulling disabled. Gate definitions, thresholds, and tolerances are frozen in code before the measured run. A gate calibrated on one run is validated on a separate holdout run with no changes between freeze and run.
 
 Exit criteria:
 
@@ -897,11 +923,12 @@ Exit criteria:
 | Models | 2-3 models available in the user's Copilot account | Unresolved |
 | Kubernetes target | `ryanw-aks` / `ryanw-rg` / Test account | User-selected; access/setup unverified |
 | Package source | CFS proxy only, single index, installed at image build time | Required; machine configuration verified |
-| Go modules | Public proxy at build time, no vendoring | Declared exception; no internal proxy reachable |
-| Python runtime | 3.12 | Recommended; `>=3.12,<3.13` |
+| Go modules | Public proxy at build time | Declared exception; no internal proxy reachable; sealed dependency location unresolved |
+| Python runtime | 3.12 | `>=3.12,<3.13` is a compatibility range; pin the harness image and patch version by digest before scored runs |
 | Dependency pins | `inspect-ai==0.3.263`, `github-copilot-sdk==1.0.13` | Verified installable via CFS |
 | Agent CLI runtime | SDK-pinned CLI, not the host CLI | Recommended; both pairings verified working |
-| Shell tool | Denied by default; permitted only inside the container boundary | Required; permission API cannot confine shell |
+| Shell tool | Denied by default; permitted only inside a dedicated agent runner | Required; permission API cannot confine shell; agent runner not built |
+| Fixture documentation | Neutral README and healthy manifest defaults | Required; current demo files disclose the incident |
 | Human review | Optional, blinded, separate from deterministic score | Recommended |
 
 Before Phase 1 implementation, choose the initial models, exact budgets, and the structured output schema. The Copilot SDK drives its own pinned CLI unless explicitly pointed at another binary; pinning the SDK-supplied CLI is preferred because it removes host machine state from the reproducibility surface, and both versions are recorded separately so a result cannot be misattributed. Before Phase 5, verify Azure access and select the Kubernetes/Radius deployment configuration.
