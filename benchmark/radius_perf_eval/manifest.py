@@ -103,25 +103,35 @@ def hash_fixture(
 # setup was a no-op: the check reports success because the thing it checks
 # never ran. Absence is now a failure, so a manifest has to earn sign-off by
 # demonstrating every verification, not by avoiding a recorded one.
-REQUIRED_GATES: frozenset[str] = frozenset(
+#
+# The per-service gates are no longer listed here. They are generated from the
+# Compose file by `checks.py` and added through `require_gates`, because a
+# hand-written list of four services was itself a complete-inventory failure:
+# a fifth service would have acquired no gates, and the manifest would have
+# signed off on the four it happened to know about.
+LIFECYCLE_GATES: frozenset[str] = frozenset(
     {
-        "image-pinned:mysql",
-        "image-pinned:valkey",
-        "image-pinned:catalog-api",
-        "image-pinned:prometheus",
-        "resource-limits:mysql",
-        "resource-limits:valkey",
-        "resource-limits:catalog-api",
-        "resource-limits:prometheus",
-        "environment-variables:catalog-api",
+        # Without this, a manifest that never generated a plan would have an
+        # empty derived requirement and could sign off having checked nothing.
+        "check-plan-generated",
+        # Without this, a plan that silently omitted a service would also omit
+        # that service's gates from the requirement, so the omission would be
+        # invisible. This gate is the only thing that catches it.
+        "check-plan-covers-compose-services",
         "application-readiness",
-        "mysql-seed-rows",
-        "valkey-empty",
-        "egress-blocked:mysql",
-        "egress-blocked:valkey",
-        "catalog-api-image-hermetic",
         "incident-active-verified",
         "cleanup-verified",
+    }
+)
+
+# Data-level assertions about the catalog application specifically. These are
+# not structural properties of the Compose file, so they are not generated;
+# they are declared per application and change when the application does.
+CATALOG_APPLICATION_GATES: frozenset[str] = frozenset(
+    {
+        "mysql-seed-rows",
+        "valkey-empty",
+        "catalog-api-image-hermetic",
     }
 )
 
@@ -164,6 +174,19 @@ class EnvironmentManifest:
     daemon: dict[str, Any] = field(default_factory=dict)
     timings_ms: dict[str, float] = field(default_factory=dict)
     gates: list[Gate] = field(default_factory=list)
+    check_plan: dict[str, Any] = field(default_factory=dict)
+    required_gates: frozenset[str] = LIFECYCLE_GATES
+
+    def require_gates(self, names: Iterable[str]) -> frozenset[str]:
+        """Add to the floor of gates this manifest must record to sign off.
+
+        The driver calls this once the check plan exists. Before that the floor
+        is the lifecycle set, which includes `check-plan-generated`, so a run
+        that dies before generating a plan cannot sign off on the gates it did
+        manage to record.
+        """
+        self.required_gates = self.required_gates | frozenset(names)
+        return self.required_gates
 
     def add_gate(self, name: str, passed: bool, detail: str = "") -> Gate:
         gate = Gate(name=name, passed=passed, detail=detail)
@@ -177,7 +200,7 @@ class EnvironmentManifest:
     @property
     def missing_gates(self) -> list[str]:
         """Required gates that were never recorded at all."""
-        return sorted(REQUIRED_GATES - {gate.name for gate in self.gates})
+        return sorted(self.required_gates - {gate.name for gate in self.gates})
 
     @property
     def signed_off(self) -> bool:
@@ -206,6 +229,8 @@ class EnvironmentManifest:
             "daemon": self.daemon,
             "timingsMs": self.timings_ms,
             "gates": [gate.to_dict() for gate in self.gates],
+            "requiredGates": sorted(self.required_gates),
+            "checkPlan": self.check_plan,
             "missingGates": self.missing_gates,
         }
 
