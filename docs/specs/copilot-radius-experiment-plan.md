@@ -34,23 +34,26 @@ The primary treatment is the complete repository experience that a developer wou
 
 ### Product-treatment claims versus causal graph claims
 
-The primary two-condition campaign estimates the effect of the **fully Radius-enabled repository treatment**. It cannot attribute the result to the graph alone because the treatment also changes repository files, instructions, skills, identifiers, and tool affordances.
+The primary campaign's Radius-versus-native contrast estimates the effect of the **fully Radius-enabled repository treatment**. It cannot attribute the result to the graph alone because the treatment also changes repository files, instructions, skills, identifiers, and tool affordances.
 
 Causal claims about graph access require the later graph-by-skills factorial ablation. Even then, conclusions apply to the pinned Copilot harness, models, tasks, fixtures, and benchmark version. They do not establish general LLM intelligence or universal benefit for every repository.
 
 ## Primary conditions
 
-| Surface | A. Native repository | B. Fully Radius-enabled repository |
-|---|---|---|
-| Application source and tests | Same frozen snapshot | Same frozen snapshot |
-| Compose and Kubernetes manifests | Included | Included |
-| Telemetry and load tools | Included | Included |
-| Ordinary repository instructions | Included | Included |
-| `app.bicep` | Absent | Generated, corrected if necessary, validated, and frozen before trials |
-| Radius repository configuration | Absent | Included and frozen |
-| Radius application graph | Not available | Available with stable resource/connection IDs and source references |
-| Radius skills | None | Generic, repository-scoped procedural skills |
-| Scenario-specific hints | None | None |
+| Surface | A. Native repository | C. Native with architecture document | B. Fully Radius-enabled repository |
+|---|---|---|---|
+| Application source and tests | Same frozen snapshot | Same frozen snapshot | Same frozen snapshot |
+| Compose and Kubernetes manifests | Included | Included | Included |
+| Telemetry and load tools | Included | Included | Included |
+| Ordinary repository instructions | Included | Included | Included |
+| Hand-written architecture document | Absent | Included and frozen | Absent |
+| `app.bicep` | Absent | Absent | Generated, corrected if necessary, validated, and frozen before trials |
+| Radius repository configuration | Absent | Absent | Included and frozen |
+| Radius application graph | Not available | Not available | Available with stable resource/connection IDs and source references |
+| Radius skills | None | None | Generic, repository-scoped procedural skills |
+| Scenario-specific hints | None | None | None |
+
+Arm C is an active control. It answers the first question a skeptic will ask: does Radius beat a well-written description of the architecture? Without it, a Radius effect could mean only that any architecture description helps. The document in arm C states the same facts the Radius graph encodes: services, dependencies, endpoints, and where each is defined in source. A fresh Copilot session writes it, given only the Astronomy Shop source and the list of facts the Radius graph encodes. It never sees this plan, the incident set, or the injectors, and its model, prompt, and transcript are kept with the fixture. Its length is within 20 percent of the Radius additions, measured in tokens, and it passes the same leakage scan. The prompt does not mention it.
 
 The Radius-enabled fixture must describe the deployed application and how to use Radius. It must not encode incident answers, expected root causes, scenario thresholds, or scenario-specific remediation.
 
@@ -74,13 +77,26 @@ The initial benchmark disables automatic model routing, fleet execution, subagen
 
 The task must not mention Radius, an application graph, cache, or the expected cause. Scenario-visible symptoms and success requirements may vary, but the core prompt remains neutral.
 
-> The catalogue application is not meeting its service objective under the supplied workload. Diagnose the root cause using the repository and runtime evidence available to you. Return the causal category, affected component or dependency, supporting evidence, confidence, and the smallest safe remediation. In remediation mode, implement and validate only the changes necessary to restore the objective without weakening health checks, tests, or source-of-truth guarantees.
+> Operators are concerned that the application may not be meeting its service objective under the supplied workload. Using the repository and runtime evidence available to you, determine whether there is a problem. If there is, return the causal category, affected component or dependency, supporting evidence, confidence, and the smallest safe remediation. If there is not, say so and give the evidence. In remediation mode, implement and validate only the changes necessary to restore the objective without weakening health checks, tests, or source-of-truth guarantees.
 
-The prompt must not tell the agent which tool or repository artifact to inspect.
+The prompt must not tell the agent which tool or repository artifact to inspect. It does not assert that a fault exists, because some trials are no-fault controls in which the correct answer is that there is none.
+
+The agent answers by calling a submit tool with fixed fields:
+
+| Field | Form |
+|---|---|
+| `faultPresent` | Boolean |
+| `causalCategory` | One value from a fixed list of about ten categories, the same list in every arm |
+| `component` | The affected service. Compose service names and Radius resource IDs are both accepted and mapped to one canonical name, so no arm fails on naming |
+| `evidence` | A list of citations, each naming a metric, trace, or log and what it showed |
+| `confidence` | A number from 0 to 1 |
+| `remediation` | The smallest safe change, as text |
+
+A trial that ends without a valid call to the submit tool scores as a failure.
 
 ## Follow-up factorial ablations
 
-Run the primary native-versus-fully-Radius campaign first. If it produces a stable signal and the harness passes integrity checks, run a 2x2 graph-by-skills campaign:
+Run the primary three-arm campaign first. If it produces a stable signal and the harness passes integrity checks, run a 2x2 graph-by-skills campaign:
 
 | Condition | Graph / `app.bicep` | Radius skills |
 |---|---:|---:|
@@ -95,7 +111,7 @@ The factorial model estimates:
 - **Skills main effect:** average difference between skills-present and skills-absent conditions.
 - **Graph x skills interaction:** whether the combined effect differs from the sum of their separate effects.
 
-A positive interaction would suggest that procedural skills help Copilot exploit the graph. A negative interaction could indicate redundant context, conflicting instructions, or added tool overhead. Do not infer these effects from the primary two-condition campaign.
+A positive interaction would suggest that procedural skills help Copilot exploit the graph. A negative interaction could indicate redundant context, conflicting instructions, or added tool overhead. Do not infer these effects from the primary campaign. Arm C answers a different question: whether the graph and skills together beat prose that carries the same facts.
 
 A later graph-content ablation compares:
 
@@ -169,7 +185,9 @@ npm consumption uses the CFS proxy registry:
 registry=https://packagefeedproxy.microsoft.io/npm/
 ```
 
-From the approved managed developer machine, the CFS proxy serves per-package requests without a personal access token or credential provider. That access appears to depend on network context rather than per-user identity: an unauthenticated GitHub-hosted runner receives HTTP 401 from the same endpoint. Access from GitHub-hosted runners and other off-network build environments is therefore not established, and CI that installs benchmark dependencies needs either a CFS-capable runner or a prebuilt, digest-pinned benchmark test image. A dedicated Azure Artifacts feed would require authentication; the proxy avoids introducing a credential into the benchmark.
+From the approved managed developer machine, the CFS proxy serves per-package requests without a personal access token or credential provider. That access appears to depend on network context rather than per-user identity: an unauthenticated GitHub-hosted runner receives HTTP 401 from the same endpoint. Access from GitHub-hosted runners and other off-network build environments is therefore not established.
+
+CI therefore installs from the public registries, constrained to exactly what CFS served. Lockfiles record a hash of every package file, and CFS serves the same files as the upstream registries. Dependencies are resolved and locked only on the managed developer machine through CFS. CI installs from a hash-pinned requirements file exported from `uv.lock` without index URLs, from PyPI, with hash checking required; Go modules come from the public proxy and are checked against `go.sum`. CI never resolves versions afresh, fails if the exported file no longer matches `uv.lock`, and dependency-update bots are disabled. A file whose hash differs from the lock fails the install. Trials never install packages from CI. A dedicated Azure Artifacts feed would require authentication; the proxy avoids introducing a credential into the benchmark.
 
 ### Prohibited patterns
 
@@ -229,7 +247,7 @@ Where the sealed Go dependency set lives is an open design decision, not a settl
 3. a vendor tree kept in the build inputs and excluded from the agent-visible fixture;
 4. an agent-visible vendor tree, treated explicitly as part of the benchmark fixture.
 
-Choose one before remediation trials begin in Phase 3. Diagnosis-only trials do not rebuild the application and are unaffected.
+Choose one before remediation trials begin in Phase 4. Remediation on the Astronomy Shop rebuilds services in several languages, so the same choice applies to each language's dependencies. Diagnosis-only trials do not rebuild the application and are unaffected.
 
 Revisit this exception if Go onboards to CFS quarantine, if an internally reachable Go proxy becomes available to this repository, or if the benchmark moves into a 1ES pipeline.
 
@@ -279,7 +297,7 @@ Explicitly exclude:
 
 The agent may receive developer-realistic runtime tools, application logs, metrics, traces, and ordinary manifests. The control plane injects the incident from outside the mounted repository.
 
-The current demo repository cannot be exported as the native fixture, because its ordinary files already disclose the incident. The root README describes a slow service-to-database dependency, calls the default stack a deterministic slow-database baseline, states `DB_READ_DELAY=250ms`, and presents Valkey as the remediation. The same delay is the default in `docker-compose.yml` and in the Kubernetes catalog ConfigMap. Both conditions would see this text, so it would not bias the comparison between them, but it would let the native agent answer by reading rather than diagnosing and could push both conditions to a ceiling that hides any treatment effect.
+The current demo repository cannot be exported as the native fixture, because its ordinary files already disclose the incident. The root README describes a slow service-to-database dependency, calls the default stack a deterministic slow-database baseline, states `DB_READ_DELAY=250ms`, and presents Valkey as the remediation. The same delay is the default in `docker-compose.yml` and in the Kubernetes catalog ConfigMap. Every arm would see this text, so it would not bias the comparison between them, but it would let the native agent answer by reading rather than diagnosing and could push every arm to a ceiling that hides any treatment effect.
 
 The fixture therefore gets its own neutral documentation and healthy manifest defaults. The fixture README describes the service without naming a bottleneck, a diagnosis, or a preferred remediation. Agent-visible manifests carry baseline values that no hidden incident reuses. The leakage scan runs against the final sealed fixture artifact, not the source checkout, and searches for hidden parameter values, scenario identifiers, expected causal categories, and remediation language. Mutation tests plant each of these and prove the scan rejects them.
 
@@ -463,10 +481,48 @@ The same failure appears in the checks that guard the checks. Three cases from I
 - **Sign-off.** A trial cycle that crashed before its environment came up recorded one gate, none failed, and so it signed off. Sign-off now requires every declared gate to be recorded and passing, and names any gate that is missing.
 - **Environment preconditions of tests.** Nine driver tests documented as running without Docker passed only because a Docker daemon happened to be running. They failed when the daemon was stopped. A test that claims independence from a service is run with that service absent, in CI or before merge.
 - **Test collection.** CI stayed green while 119 Python tests were never collected, and the green result says nothing about them. CI reports the tests it did not collect, by module, beside the ones it ran.
+- **Documented commands.** A note told readers how to regenerate a file, and the command did not produce it; a documented output path had never been used; a documented default resolved somewhere else. A command in documentation is a claim. Before merge, someone runs it exactly as written and checks that it does what the text says. Where the command can run in CI, such as a regeneration script or a test invocation, CI runs it, so the text cannot drift from the code.
 
 ## Scenarios and task modes
 
-### MVP scenarios
+### Application under test
+
+Scored campaigns use the [OpenTelemetry Astronomy Shop](https://github.com/open-telemetry/opentelemetry-demo), the OpenTelemetry project's reference application, rather than the catalog application. Three facts decide it:
+
+- **Size.** It runs about 17 services in several languages, with Postgres, Valkey, Kafka, and a load generator. On the four-component catalog application, an agent can read the whole Compose file in one step, so an application graph has little room to help. A larger topology is where Radius should help if it helps anywhere.
+- **Faults.** It ships 18 fault flags, several with graded strengths, and [AIOpsLab](https://github.com/microsoft/AIOpsLab) (Microsoft Research, MIT license) already defines diagnosis problems for it. We borrow AIOpsLab's problem definitions and injectors as a starting fault library. We do not use its orchestrator, agent interface, or graders: its answers are fixed and public, and its graders accept a bare "Yes" or an exact service name.
+- **Environment.** It ships a Compose file as well as a Helm chart, so the Compose trial driver carries over and Kubernetes remains a later target.
+
+The catalog application stays as the harness development fixture. Its scenarios below exercise the harness and are not part of the scored campaign.
+
+Astronomy Shop images come from `ghcr.io` with a floating `latest` tag. Every image is pinned by digest before any trial, as a declared exception alongside the Docker Hub images, and the environment passes the same determinism suite as the catalog application.
+
+### Incident set
+
+The analysis generalizes over incidents, not over repeated runs of one incident. Repeats measure how noisy the agent is. A distinct incident is a pair of fault mechanism and target component; changing only a magnitude or a seed makes a variant of the same incident, not a new one.
+
+- Build 20 to 50 distinct incidents spanning resource saturation (CPU, memory, garbage collection), dependency latency (network delay, slow database, slow downstream service), queue backlog, cache failure, lock contention, partial error rates, and load surges.
+- Include incidents with a misleading correlated symptom, where the most visibly degraded component is not the cause.
+- Include no-fault controls in about 10 to 15 percent of trials. The correct answer is that there is no fault. They measure false alarms, which a benchmark of only faulty systems cannot see.
+- Prefer injectors that act outside the application source: cgroup CPU and memory limits, network delay and loss, proxy-injected latency, and database-level locks.
+- The Astronomy Shop's own fault flags are implemented as deliberate misbehaviour in its source, under names such as `adHighCpu`. Renaming the flags would not hide a loop that burns CPU on purpose. The fault code is therefore removed from the source the agent sees, while the running containers keep the upstream images that contain it. The agent must diagnose these incidents from telemetry. Because the visible source no longer matches what runs, flag-driven incidents are used for diagnosis only; remediation trials use external injectors. The flag service's configuration and user interface are out of the agent's reach.
+- The Astronomy Shop and its fault flags are public and well documented, so a model may have memorized them. Randomized targets, hidden magnitudes, externally injected faults, and no-fault controls keep a memorized guess from scoring.
+
+### Calibrating difficulty
+
+An incident that every arm solves, or that no arm solves, cannot show a difference. During the pilot, the native arm should pass each incident between 20 and 80 percent of the time. Incidents outside that range are retuned or dropped during the pilot, and the set is then frozen. Scored trials use variant seeds not seen during calibration, so the incidents are not tuned on the data that measures them.
+
+### Validating graders
+
+A grader that passes a wrong answer produces a scored result that looks like a finding. Before an incident enters the scored set:
+
+- a reference diagnosis must pass;
+- planted wrong answers must fail: the wrong component, the right component with the wrong mechanism, the correlated symptom, "no fault" when there is one, and a fault when there is none;
+- the evidence check must be deterministic. Cited evidence passes only if it names a metric, trace, or log that exists in the trial's captured telemetry and lies on the causal path the incident declares.
+
+During the pilot and the scored campaign, the repository owner reviews a random 10 percent of graded transcripts without knowing the arm. The harness removes arm labels, the architecture document's name, and Radius file paths from the transcripts before review. A reader may still infer the arm from what the agent examined, and the report says so. The report states how often the reviewer and the grader agree. If they disagree on more than 5 percent of reviewed trials, the grader is fixed and the affected trials are regraded before any result is reported. Pilot review also reads transcripts for harness artifacts, refusals, and grader gaming.
+
+### Catalog-application scenarios (harness development)
 
 | Scenario | Injection | Allowed remediation | Deterministic validators |
 |---|---|---|---|
@@ -474,10 +530,7 @@ The same failure appears in the checks that guard the checks. Three cases from I
 | Ineffective cache | Valkey enabled with hidden TTL/key/config variant that prevents useful hits | Correct cache policy/configuration; preserve fail-open behavior and MySQL source of truth | Cache causal category; hit-ratio recovery; MySQL request reduction; Valkey healthy; both `catalog-api--mysql` and `catalog-api--valkey` retained |
 | API CPU throttling | Hidden CPU limit/workload variant causing cgroup throttling | Bounded API resource adjustment or removal of injected CPU work | API resource localization; throttling reduction; dependency latency not falsely blamed; throughput/p95 recovery; resource cap remains safe |
 
-Later scenarios:
-
-- Dependency timeout or endpoint misconfiguration.
-- Misleading correlated symptom where an obvious degraded component, such as Prometheus scrape health, is not causal.
+These scenarios develop and test the harness. The scored incident set is defined above.
 
 ### Hidden variants
 
@@ -514,7 +567,7 @@ Public documentation names scenario concepts, but each version includes hidden v
 13. For remediation, capture the post-change telemetry window under the same load profile.
 14. Persist logs, patches, telemetry, graph snapshots, fixture and baseline hashes, raw usage payloads, validator results, and cleanup evidence outside the workspace.
 15. Destroy the agent workspace, containers/namespace, mounts, volumes, credentials, and temporary files; verify every resource is absent.
-16. Repeat the paired condition from a newly extracted fixture and new runtime environment with the same incident seed. Randomize which condition runs first.
+16. Repeat for each other arm from a newly extracted fixture and new runtime environment with the same incident seed. Randomize the order of arms within each set.
 
 Terminal classifications are mutually exclusive:
 
@@ -540,6 +593,7 @@ Infrastructure and adapter failures are reported and retried under a predetermin
 - Correct causal category.
 - Correct causal resource and connection.
 - Correct rejection of correlated but non-causal symptoms.
+- False-alarm rate on no-fault controls.
 - Evidence validity and confidence calibration.
 - Time to first correct structured diagnosis.
 
@@ -674,23 +728,39 @@ The weighted score remains as defined in [agent-evaluation-spec.md](agent-evalua
 
 ### Experimental design
 
-- Pair conditions within exact Copilot model, model version, SDK/CLI/runtime, reasoning effort, prompt, tools, budget, scenario variant, seed, and host class.
+- Match arms within exact Copilot model, model version, SDK/CLI/runtime, reasoning effort, prompt, tools, budget, scenario variant, seed, and host class.
 - Use cold contexts and a fresh Copilot session for every run.
-- Randomize condition order within each pair.
+- Randomize arm order within each set.
 - Record exact fixture, prompt, graph, skill, model, tool, scenario, validator, and orchestrator versions.
 - Analyze each model and scenario before aggregation.
 - Report paired pass-rate differences, score/time/tool/usage deltas, effect sizes, and confidence intervals.
 - Use bootstrap confidence intervals when distribution assumptions are weak.
 - Publish infrastructure and adapter failure rates separately.
 
-Recommended pilot:
+Incidents are the clusters. Outcomes for the same incident are correlated, so the effective sample size is roughly the number of runs divided by `1 + (m - 1) × ICC`, where `m` is runs per incident and ICC is the share of outcome variance explained by the incident. Adding incidents raises power more than adding repeats. Report intervals clustered by incident alongside naive ones.
+
+Pilot:
 
 ```text
-3 scenarios x 2 conditions x 2-3 models x 5 paired repetitions
-= 60-90 total runs
+about 10 incidents x 2 repetitions x 3 arms x 2 models = about 120 runs
 ```
 
-The pilot validates mechanics and estimates variance. A larger comparison uses at least 20 paired repetitions per model/scenario: 240 runs for two models or 360 for three. Do not generalize from tiny samples.
+The pilot checks mechanics, measures the native pass rate and ICC, calibrates difficulty, validates graders, and measures cost per run. Its results are not reported as findings.
+
+The scored campaign's size is set from the pilot by a power analysis: 80 percent power at a two-sided alpha of 0.05 for the smallest effect worth detecting. For scale, a 20-point gain from a 50 percent baseline needs about 96 independent pairs per contrast, and correlation within incidents raises that. At 30 incidents, 4 repetitions, and an ICC of 0.3, the smallest detectable difference is about 26 points per model. Five or twenty pairs on each of three scenarios cannot detect effects of a plausible size.
+
+### Pre-registered analysis
+
+Before the scored campaign, commit an analysis plan to the repository and record its commit hash in every report. It fixes:
+
+- the primary endpoint: validated diagnosis pass or fail;
+- the co-primary contrasts, Radius versus native and Radius versus architecture document, with a Holm correction across the two;
+- the model: mixed-effects logistic regression with a random effect for incident, or a bootstrap that resamples incidents;
+- the handling of infrastructure and adapter failures;
+- the sample size, with no interim looks at arm differences;
+- the secondary measures, labeled exploratory.
+
+Any departure from the plan is reported as a departure.
 
 ### Estimands
 
@@ -815,7 +885,8 @@ Work:
 - Commit and tag a clean application baseline.
 - Configure and commit CFS package sources, and verify every dependency pin resolves through CFS.
 - Implement the allowlist/denylist fixture builder and native-versus-Radius difference manifest.
-- Produce sealed, content-addressed native and fully Radius-enabled fixture artifacts from the same source commit.
+- Produce sealed, content-addressed native, architecture-document, and fully Radius-enabled fixture artifacts from the same source commit.
+- Write the arm C architecture document from the facts the Radius graph encodes, with no knowledge of the incidents, and record its token count against the Radius additions.
 - Generate, correct, validate, and freeze `app.bicep`.
 - Add generic Radius repository configuration and skills.
 - Capture setup time, corrections, validation, files, and hashes.
@@ -823,7 +894,7 @@ Work:
 
 Exit criteria:
 
-- Fixtures differ only by declared Radius treatment surfaces.
+- Fixtures differ only by declared treatment surfaces: the architecture document in arm C, and the Radius surfaces in arm B.
 - Fixture archives contain no benchmark plans, scenario implementations, expected answers, validators, results, credentials, local Git state, or developer artifacts.
 - Both fixtures build and run the same application behavior.
 - Radius graph IDs and source references validate.
@@ -860,7 +931,7 @@ Work:
 - Implement one hidden `mysql-pool-delay/v1` variant.
 - Establish the OS-enforced agent boundary: enable the runtime sandbox before the first prompt and fail any trial whose tool executions lack `sandboxApplied`; build a dedicated runner only if those conditions can't be met.
 - Pin every base image by digest and record hashes of the application source, driver, load profile, incident declaration, and rendered Compose configuration.
-- Run randomized native/Radius pairs repeatedly.
+- Run randomized sets of all three arms repeatedly.
 
 Determinism suites pull and build every image in an unmeasured setup phase, run one or more discarded warm-up cycles, and then run identical measured cycles with pulling disabled. Gate definitions, thresholds, and tolerances are frozen in code before the measured run. A gate calibrated on one run is validated on a separate holdout run with no changes between freeze and run.
 
@@ -875,21 +946,33 @@ Exit criteria:
 - After teardown, no workspace, mount, agent container, Compose project, or volume remains.
 - Repeating the same seed stays within predefined environment variance.
 
-### Phase 3: MVP campaign
+### Phase 3: Incident set, pilot, and scored diagnosis campaign
 
-Work:
+Work, stage 1 (incident set and pilot):
 
-- Add ineffective-cache and API-CPU-throttling scenarios with hidden variants.
-- Add pool and CPU evidence collectors needed for deterministic validation.
-- Select 2-3 explicit models available in the Copilot account.
-- Run five paired repetitions per model/scenario.
+- Pin the Astronomy Shop by image digest and pass the determinism suite on it.
+- Build its three fixtures under the Phase 0 rules, including neutral names for any flag-driven fault.
+- Port AIOpsLab's Astronomy Shop problems and add external injectors, hidden variants, misleading-symptom incidents, and no-fault controls.
+- Build a validator for each incident, with a reference diagnosis and planted wrong answers.
+- Run the pilot on Claude Opus 5 and GPT-5.6 Sol, review transcripts, and calibrate difficulty.
+- Run a calibration check on the scored models, Claude Opus 5.5 and GPT-6 Sol, of about one run per incident per arm on seeds the scored campaign never reuses. Retune any incident outside the band, then freeze the set.
+- Run the power analysis and commit the pre-registered analysis plan.
 
-Exit criteria:
+Exit criteria, stage 1:
 
-- 60-90 planned runs complete or have explicit terminal classifications.
-- All scenarios meet reset, incident, evidence, and validator reliability thresholds.
-- Paired deltas and confidence intervals are generated.
-- Reports clearly state that the pilot estimates variance and benchmark-specific signal.
+- At least 20 distinct incidents pass reset, injection, evidence, and grader validation.
+- Each retained incident's native pass rate falls within the calibration band.
+- Reviewer and grader agree on at least 95 percent of reviewed pilot trials.
+- The analysis plan, including sample size, is committed.
+
+Work, stage 2 (scored campaign):
+
+- Run the pre-registered campaign on fresh variant seeds.
+
+Exit criteria, stage 2:
+
+- Every planned run completes or has an explicit terminal classification.
+- The report gives the co-primary contrasts with clustered intervals, per-model results, the no-fault false-alarm rate, and reviewer agreement, and labels secondary measures as exploratory.
 
 ### Phase 4: Remediation trials
 
@@ -916,6 +999,7 @@ Work:
 - Compare static graph with graph plus telemetry overlay.
 - Validate access to `ryanw-aks` in `ryanw-rg` under the Test account.
 - Add isolated namespace driver and Radius deployment-state collection.
+- Deploy the Astronomy Shop from its Helm chart, which makes AIOpsLab's Kubernetes-level injectors available.
 
 Exit criteria:
 
@@ -931,33 +1015,42 @@ Exit criteria:
 | Orchestrator | Inspect AI | Recommended; version not selected |
 | Agent harness | GitHub Copilot SDK | Recommended; integration not implemented |
 | Environment | Docker Compose | Recommended for MVP |
+| Scored application | OpenTelemetry Astronomy Shop; catalog application for harness development only | Decided |
+| Primary arms | Native, native with architecture document (written by a fresh Copilot session without the plan), fully Radius-enabled | Decided |
+| Incident set | 20-50 distinct incidents, misleading-symptom incidents, and 10-15 percent no-fault controls, drawn from AIOpsLab and external injectors; flag fault code removed from agent-visible source, flag faults diagnosis-only | Decided; not built |
+| Smallest effect worth detecting | 15 percentage points | Decided; sets the campaign size |
+| Analysis plan | Pre-registered before the scored campaign; incident-clustered model; Holm correction across co-primary contrasts | Decided; plan not yet written |
 | Session policy | Fresh cold session, memory off | Recommended |
-| Model selection | Explicit pinned model, no auto routing | Models unresolved |
+| Model selection | Explicit pinned model, no auto routing | Decided |
 | Parallelism | One agent, no fleet or subagents | Recommended |
 | First task mode | Diagnosis-only | Recommended |
 | Remediation | Apply bounded changes automatically only in sandbox after Phase 3 | Recommended |
 | Initial Radius data | Static graph, no telemetry overlay | Recommended |
 | Prompt | Neutral, no Radius/graph/cache/root-cause mention | Recommended |
 | Radius fixture | Frozen validated `app.bicep`, repo config, graph, IDs/source refs, generic skills | Required; not built |
-| Trial budgets | Fixed wall-clock, model/tool/token/AI-credit/cost caps | Exact values unresolved |
-| Models | 2-3 models available in the user's Copilot account | Unresolved |
+| Trial budgets | 30 minutes wall clock and 100 tool calls, whichever comes first; high reasoning effort; identical across arms; exhaustion scores as failure; token, AI-credit, and cost usage recorded | Decided; revisited once after the pilot |
+| Models | Pilot: Claude Opus 5 and GPT-5.6 Sol. Scored: Claude Opus 5.5 and GPT-6 Sol, after a calibration check on each | Decided |
+| Output schema | Submit tool with `faultPresent`, `causalCategory` from a fixed list, canonical `component`, `evidence`, `confidence`, `remediation` | Decided |
+| CI dependencies | Locked on the managed developer machine through CFS; GitHub-hosted runners install from public registries with hashes required and never re-resolve | Decided; export and check not built |
+| Trial hosts | Pilot on the developer laptop, kept awake on power. Scored campaign on one to three non-burstable Linux Azure VMs, one trial at a time each, each passing the determinism suite; harness shipped as a digest-pinned image built through CFS | Decided; VMs not provisioned |
 | Kubernetes target | `ryanw-aks` / `ryanw-rg` / Test account | User-selected; access/setup unverified |
 | Package source | CFS proxy only, single index, installed at image build time | Required; machine configuration verified |
-| Go modules | Public proxy at build time | Declared exception; no internal proxy reachable; sealed dependency location unresolved |
+| Go modules | Public proxy at build time | Declared exception; no internal proxy reachable; sealed dependency location deferred to Phase 4, where it applies to every Astronomy Shop language |
 | Python runtime | 3.12 | `>=3.12,<3.13` is a compatibility range; pin the harness image and patch version by digest before scored runs |
 | Dependency pins | `inspect-ai==0.3.263`, `github-copilot-sdk==1.0.13` | Verified installable via CFS |
 | Agent CLI runtime | SDK-pinned CLI, not the host CLI | Recommended; both pairings verified working |
 | Shell tool | Denied by default; permitted only inside the runtime sandbox, verified per command | Required; permission API cannot confine shell; runtime sandbox denied every executed escape in one spike on one pin; write confinement shown, read confinement partial |
 | Fixture documentation | Neutral README and healthy manifest defaults | Required; current demo files disclose the incident |
-| Human review | Optional, blinded, separate from deterministic score | Recommended |
+| Astronomy Shop images | `ghcr.io`, pinned by digest | Declared exception; digests not yet recorded |
+| Human review | Repository owner reviews a random 10 percent of graded transcripts, arm labels stripped; separate from the deterministic score; 95 percent agreement required | Decided |
 
-Before Phase 1 implementation, choose the initial models, exact budgets, and the structured output schema. The Copilot SDK drives its own pinned CLI unless explicitly pointed at another binary; pinning the SDK-supplied CLI is preferred because it removes host machine state from the reproducibility surface, and both versions are recorded separately so a result cannot be misattributed. Before Phase 5, verify Azure access and select the Kubernetes/Radius deployment configuration.
+Models, budgets, and the output schema are decided above. The Copilot SDK drives its own pinned CLI unless explicitly pointed at another binary; pinning the SDK-supplied CLI is preferred because it removes host machine state from the reproducibility surface, and both versions are recorded separately so a result cannot be misattributed. Before Phase 5, verify Azure access and select the Kubernetes/Radius deployment configuration.
 
 ## What this experiment can and cannot claim
 
 ### It can claim
 
-- The intention-to-treat effect of a frozen fully Radius-enabled repository versus a frozen native repository for the tested Copilot model/runtime and benchmark tasks.
+- The intention-to-treat effect of a frozen fully Radius-enabled repository versus a frozen native repository, and versus a native repository with a hand-written architecture document, for the tested Copilot model/runtime and incident set.
 - Per-scenario differences in validated success, efficiency, recovery, and safety.
 - The observed one-time Radius preparation cost and a transparent amortization estimate.
 - After factorial ablations, benchmark-specific graph, skills, and interaction effects.
@@ -966,7 +1059,8 @@ Before Phase 1 implementation, choose the initial models, exact budgets, and the
 ### It cannot claim
 
 - Isolated raw LLM quality independent of the Copilot harness.
-- A graph-only causal effect from the primary two-condition campaign.
+- A graph-only causal effect from the primary campaign.
+- Results for applications much smaller or larger than the Astronomy Shop, or for incident classes outside the tested set.
 - General intelligence, universal cloud-debugging ability, or benefit for all repositories.
 - Provider superiority from incomparable token/cost accounting.
 - Production safety from sandbox performance.
