@@ -428,7 +428,13 @@ def test_the_overlapping_pairs_are_separated_by_origin():
     assert "inside the database engine" in definitions["slow_database"]
     assert "its own locks" in definitions["slow_database"]
     assert "in-process" in definitions["lock_contention"]
-    assert "while memory remains" in definitions["garbage_collection"]
+    # A leak raises GC activity, so the GC definition has to disclaim it by
+    # name or the two injectors land in both categories.
+    assert "rather than by a leak" in definitions["garbage_collection"]
+    assert "memory_exhaustion" in definitions["garbage_collection"]
+    # The cgroup injector throttles rather than adding demand, so a definition
+    # written only as "work exceeds CPU" would exclude the fault we inject.
+    assert "CPU limit set too low" in definitions["cpu_saturation"]
 
 
 def test_component_is_defined_by_what_must_change():

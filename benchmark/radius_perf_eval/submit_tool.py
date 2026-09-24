@@ -64,17 +64,17 @@ __all__ = [
 CATEGORY_DEFINITIONS: Mapping[str, str] = MappingProxyType(
     {
         "cpu_saturation": (
-            "the component's work exceeds the CPU available to it, so requests "
-            "wait for the processor"
+            "compute demand exceeds the CPU available to a service, including a "
+            "CPU limit set too low, so requests wait for the processor"
         ),
         "memory_exhaustion": (
             "the component runs short of memory -- limit reached, out-of-memory "
             "kill, swapping, or unbounded growth"
         ),
         "garbage_collection": (
-            "the managed runtime's collector is itself consuming the time, "
-            "through pause time or collector CPU, while memory remains "
-            "sufficient"
+            "runtime GC pauses or GC CPU overhead dominate, caused by collector "
+            "behaviour or explicit collection rather than by a leak; a leak is "
+            "memory_exhaustion"
         ),
         "dependency_latency": (
             "a call to a non-database downstream service, or the network path "
