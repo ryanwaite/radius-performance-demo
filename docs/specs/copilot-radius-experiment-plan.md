@@ -53,7 +53,7 @@ Causal claims about graph access require the later graph-by-skills factorial abl
 | Radius skills | None | None | Generic, repository-scoped procedural skills |
 | Scenario-specific hints | None | None | None |
 
-Arm C is an active control. It answers the first question a skeptic will ask: does Radius beat a well-written description of the architecture? Without it, a Radius effect could mean only that any architecture description helps. The document in arm C states the same facts the Radius graph encodes: services, dependencies, endpoints, and where each is defined in source. Someone who has not seen the incidents writes it. Its length is within 20 percent of the Radius additions, measured in tokens, and it passes the same leakage scan. The prompt does not mention it.
+Arm C is an active control. It answers the first question a skeptic will ask: does Radius beat a well-written description of the architecture? Without it, a Radius effect could mean only that any architecture description helps. The document in arm C states the same facts the Radius graph encodes: services, dependencies, endpoints, and where each is defined in source. A fresh Copilot session writes it, given only the Astronomy Shop source and the list of facts the Radius graph encodes. It never sees this plan, the incident set, or the injectors, and its model, prompt, and transcript are kept with the fixture. Its length is within 20 percent of the Radius additions, measured in tokens, and it passes the same leakage scan. The prompt does not mention it.
 
 The Radius-enabled fixture must describe the deployed application and how to use Radius. It must not encode incident answers, expected root causes, scenario thresholds, or scenario-specific remediation.
 
@@ -80,6 +80,19 @@ The task must not mention Radius, an application graph, cache, or the expected c
 > Operators are concerned that the application may not be meeting its service objective under the supplied workload. Using the repository and runtime evidence available to you, determine whether there is a problem. If there is, return the causal category, affected component or dependency, supporting evidence, confidence, and the smallest safe remediation. If there is not, say so and give the evidence. In remediation mode, implement and validate only the changes necessary to restore the objective without weakening health checks, tests, or source-of-truth guarantees.
 
 The prompt must not tell the agent which tool or repository artifact to inspect. It does not assert that a fault exists, because some trials are no-fault controls in which the correct answer is that there is none.
+
+The agent answers by calling a submit tool with fixed fields:
+
+| Field | Form |
+|---|---|
+| `faultPresent` | Boolean |
+| `causalCategory` | One value from a fixed list of about ten categories, the same list in every arm |
+| `component` | The affected service. Compose service names and Radius resource IDs are both accepted and mapped to one canonical name, so no arm fails on naming |
+| `evidence` | A list of citations, each naming a metric, trace, or log and what it showed |
+| `confidence` | A number from 0 to 1 |
+| `remediation` | The smallest safe change, as text |
+
+A trial that ends without a valid call to the submit tool scores as a failure.
 
 ## Follow-up factorial ablations
 
@@ -172,7 +185,9 @@ npm consumption uses the CFS proxy registry:
 registry=https://packagefeedproxy.microsoft.io/npm/
 ```
 
-From the approved managed developer machine, the CFS proxy serves per-package requests without a personal access token or credential provider. That access appears to depend on network context rather than per-user identity: an unauthenticated GitHub-hosted runner receives HTTP 401 from the same endpoint. Access from GitHub-hosted runners and other off-network build environments is therefore not established, and CI that installs benchmark dependencies needs either a CFS-capable runner or a prebuilt, digest-pinned benchmark test image. A dedicated Azure Artifacts feed would require authentication; the proxy avoids introducing a credential into the benchmark.
+From the approved managed developer machine, the CFS proxy serves per-package requests without a personal access token or credential provider. That access appears to depend on network context rather than per-user identity: an unauthenticated GitHub-hosted runner receives HTTP 401 from the same endpoint. Access from GitHub-hosted runners and other off-network build environments is therefore not established.
+
+CI therefore installs from the public registries, constrained to exactly what CFS served. Lockfiles record a hash of every package file, and CFS serves the same files as the upstream registries. Dependencies are resolved and locked only on the managed developer machine through CFS. CI installs from a hash-pinned requirements file exported from `uv.lock` without index URLs, from PyPI, with hash checking required; Go modules come from the public proxy and are checked against `go.sum`. CI never resolves versions afresh, fails if the exported file no longer matches `uv.lock`, and dependency-update bots are disabled. A file whose hash differs from the lock fails the install. Trials never install packages from CI. A dedicated Azure Artifacts feed would require authentication; the proxy avoids introducing a credential into the benchmark.
 
 ### Prohibited patterns
 
@@ -466,6 +481,7 @@ The same failure appears in the checks that guard the checks. Three cases from I
 - **Sign-off.** A trial cycle that crashed before its environment came up recorded one gate, none failed, and so it signed off. Sign-off now requires every declared gate to be recorded and passing, and names any gate that is missing.
 - **Environment preconditions of tests.** Nine driver tests documented as running without Docker passed only because a Docker daemon happened to be running. They failed when the daemon was stopped. A test that claims independence from a service is run with that service absent, in CI or before merge.
 - **Test collection.** CI stayed green while 119 Python tests were never collected, and the green result says nothing about them. CI reports the tests it did not collect, by module, beside the ones it ran.
+- **Documented commands.** A note told readers how to regenerate a file, and the command did not produce it; a documented output path had never been used; a documented default resolved somewhere else. A command in documentation is a claim. Before merge, someone runs it exactly as written and checks that it does what the text says. Where the command can run in CI, such as a regeneration script or a test invocation, CI runs it, so the text cannot drift from the code.
 
 ## Scenarios and task modes
 
@@ -488,7 +504,8 @@ The analysis generalizes over incidents, not over repeated runs of one incident.
 - Build 20 to 50 distinct incidents spanning resource saturation (CPU, memory, garbage collection), dependency latency (network delay, slow database, slow downstream service), queue backlog, cache failure, lock contention, partial error rates, and load surges.
 - Include incidents with a misleading correlated symptom, where the most visibly degraded component is not the cause.
 - Include no-fault controls in about 10 to 15 percent of trials. The correct answer is that there is no fault. They measure false alarms, which a benchmark of only faulty systems cannot see.
-- Prefer injectors that act outside the application source: cgroup CPU and memory limits, network delay and loss, proxy-injected latency, and database-level locks. The Astronomy Shop's own fault flags are implemented in its source under names such as `adHighCpu`, so an agent could find the answer by searching the code. An incident that uses a flag renames the flag and its code path to neutral names in the fixture, and keeps the flag service and its configuration out of the agent's reach.
+- Prefer injectors that act outside the application source: cgroup CPU and memory limits, network delay and loss, proxy-injected latency, and database-level locks.
+- The Astronomy Shop's own fault flags are implemented as deliberate misbehaviour in its source, under names such as `adHighCpu`. Renaming the flags would not hide a loop that burns CPU on purpose. The fault code is therefore removed from the source the agent sees, while the running containers keep the upstream images that contain it. The agent must diagnose these incidents from telemetry. Because the visible source no longer matches what runs, flag-driven incidents are used for diagnosis only; remediation trials use external injectors. The flag service's configuration and user interface are out of the agent's reach.
 - The Astronomy Shop and its fault flags are public and well documented, so a model may have memorized them. Randomized targets, hidden magnitudes, externally injected faults, and no-fault controls keep a memorized guess from scoring.
 
 ### Calibrating difficulty
@@ -503,7 +520,7 @@ A grader that passes a wrong answer produces a scored result that looks like a f
 - planted wrong answers must fail: the wrong component, the right component with the wrong mechanism, the correlated symptom, "no fault" when there is one, and a fault when there is none;
 - the evidence check must be deterministic. Cited evidence passes only if it names a metric, trace, or log that exists in the trial's captured telemetry and lies on the causal path the incident declares.
 
-During the pilot and the scored campaign, a person who does not know the arm reviews a random 10 percent of graded transcripts. The report states how often the reviewer and the grader agree. If they disagree on more than 5 percent of reviewed trials, the grader is fixed and the affected trials are regraded before any result is reported. Pilot review also reads transcripts for harness artifacts, refusals, and grader gaming.
+During the pilot and the scored campaign, the repository owner reviews a random 10 percent of graded transcripts without knowing the arm. The harness removes arm labels, the architecture document's name, and Radius file paths from the transcripts before review. A reader may still infer the arm from what the agent examined, and the report says so. The report states how often the reviewer and the grader agree. If they disagree on more than 5 percent of reviewed trials, the grader is fixed and the affected trials are regraded before any result is reported. Pilot review also reads transcripts for harness artifacts, refusals, and grader gaming.
 
 ### Catalog-application scenarios (harness development)
 
@@ -725,7 +742,7 @@ Incidents are the clusters. Outcomes for the same incident are correlated, so th
 Pilot:
 
 ```text
-about 10 incidents x 2 repetitions x 3 arms x 1 model = about 60 runs
+about 10 incidents x 2 repetitions x 3 arms x 2 models = about 120 runs
 ```
 
 The pilot checks mechanics, measures the native pass rate and ICC, calibrates difficulty, validates graders, and measures cost per run. Its results are not reported as findings.
@@ -937,8 +954,8 @@ Work, stage 1 (incident set and pilot):
 - Build its three fixtures under the Phase 0 rules, including neutral names for any flag-driven fault.
 - Port AIOpsLab's Astronomy Shop problems and add external injectors, hidden variants, misleading-symptom incidents, and no-fault controls.
 - Build a validator for each incident, with a reference diagnosis and planted wrong answers.
-- Select 2-3 explicit models available in the Copilot account.
-- Run the pilot, review transcripts, calibrate difficulty, and freeze the incident set.
+- Run the pilot on Claude Opus 5 and GPT-5.6 Sol, review transcripts, and calibrate difficulty.
+- Run a calibration check on the scored models, Claude Opus 5.5 and GPT-6 Sol, of about one run per incident per arm on seeds the scored campaign never reuses. Retune any incident outside the band, then freeze the set.
 - Run the power analysis and commit the pre-registered analysis plan.
 
 Exit criteria, stage 1:
@@ -998,33 +1015,36 @@ Exit criteria:
 | Orchestrator | Inspect AI | Recommended; version not selected |
 | Agent harness | GitHub Copilot SDK | Recommended; integration not implemented |
 | Environment | Docker Compose | Recommended for MVP |
-| Scored application | OpenTelemetry Astronomy Shop; catalog application for harness development only | Proposed |
-| Primary arms | Native, native with architecture document, fully Radius-enabled | Proposed |
-| Incident set | 20-50 distinct incidents, misleading-symptom incidents, and 10-15 percent no-fault controls, drawn from AIOpsLab and external injectors | Proposed; not built |
-| Smallest effect worth detecting | 15 percentage points | Proposed; sets the campaign size |
-| Analysis plan | Pre-registered before the scored campaign; incident-clustered model; Holm correction across co-primary contrasts | Proposed |
+| Scored application | OpenTelemetry Astronomy Shop; catalog application for harness development only | Decided |
+| Primary arms | Native, native with architecture document (written by a fresh Copilot session without the plan), fully Radius-enabled | Decided |
+| Incident set | 20-50 distinct incidents, misleading-symptom incidents, and 10-15 percent no-fault controls, drawn from AIOpsLab and external injectors; flag fault code removed from agent-visible source, flag faults diagnosis-only | Decided; not built |
+| Smallest effect worth detecting | 15 percentage points | Decided; sets the campaign size |
+| Analysis plan | Pre-registered before the scored campaign; incident-clustered model; Holm correction across co-primary contrasts | Decided; plan not yet written |
 | Session policy | Fresh cold session, memory off | Recommended |
-| Model selection | Explicit pinned model, no auto routing | Models unresolved |
+| Model selection | Explicit pinned model, no auto routing | Decided |
 | Parallelism | One agent, no fleet or subagents | Recommended |
 | First task mode | Diagnosis-only | Recommended |
 | Remediation | Apply bounded changes automatically only in sandbox after Phase 3 | Recommended |
 | Initial Radius data | Static graph, no telemetry overlay | Recommended |
 | Prompt | Neutral, no Radius/graph/cache/root-cause mention | Recommended |
 | Radius fixture | Frozen validated `app.bicep`, repo config, graph, IDs/source refs, generic skills | Required; not built |
-| Trial budgets | Fixed wall-clock, model/tool/token/AI-credit/cost caps | Exact values unresolved |
-| Models | 2-3 models available in the user's Copilot account | Unresolved |
+| Trial budgets | 30 minutes wall clock and 100 tool calls, whichever comes first; high reasoning effort; identical across arms; exhaustion scores as failure; token, AI-credit, and cost usage recorded | Decided; revisited once after the pilot |
+| Models | Pilot: Claude Opus 5 and GPT-5.6 Sol. Scored: Claude Opus 5.5 and GPT-6 Sol, after a calibration check on each | Decided |
+| Output schema | Submit tool with `faultPresent`, `causalCategory` from a fixed list, canonical `component`, `evidence`, `confidence`, `remediation` | Decided |
+| CI dependencies | Locked on the managed developer machine through CFS; GitHub-hosted runners install from public registries with hashes required and never re-resolve | Decided; export and check not built |
+| Trial hosts | Pilot on the developer laptop, kept awake on power. Scored campaign on one to three non-burstable Linux Azure VMs, one trial at a time each, each passing the determinism suite; harness shipped as a digest-pinned image built through CFS | Decided; VMs not provisioned |
 | Kubernetes target | `ryanw-aks` / `ryanw-rg` / Test account | User-selected; access/setup unverified |
 | Package source | CFS proxy only, single index, installed at image build time | Required; machine configuration verified |
-| Go modules | Public proxy at build time | Declared exception; no internal proxy reachable; sealed dependency location unresolved |
+| Go modules | Public proxy at build time | Declared exception; no internal proxy reachable; sealed dependency location deferred to Phase 4, where it applies to every Astronomy Shop language |
 | Python runtime | 3.12 | `>=3.12,<3.13` is a compatibility range; pin the harness image and patch version by digest before scored runs |
 | Dependency pins | `inspect-ai==0.3.263`, `github-copilot-sdk==1.0.13` | Verified installable via CFS |
 | Agent CLI runtime | SDK-pinned CLI, not the host CLI | Recommended; both pairings verified working |
 | Shell tool | Denied by default; permitted only inside the runtime sandbox, verified per command | Required; permission API cannot confine shell; runtime sandbox denied every executed escape in one spike on one pin; write confinement shown, read confinement partial |
 | Fixture documentation | Neutral README and healthy manifest defaults | Required; current demo files disclose the incident |
 | Astronomy Shop images | `ghcr.io`, pinned by digest | Declared exception; digests not yet recorded |
-| Human review | Optional, blinded, separate from deterministic score | Recommended |
+| Human review | Repository owner reviews a random 10 percent of graded transcripts, arm labels stripped; separate from the deterministic score; 95 percent agreement required | Decided |
 
-Before Phase 1 implementation, choose the initial models, exact budgets, and the structured output schema. The Copilot SDK drives its own pinned CLI unless explicitly pointed at another binary; pinning the SDK-supplied CLI is preferred because it removes host machine state from the reproducibility surface, and both versions are recorded separately so a result cannot be misattributed. Before Phase 5, verify Azure access and select the Kubernetes/Radius deployment configuration.
+Models, budgets, and the output schema are decided above. The Copilot SDK drives its own pinned CLI unless explicitly pointed at another binary; pinning the SDK-supplied CLI is preferred because it removes host machine state from the reproducibility surface, and both versions are recorded separately so a result cannot be misattributed. Before Phase 5, verify Azure access and select the Kubernetes/Radius deployment configuration.
 
 ## What this experiment can and cannot claim
 
