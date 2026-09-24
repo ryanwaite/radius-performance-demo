@@ -592,6 +592,125 @@ nothing in the driver noticed. Note that AC power sets `sleep 0` while battery s
 `PreventSystemSleep`. A suite-level suspension figure is also reported, since the
 per-cycle measurement cannot see a host that slept in the gap between cycles.
 
+### The host class decides which tolerances apply
+
+Tolerances are numbers fitted by measurement on one machine. Applying them to a
+different machine is not a small approximation; it is a measurement of one thing
+reported as a measurement of another. So the driver reads the machine's own facts and
+refuses to give a verdict on a machine it has no frozen bounds for.
+
+`hostclass.observe_host` reads the operating system and release, architecture, CPU
+model and logical core count, physical memory, the Docker engine version, the
+container runtime's kernel, core count and memory ceiling, whether that runtime is
+virtualised, and the Python patch version. Nothing is passed in by a caller. A label
+supplied from outside would be the one fact nobody measured, and it is the fact
+everything else keys on.
+
+Those facts produce two identifiers, and the distinction between them matters.
+
+The **class id** is the performance envelope: operating system, architecture, CPU
+model, core count, memory, and the container runtime's own core count and memory
+ceiling. It keys the frozen tolerance sets. On this laptop it resolves to
+`darwin-arm64-apple-m5-10c-32.0gib-docker-vm-10c-7.7gib`.
+
+That last part is not a typo. The laptop has 32 GiB, but containers run inside the
+Docker Desktop virtual machine, which was given 7.7 GiB. The workload cannot reach the
+laptop's memory, so classifying by it would describe a resource that does not exist
+from the container's point of view. Both numbers are in the class id because both
+constrain something.
+
+The **fingerprint** is the class id plus every patch-level version: operating system
+release, Docker engine, Python. These move on their own and are not part of the
+envelope. Between the merged holdout and the check that followed it, the Docker engine
+went from 29.7.2 to 29.8.0 and Python from 3.12.13 to 3.12.14, and the measured
+numbers did not move. Voiding a frozen set on a patch bump would mean refitting
+tolerances every time Homebrew runs, which in practice means nobody refits them and
+the refusal gets switched off.
+
+If no frozen set exists for the observed class, `exitCriterionMet` is false and
+`hostQualification.refusal` names the class that was seen and the classes that would
+have been accepted. It does not warn and continue. Borrowed bounds fail silently and
+look exactly like success.
+
+### A changed fingerprint blocks scored trials until it is re-checked
+
+Recording an identifier and never acting on it is decoration. The fingerprint carries
+a specific consequence, and it is deliberately not the same consequence as an unknown
+class:
+
+- An unknown **class** means there is nothing to measure against, so there is no
+  verdict.
+- A changed **fingerprint** means the bounds still apply, so there is still a verdict,
+  but nobody has checked that the version bump left the numbers where they were. So
+  scored trials refuse to start until someone checks.
+
+The check is short: at least three cycles against the unchanged frozen bounds. Passing
+it writes a re-qualification record, and the next run on that fingerprint is allowed to
+start scored trials. It is deliberately too short to fit new bounds with. The question
+it answers is "do the existing bounds still hold", not "what should the bounds be".
+
+The gate is evaluated against the records that existed before the suite began, so a run
+cannot clear its own gate. A blocked run that then passes reports both facts: that it
+started blocked, and that the next one will not be.
+
+Records are machine-local, in `~/.radius-perf-eval/qualifications.json` by default and
+overridable with `RADIUS_PERF_EVAL_QUALIFICATION_STORE`. They are not committed. A
+record is a statement about one physical machine; in the repository it would accumulate
+one entry per developer laptop and mean nothing on any of them.
+
+The catalog app's frozen set declares its fitted fingerprint as unknown, and that is
+not an oversight. The holdout at `0407638` ran before the driver recorded host facts,
+so its report contains no fingerprint and there is nothing to reconstruct one from.
+An unknown fitted fingerprint is treated as a mismatch, never as a match, so scored
+trials on the catalog app stay blocked until a three-cycle re-qualification records the
+real one. Writing today's fingerprint into the source to make the gate pass would
+assert something no artifact supports, and a test fails if anyone does.
+
+### Freezing the versions a fingerprint is made of
+
+Detection is the guarantee that actually holds, and it is tested. Prevention is worth
+attempting anyway, so a campaign is not interrupted by an update it could have
+declined. What follows is what is available on each host, including where nothing is.
+
+**On this laptop, there is no supported way to freeze the Docker Desktop version.**
+Docker's documented mechanism is an administrator settings file at
+`/Library/Application Support/com.docker.docker/admin-settings.json`:
+
+```json
+{
+  "configurationFileVersion": 2,
+  "disableUpdate": { "value": true, "locked": true }
+}
+```
+
+Settings management is a Docker Business feature and requires enforced sign-in. The
+account on this machine reports `PlanName: personal` with no organisations, so the file
+would be written and ignored. It is documented here rather than run, because a command
+in a README that silently does nothing is worse than an absent one: it converts an
+unsolved problem into an apparently solved one. Docker Desktop on a personal plan does
+not install an update without someone clicking through it, so during the pilot the
+control is a human one, declining the prompt. The enforcement is the fingerprint gate
+above, which does not depend on anyone remembering.
+
+**On the Linux virtual machines,** where the scored campaign runs, the versions can
+actually be pinned. These have not been run, because no virtual machine exists yet;
+they are recorded now so the qualification run performs them rather than inventing them
+under time pressure:
+
+```sh
+# Pin the Docker engine at its qualified version.
+sudo apt-mark hold docker-ce docker-ce-cli containerd.io \
+  docker-buildx-plugin docker-compose-plugin
+apt-mark showhold            # positive control: the five packages must be listed
+
+# Stop unattended upgrades from moving anything underneath a run.
+sudo systemctl disable --now unattended-upgrades.service
+systemctl is-enabled unattended-upgrades.service   # must print "disabled"
+```
+
+Each has a read-back command alongside it, because "I ran the disable command" and "it
+is disabled" are different claims, and only the second one is the one that matters.
+
 ### Power state is recorded, not gated
 
 `hostPower` records AC or battery, battery percentage, and any CPU speed limit, at

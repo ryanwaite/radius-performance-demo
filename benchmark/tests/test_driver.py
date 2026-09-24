@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import math
 import statistics
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -64,6 +65,15 @@ from radius_perf_eval.hostclass import (  # noqa: E402
     observe_host,
 )
 from radius_perf_eval.images import PinnedImage, is_digest  # noqa: E402
+from radius_perf_eval.qualification import (  # noqa: E402
+    MIN_REQUALIFICATION_CYCLES,
+    QualificationError,
+    Requalification,
+    compare_fingerprints,
+    evaluate_scored_readiness,
+    load_requalifications,
+    record_requalification,
+)
 from radius_perf_eval.incidents import (  # noqa: E402
     MYSQL_POOL_DELAY_V1,
     IncidentVerification,
@@ -2075,3 +2085,248 @@ class HostQualificationRefusalTests(unittest.TestCase):
                 self.assertEqual(tolerance_set.host_class, class_id)
                 self.assertTrue(tolerance_set.tolerances)
                 self.assertTrue(tolerance_set.fitted_at_commit)
+
+
+class FingerprintDriftTests(unittest.TestCase):
+    """The fingerprint is recorded, compared, and acted on.
+
+    An identifier that is written to a report and read by nothing is
+    decoration. These tests pin the three things that stop it being that: a
+    mismatch is named component by component, a mismatch blocks a scored
+    start, and a recorded re-qualification clears it.
+    """
+
+    def test_an_identical_fingerprint_matches_with_no_drift(self) -> None:
+        printed = derive_fingerprint(laptop_facts())
+        comparison = compare_fingerprints(printed, printed)
+        self.assertTrue(comparison.matches)
+        self.assertTrue(comparison.comparable)
+        self.assertEqual(comparison.drift, ())
+
+    def test_drift_names_the_component_that_moved(self) -> None:
+        fitted = derive_fingerprint(laptop_facts(python_version="3.12.13"))
+        observed = derive_fingerprint(laptop_facts(python_version="3.12.14"))
+        comparison = compare_fingerprints(observed, fitted)
+
+        self.assertFalse(comparison.matches)
+        self.assertTrue(comparison.comparable)
+        self.assertEqual(len(comparison.drift), 1)
+        entry = comparison.drift[0]
+        self.assertEqual(entry["component"], "pythonVersion")
+        self.assertEqual(entry["fittedOn"], "py3.12.13")
+        self.assertEqual(entry["observed"], "py3.12.14")
+
+    def test_several_components_can_drift_at_once(self) -> None:
+        fitted = derive_fingerprint(
+            laptop_facts(python_version="3.12.13", docker_engine_version="29.7.2")
+        )
+        observed = derive_fingerprint(laptop_facts())
+        comparison = compare_fingerprints(observed, fitted)
+        moved = {entry["component"] for entry in comparison.drift}
+        self.assertEqual(moved, {"dockerEngine", "pythonVersion"})
+
+    def test_an_unknown_fitted_fingerprint_is_a_mismatch_not_a_match(self) -> None:
+        """The dangerous default. Treating "we never recorded one" as "it has
+        not changed" would let the gate pass on exactly the hosts nobody has
+        ever checked."""
+        comparison = compare_fingerprints(derive_fingerprint(laptop_facts()), None)
+        self.assertFalse(comparison.matches)
+        self.assertFalse(comparison.comparable)
+
+
+class ScoredStartGateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.store = Path(tempfile.mkdtemp()) / "qualifications.json"
+        self.addCleanup(shutil.rmtree, self.store.parent, ignore_errors=True)
+
+    def test_an_unchanged_fingerprint_allows_a_scored_start(self) -> None:
+        facts = laptop_facts()
+        readiness = evaluate_scored_readiness(
+            facts,
+            fitted_fingerprint=derive_fingerprint(facts),
+            tolerances_resolved=True,
+            records=[],
+        )
+        self.assertTrue(readiness.allowed)
+        self.assertIn("unchanged", readiness.reason)
+
+    def test_a_changed_fingerprint_with_no_requalification_blocks(self) -> None:
+        """The positive control. If this ever passes, the gate is decoration."""
+        facts = laptop_facts()
+        readiness = evaluate_scored_readiness(
+            facts,
+            fitted_fingerprint=derive_fingerprint(
+                laptop_facts(python_version="3.12.13")
+            ),
+            tolerances_resolved=True,
+            records=[],
+        )
+        self.assertFalse(readiness.allowed)
+        self.assertIn("not re-qualified", readiness.reason)
+        self.assertIn("pythonVersion", readiness.reason)
+
+    def test_a_recorded_requalification_clears_the_block(self) -> None:
+        facts = laptop_facts()
+        record_requalification(
+            host_class=derive_class_id(facts),
+            fingerprint=derive_fingerprint(facts),
+            cycles=3,
+            suite_id="requal",
+            driver_commit="abc1234",
+            tolerances_fitted_at_commit="0407638",
+            path=self.store,
+        )
+        readiness = evaluate_scored_readiness(
+            facts,
+            fitted_fingerprint=derive_fingerprint(
+                laptop_facts(python_version="3.12.13")
+            ),
+            tolerances_resolved=True,
+            path=self.store,
+        )
+        self.assertTrue(readiness.allowed)
+        self.assertIn("re-qualified", readiness.reason)
+        self.assertIsNotNone(readiness.requalification)
+
+    def test_a_requalification_for_a_different_fingerprint_does_not_clear(self) -> None:
+        """A record is for one fingerprint. Matching on host class alone would
+        let a check of 3.12.13 vouch for 3.12.14."""
+        facts = laptop_facts()
+        record_requalification(
+            host_class=derive_class_id(facts),
+            fingerprint=derive_fingerprint(laptop_facts(python_version="3.12.13")),
+            cycles=3,
+            suite_id="requal",
+            driver_commit="abc1234",
+            tolerances_fitted_at_commit="0407638",
+            path=self.store,
+        )
+        readiness = evaluate_scored_readiness(
+            facts,
+            fitted_fingerprint=None,
+            tolerances_resolved=True,
+            path=self.store,
+        )
+        self.assertFalse(readiness.allowed)
+
+    def test_a_short_requalification_is_refused_at_write_time(self) -> None:
+        with self.assertRaises(QualificationError):
+            record_requalification(
+                host_class="anything",
+                fingerprint="anything",
+                cycles=MIN_REQUALIFICATION_CYCLES - 1,
+                suite_id="s",
+                driver_commit="c",
+                tolerances_fitted_at_commit="f",
+                path=self.store,
+            )
+
+    def test_an_unresolved_host_class_blocks_regardless_of_fingerprint(self) -> None:
+        facts = laptop_facts()
+        readiness = evaluate_scored_readiness(
+            facts,
+            fitted_fingerprint=derive_fingerprint(facts),
+            tolerances_resolved=False,
+            records=[],
+        )
+        self.assertFalse(readiness.allowed)
+        self.assertIn("no frozen tolerance set", readiness.reason)
+
+    def test_an_unobserved_host_blocks(self) -> None:
+        readiness = evaluate_scored_readiness(
+            None, fitted_fingerprint="x", tolerances_resolved=True, records=[]
+        )
+        self.assertFalse(readiness.allowed)
+
+    def test_records_survive_a_round_trip_through_the_store(self) -> None:
+        record_requalification(
+            host_class="class-a",
+            fingerprint="class-a/os1/docker2/py3",
+            cycles=3,
+            suite_id="s1",
+            driver_commit="c1",
+            tolerances_fitted_at_commit="f1",
+            path=self.store,
+        )
+        record_requalification(
+            host_class="class-b",
+            fingerprint="class-b/os1/docker2/py3",
+            cycles=4,
+            suite_id="s2",
+            driver_commit="c2",
+            tolerances_fitted_at_commit="f2",
+            path=self.store,
+        )
+        loaded = load_requalifications(self.store)
+        self.assertEqual([r.suite_id for r in loaded], ["s1", "s2"])
+        self.assertEqual(loaded[1].cycles, 4)
+
+    def test_a_corrupt_store_raises_rather_than_reading_as_empty(self) -> None:
+        """An unreadable store that degrades to "no records" is indistinguishable
+        from a clean machine, and would block rather than mislead -- but a
+        store holding a malformed record could otherwise be silently skipped."""
+        self.store.parent.mkdir(parents=True, exist_ok=True)
+        self.store.write_text('{"requalifications": [{"hostClass": "a"}]}')
+        with self.assertRaises(QualificationError):
+            load_requalifications(self.store)
+
+    def test_an_absent_store_reads_as_no_records(self) -> None:
+        self.assertEqual(load_requalifications(self.store), [])
+
+
+class ScoredGateInReportTests(unittest.TestCase):
+    """The gate has to reach the report, and must not change the verdict."""
+
+    def test_a_drifted_fingerprint_still_gets_a_verdict(self) -> None:
+        report = build_report(
+            [_cycle(i) for i in range(1, 11)],
+            suite_id="s",
+            cycles=10,
+            host_facts=laptop_facts(),
+            prior_requalifications=[],
+        )
+        self.assertTrue(report["exitCriterionMet"])
+        self.assertFalse(report["hostQualification"]["scoredTrials"]["allowed"])
+
+    def test_the_report_lists_the_drift(self) -> None:
+        report = build_report(
+            [_cycle(i) for i in range(1, 11)],
+            suite_id="s",
+            cycles=10,
+            host_facts=laptop_facts(),
+            prior_requalifications=[],
+        )
+        comparison = report["hostQualification"]["fingerprintComparison"]
+        self.assertEqual(comparison["observed"], derive_fingerprint(laptop_facts()))
+        self.assertIsNone(comparison["fittedOn"])
+        self.assertFalse(comparison["comparable"])
+
+    def test_a_prior_requalification_reaches_the_report(self) -> None:
+        facts = laptop_facts()
+        report = build_report(
+            [_cycle(i) for i in range(1, 11)],
+            suite_id="s",
+            cycles=10,
+            host_facts=facts,
+            prior_requalifications=[
+                Requalification(
+                    host_class=derive_class_id(facts),
+                    fingerprint=derive_fingerprint(facts),
+                    recorded_at="2026-09-24T00:00:00+00:00",
+                    cycles=3,
+                    suite_id="requal",
+                    driver_commit="abc1234",
+                    tolerances_fitted_at_commit="0407638",
+                )
+            ],
+        )
+        scored = report["hostQualification"]["scoredTrials"]
+        self.assertTrue(scored["allowed"])
+        self.assertEqual(scored["requalification"]["suiteId"], "requal")
+
+    def test_the_catalog_set_declares_its_fitted_fingerprint_as_unknown(self) -> None:
+        """Pins the honest value. If someone later writes today's fingerprint
+        in here to make the gate pass, this fails and says why."""
+        self.assertIsNone(
+            FROZEN_TOLERANCE_SETS[LAPTOP_M5_CLASS_ID].fitted_fingerprint
+        )
