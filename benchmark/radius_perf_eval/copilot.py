@@ -50,6 +50,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .usage import CONTEXT_EVENT_TYPES
 from .events import EventRecorder, ToolCallTimeline
 
 __all__ = [
@@ -83,6 +84,13 @@ SUBAGENT_TOOLS: tuple[str, ...] = (
 #: the trial cap.
 RUNTIME_MIN_AI_CREDITS = 30.0
 
+#: The plan's scored-trial budget (plan defaults table): 30 minutes wall clock
+#: and 100 tool calls, whichever comes first, at high reasoning effort,
+#: identical across arms. Exhaustion scores as a failure.
+PLAN_WALL_CLOCK_MS = 30 * 60 * 1000.0
+PLAN_MAX_TOOL_CALLS = 100
+PLAN_REASONING_EFFORT = "high"
+
 #: Built-in agent types the runtime can spawn.
 #:
 #: The runtime rejects a ``"*"`` wildcard in ``excludedBuiltinAgents`` and SDK
@@ -109,6 +117,15 @@ class IsolationViolation(RuntimeError):
 
 class BudgetExceeded(RuntimeError):
     """Raised when a declared budget terminated the session."""
+
+
+class SandboxNotAppliedError(RuntimeError):
+    """Raised when the runtime sandbox could not be applied to a session.
+
+    Fails the trial rather than degrading to an unconfined run. A session that
+    silently continues without the sandbox produces evidence indistinguishable
+    from a confined run, which is the failure the plan's gate exists to catch.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -394,6 +411,7 @@ def isolated_session_kwargs(
     model: str,
     reasoning_effort: str | None = None,
     max_ai_credits: float | None = None,
+    tools: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Session options that disable memory, subagents, and auto routing.
 
@@ -468,6 +486,8 @@ def isolated_session_kwargs(
         kwargs["session_limits"] = {
             "max_ai_credits": max(max_ai_credits, RUNTIME_MIN_AI_CREDITS)
         }
+    if tools:
+        kwargs["tools"] = list(tools)
     return kwargs
 
 
@@ -489,6 +509,21 @@ class SessionBudget:
     max_model_requests: int | None = None
     max_tool_calls: int | None = None
     max_ai_credits: float | None = None
+
+    @classmethod
+    def plan_default(cls) -> "SessionBudget":
+        """The plan's scored-trial budget: 30 minutes or 100 tool calls.
+
+        Deliberately leaves ``max_model_requests`` unset. The plan caps tool
+        calls, not model calls, and adding an undeclared third cap would let a
+        trial terminate for a reason no arm agreed to -- which would show up as
+        a between-arm difference in exhaustion rate that reflects the harness
+        rather than the treatment.
+        """
+        return cls(
+            wall_clock_ms=PLAN_WALL_CLOCK_MS,
+            max_tool_calls=PLAN_MAX_TOOL_CALLS,
+        )
 
     def check(
         self,
@@ -597,6 +632,8 @@ class SpikeSession:
         reasoning_effort: str | None = None,
         allow_writes: bool = True,
         allow_shell: bool = False,
+        tools: list[Any] | None = None,
+        sandbox_settings: Any = None,
     ) -> None:
         self._client = client
         self._workspace = workspace
@@ -604,6 +641,12 @@ class SpikeSession:
         self._model = model
         self._budget = budget or SessionBudget()
         self._reasoning_effort = reasoning_effort
+        self._tools = list(tools or [])
+        self._sandbox_settings = sandbox_settings
+        self.sandbox_application: Any = None
+        self.prompts_sent = 0
+        self.context_events: list[dict[str, Any]] = []
+        self.tool_executions: list[dict[str, Any]] = []
         self.policy = IsolationPolicy(
             workspace_root=workspace.root,
             allow_writes=allow_writes,
@@ -713,7 +756,14 @@ class SpikeSession:
                 success=payload.get("success"),
                 agent_id=getattr(event, "agent_id", None),
             )
+            # Kept verbatim so the sandbox gate reads the runtime's own
+            # `sandboxApplied` telemetry rather than a harness re-derivation.
+            self.tool_executions.append(payload)
             self._check_budget()
+        elif event_type in CONTEXT_EVENT_TYPES:
+            # Emission unverified: no trial has yet filled a context window, so
+            # an empty list here is not evidence that compaction did not occur.
+            self.context_events.append({"type": event_type, "data": payload})
         elif event_type.startswith("subagent."):
             self.subagent_events += 1
             self._recorder.record(
@@ -735,6 +785,7 @@ class SpikeSession:
             model=self._model,
             reasoning_effort=self._reasoning_effort,
             max_ai_credits=self._budget.max_ai_credits,
+            tools=self._tools,
         )
         self._recorder.record("harness", "session.create.request", _redact(kwargs))
         self._session = await self._client.create_session(
@@ -747,12 +798,32 @@ class SpikeSession:
             "session.create.result",
             {"sessionId": self._session.session_id},
         )
+        if self._sandbox_settings is not None:
+            # Applied here, between create and the first prompt, because
+            # `create_session` exposes no `sandbox_config` parameter. The
+            # session exists unconfined for this window; nothing is prompted
+            # into it before the update lands, and `prompts_sent` is passed so
+            # the ordering is recorded as an observation rather than a claim.
+            from .sandbox import apply_sandbox
+
+            self.sandbox_application = await apply_sandbox(
+                self._session,
+                self._sandbox_settings,
+                recorder=self._recorder,
+                prompts_sent=self.prompts_sent,
+            )
+            if not self.sandbox_application.succeeded:
+                raise SandboxNotAppliedError(
+                    "sandbox configuration was not applied: "
+                    f"{self.sandbox_application.error}"
+                )
         return self._session
 
     async def run_prompt(self, prompt: str, *, timeout_s: float) -> SessionOutcome:
         """Send one prompt and wait for idle, budget stop, or timeout."""
         assert self._session is not None, "start() must be called first"
         started_ns = self._recorder.clock.elapsed_ns()
+        self.prompts_sent += 1
         self._recorder.record("harness", "agent.prompt", {"prompt": prompt})
 
         terminal_class = "validated_success"

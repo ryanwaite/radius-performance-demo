@@ -246,6 +246,142 @@ says so in `permissionHandlerBasis`.
 
 ---
 
+## Sandbox, budgets, and the submit tool (Increment 3)
+
+### The runtime sandbox is applied, and the trial fails if it is not
+
+`create_session` takes no `sandbox_config` parameter, so the configuration is
+applied through the experimental `session.rpc.options.update` immediately after
+the session exists and **before the first prompt**. That ordering is recorded
+as an observation — `apply_sandbox` is handed the harness's own `prompts_sent`
+counter rather than asserting the ordering it hopes for.
+
+The window between create and update is real and is not closed by this design.
+Nothing is prompted into the session during it, but the session does exist
+unconfined for that moment. Closing it needs a `sandbox_config` parameter on
+session creation, which the pinned SDK does not expose.
+
+The [plan's five conditions](../docs/specs/copilot-radius-experiment-plan.md)
+are enforced as follows.
+
+| Condition | Where |
+| --- | --- |
+| Applied before the first prompt | `SpikeSession.start`, recorded with `appliedBeforeFirstPrompt` |
+| Every tool execution carries `sandboxApplied` | `SandboxGate.observe_tool_execution` |
+| Write confinement claimed, read confinement not | `SandboxSettings` docstring; `/etc/hosts` stayed readable in the spike |
+| Probes the model cannot decline | `run_escape_probes` drives `session.rpc.tools.execute` directly |
+| Toolchain paths declared | `SandboxSettings.readonly_paths` |
+
+Three properties of the gate are worth stating, because each one is a way the
+check could have quietly stopped testing anything:
+
+* **`sandboxApplied` arrives as a string.** `"false"` is truthy in Python, so a
+  direct truth test would have confirmed every unconfined execution. The gate
+  compares against `"true"` and treats anything else as unconfirmed.
+* **Absent is not false.** A payload that reports nothing is recorded as `null`,
+  not as a denial, because "the runtime said no" and "the runtime said nothing"
+  are different findings.
+* **A gate with no executions does not pass.** "No execution was unconfined" is
+  vacuously true when nothing ran, so the result carries the observed and
+  confirmed counts and marks the no-evidence case `vacuous`.
+
+Escape probes run through the tool pipeline rather than through the model. This
+matters for two reasons: the model declines probes after a denial, which would
+make the check decay to nothing, and a tool-pipeline probe costs **zero model
+calls**. Ground truth is the filesystem — whether the file appeared, or whether
+the canary token reached the transcript — never the exit status. A `perl` write
+exited 0 during the spike while writing nothing.
+
+The probe set spans two classes, and the distinction is narrower than it looks.
+The `write-outside-variable` probe assembles the full path at runtime, so the
+complete target never appears as one token, but **the parent directory is still
+spelled out literally**. Only the base64 probes contain no path substring at
+all. `conceals_path` records which is which, and a test pins it so a partially
+literal probe cannot be relabelled as a concealed one.
+
+### Budgets
+
+30 minutes of wall clock or 100 tool calls, whichever comes first, at high
+reasoning effort, identical in every arm (`SessionBudget.plan_default`).
+Exhaustion terminates the trial and scores as a failure.
+
+`plan_default` deliberately leaves the model-request cap unset. The plan caps
+tool calls, not model calls, and an undeclared third cap would let trials end
+for a reason no arm agreed to — which would appear in the results as a
+between-arm difference in exhaustion rate caused by the harness rather than by
+the treatment.
+
+### The submit tool
+
+Fixed fields: `faultPresent`, `causalCategory`, `component`, `evidence`,
+`confidence`, `remediation`. The tool is **terminal on success**, so an accepted
+submission ends the trial on the agent's own answer. A rejected submission
+returns a failure, which leaves the loop running so the model can correct it.
+
+`causalCategory` is a closed list, proposed in the PR for checking against the
+plan's incident classes. `component` is deliberately **not** constrained to
+canonical names: enumerating them in the schema would hand every arm the answer
+key's vocabulary and leak the fixture's component list into the prompt. Instead
+both Compose service names and Radius resource IDs are accepted and mapped to a
+canonical name through **a table the fixture supplies**. The harness carries no
+built-in mapping, and a test scans the module namespace to prove it.
+
+Two decisions the brief did not specify:
+
+* **A no-fault submission must omit `causalCategory`, `component`, and
+  `remediation`.** A control trial that reports no fault cannot also name its
+  cause.
+* **Rejected attempts are retained and counted.** "Could not diagnose" and
+  "could not express" are different findings, and an arm that failed entirely on
+  rejected submissions would be a harness artefact rather than a weak treatment.
+
+A sandbox-gate failure marks the trial **invalid** rather than scoring it as a
+wrong answer, so a broken harness cannot masquerade as a weak arm.
+
+### Context window and compaction
+
+`maxPromptTokens` is normalized into `usage-normalized.json`, along with peak
+prompt tokens, `toolTokenCount`, and the headroom ratio.
+
+The ratio is reported twice. Under the `UNKNOWN` overlap policy it is not
+established whether `inputTokens` already includes `cacheReadTokens`, and that
+changes the real prompt size, so the harness records the runtime's own figure
+and the upper bound instead of guessing one. If a run reports several context
+limits, the smallest is used: a mid-run switch to a narrower window should not
+be reported at its most flattering.
+
+Compaction and truncation are captured as flags from `session.compaction_start`,
+`session.compaction_complete`, and `session.truncation`, with **emission
+unverified**. No trial has yet filled a 272k context window, so a zero count
+here says nothing about the SDK — it says our prompts were small. This is the
+opposite of the `requestSandboxBypass` case, where the harness created the
+condition and the field still stayed silent.
+
+`compaction_tokens_used` is recorded as **its own usage line** and is not folded
+into the trial totals. The SDK describes it as "aligned with assistant.usage
+format", meaning the compaction summary is itself a model call; whether that
+call *also* appears as an `assistant.usage` event is unknown. Folding it in
+would double count if it does, and ignoring it would undercount if it does not.
+
+#### The forced-compaction control (designed, not run)
+
+Before any report states compaction rates, one compaction must be forced on
+each scored model pin, so that a zero is a measurement rather than a silence.
+
+`session.rpc.history.compact` triggers compaction directly, which makes the
+control far cheaper than filling a context window to 200k tokens. Its `Trigger`
+enum carries `MANUAL`, and the SDK persists an organically triggered compaction
+**without trigger attribution**, so a control-induced compaction is
+distinguishable from a real one by `trigger == "manual"` against an absent
+trigger. `collect_compaction` counts the two separately.
+
+The limit of this control must be stated with its result: it proves the harness
+**captures** compaction events. It does not prove that organic compaction fires
+at any particular threshold. Establishing that still needs a filled context
+window, which is why the live run waits on the user.
+
+---
+
 ## Compose trial driver (Increment 2)
 
 This package builds and destroys the environment that a scored benchmark trial runs
