@@ -18,6 +18,7 @@ import tempfile
 import time
 import types
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -54,6 +55,14 @@ from radius_perf_eval.checks import (  # noqa: E402
     redact_env,
     summarise_problems,
 )
+from radius_perf_eval.hostclass import (  # noqa: E402
+    HostClassError,
+    HostFacts,
+    derive_class_id,
+    derive_fingerprint,
+    gibibytes,
+    observe_host,
+)
 from radius_perf_eval.images import PinnedImage, is_digest  # noqa: E402
 from radius_perf_eval.incidents import (  # noqa: E402
     MYSQL_POOL_DELAY_V1,
@@ -82,7 +91,10 @@ from radius_perf_eval.telemetry import HTTP_LATENCY_QUANTILE, TelemetryWindow  #
 from radius_perf_eval.trials import (  # noqa: E402
     DECLARED_TOLERANCES,
     DRIFT_SENSITIVE_METRICS,
+    FROZEN_TOLERANCE_SETS,
     INCIDENT_PROFILE,
+    ToleranceSet,
+    LAPTOP_M5_CLASS_ID,
     MAX_ERROR_RATE,
     MAX_HOST_SUSPENSION_SECONDS,
     MAX_STALL_RATE,
@@ -95,6 +107,7 @@ from radius_perf_eval.trials import (  # noqa: E402
     host_power_state,
     parse_power_state,
     host_suspension_seconds,
+    resolve_tolerance_set,
     suite_provenance,
     summarise,
 )
@@ -834,18 +847,40 @@ def _cycle(index: int, *, stalls: float = 0.0, excursions: float = 0.0, ok: bool
     )
 
 
-class ReportGenerationTests(unittest.TestCase):
-    """Exercise the whole report path, including the branches only a stall reaches.
+def laptop_facts(**overrides) -> HostFacts:
+    """The host class the catalog-app tolerances were actually fitted on.
 
-    The stall block crashed on a field name that CycleResult does not define,
-    and every unit test passed anyway, because none of them built a cycle with
-    a nonzero stall count. Testing the detector was not the same as testing
-    the thing that reports it.
+    Built from the values `observe_host` read off that machine, so a test that
+    resolves tolerances is resolving the same class a real run would. The
+    asserted class id is checked against `derive_class_id` in
+    `HostClassTests`, so this fixture cannot drift from the derivation it
+    stands in for.
     """
+    base = dict(
+        os_name="Darwin",
+        os_release="27.2.0",
+        arch="arm64",
+        cpu_model="Apple M5",
+        cpu_cores=10,
+        memory_bytes=34359738368,
+        docker_engine_version="29.8.0",
+        docker_operating_system="Docker Desktop",
+        docker_kernel="7.0.12-linuxkit",
+        docker_arch="aarch64",
+        docker_cpus=10,
+        docker_memory_bytes=8319504384,
+        docker_virtualized=True,
+        docker_virtualization_evidence="container runtime reports 'linuxkit'",
+        python_version="3.12.14",
+    )
+    base.update(overrides)
+    return HostFacts(**base)
 
+
+class ReportGenerationTests(unittest.TestCase):
     def test_report_builds_with_a_stall_present(self) -> None:
         cycles = [_cycle(i) for i in range(1, 10)] + [_cycle(10, stalls=1.0)]
-        report = build_report(cycles, suite_id="suite", cycles=10)
+        report = build_report(cycles, suite_id="suite", cycles=10, host_facts=laptop_facts())
 
         observations = report["stallBudget"]["observations"]
         self.assertEqual(len(observations), 1)
@@ -857,13 +892,16 @@ class ReportGenerationTests(unittest.TestCase):
         # The report is written to disk; a value that cannot be encoded fails
         # just as completely as an AttributeError.
         cycles = [_cycle(i) for i in range(1, 10)] + [_cycle(10, stalls=3.0)]
-        report = build_report(cycles, suite_id="suite", cycles=10)
+        report = build_report(cycles, suite_id="suite", cycles=10, host_facts=laptop_facts())
         encoded = json.dumps(report, sort_keys=True, default=str)
         self.assertIn("stallBudget", encoded)
 
     def test_clean_run_reports_no_observations(self) -> None:
         report = build_report(
-            [_cycle(i) for i in range(1, 11)], suite_id="suite", cycles=10
+            [_cycle(i) for i in range(1, 11)],
+            suite_id="suite",
+            cycles=10,
+            host_facts=laptop_facts(),
         )
         self.assertEqual(report["stallBudget"]["observations"], [])
         self.assertTrue(report["stallBudget"]["withinBudget"])
@@ -871,13 +909,13 @@ class ReportGenerationTests(unittest.TestCase):
     def test_stall_budget_fails_when_breached(self) -> None:
         # 8 stalls in a 640-request window is 1.25%, above the 0.5% bound.
         cycles = [_cycle(i) for i in range(1, 10)] + [_cycle(10, stalls=8.0)]
-        report = build_report(cycles, suite_id="suite", cycles=10)
+        report = build_report(cycles, suite_id="suite", cycles=10, host_facts=laptop_facts())
         self.assertFalse(report["stallBudget"]["withinBudget"])
         self.assertFalse(report["exitCriterionMet"])
 
     def test_absolute_excursions_are_reported_alongside_relative_stalls(self) -> None:
         cycles = [_cycle(i) for i in range(1, 10)] + [_cycle(10, stalls=1.0, excursions=1.0)]
-        report = build_report(cycles, suite_id="suite", cycles=10)
+        report = build_report(cycles, suite_id="suite", cycles=10, host_facts=laptop_facts())
         totals = report["stallBudget"]["absoluteExcursions"]["totals"]
         self.assertEqual(totals["incident.excursionCount"], 1)
         thresholds = report["stallBudget"]["absoluteExcursions"]["thresholdsSeconds"]
@@ -891,13 +929,17 @@ class ReportGenerationTests(unittest.TestCase):
             cycles=10,
             setup_cycles=[{"runId": "suite-setup-c00", "ok": True, "role": "image-acquisition"}],
             warmups=[{"runId": "suite-warmup-c01", "ok": True, "role": "discarded-warmup"}],
+            host_facts=laptop_facts(),
         )
         self.assertEqual(len(report["unmeasured"]["setupCycles"]), 1)
         self.assertEqual(len(report["unmeasured"]["warmupCycles"]), 1)
 
     def test_gate_definition_is_pre_registered_in_the_report(self) -> None:
         report = build_report(
-            [_cycle(i) for i in range(1, 11)], suite_id="suite", cycles=10
+            [_cycle(i) for i in range(1, 11)],
+            suite_id="suite",
+            cycles=10,
+            host_facts=laptop_facts(),
         )
         pre = report["stallBudget"]["preRegistration"]
         self.assertEqual(pre["stallFactor"], 3.0)
@@ -905,7 +947,7 @@ class ReportGenerationTests(unittest.TestCase):
 
     def test_failed_cycle_does_not_meet_exit_criterion(self) -> None:
         cycles = [_cycle(i) for i in range(1, 10)] + [_cycle(10, ok=False)]
-        report = build_report(cycles, suite_id="suite", cycles=10)
+        report = build_report(cycles, suite_id="suite", cycles=10, host_facts=laptop_facts())
         self.assertFalse(report["exitCriterionMet"])
 
 
@@ -1082,11 +1124,11 @@ class HostSuspensionTests(unittest.TestCase):
         """Positive control for the gate, not just the arithmetic: a suite
         that is otherwise perfect must still fail on a suspended cycle."""
         clean = [_cycle(i) for i in (1, 2)]
-        report = build_report(clean, suite_id="s", cycles=2)
+        report = build_report(clean, suite_id="s", cycles=2, host_facts=laptop_facts())
         self.assertTrue(report["hostSuspension"]["hostAwakeThroughout"])
 
         clean[1].host_suspension_seconds = 5460.0
-        suspended = build_report(clean, suite_id="s", cycles=2)
+        suspended = build_report(clean, suite_id="s", cycles=2, host_facts=laptop_facts())
         self.assertFalse(suspended["hostSuspension"]["hostAwakeThroughout"])
         self.assertFalse(suspended["exitCriterionMet"])
         self.assertEqual(
@@ -1391,7 +1433,10 @@ class DaemonVersionCaptureTests(unittest.TestCase):
         trials_module.daemon_info = lambda: (_ for _ in ()).throw(RuntimeError("down"))
         try:
             report = build_report(
-                [_cycle(i) for i in range(1, 11)], suite_id="s", cycles=10
+                [_cycle(i) for i in range(1, 11)],
+                suite_id="s",
+                cycles=10,
+                host_facts=laptop_facts(),
             )
         finally:
             trials_module.daemon_info = original
@@ -1816,3 +1861,217 @@ class EnvironmentCheckCoverageTests(unittest.TestCase):
         gate, payload = self._run_check({"A": "1"}, {"A": "2"})
         self.assertFalse(gate.passed)
         self.assertEqual(payload["mismatched"], ["A"])
+
+
+class HostClassTests(unittest.TestCase):
+    """The host class must come from observation and must refuse the unknown.
+
+    The mechanism being tested is not "can we build a string". It is that a
+    machine nobody fitted tolerances on cannot obtain a verdict, and that no
+    caller can talk its way into one.
+    """
+
+    def test_the_fixture_matches_the_derivation(self) -> None:
+        """Without this the laptop fixture could drift from `derive_class_id`
+        and every tolerance-resolution test below would be testing a class id
+        that no real run ever produces."""
+        self.assertEqual(derive_class_id(laptop_facts()), LAPTOP_M5_CLASS_ID)
+
+    def test_the_fitted_class_has_a_frozen_set(self) -> None:
+        self.assertIn(LAPTOP_M5_CLASS_ID, FROZEN_TOLERANCE_SETS)
+
+    def test_a_different_machine_is_a_different_class(self) -> None:
+        """Each envelope fact must move the class, because each one moves the
+        performance envelope. A class that ignored core count would let bounds
+        fitted on ten cores judge a two-core machine."""
+        for field, value in (
+            ("os_name", "Linux"),
+            ("arch", "x86_64"),
+            ("cpu_model", "Intel Xeon Platinum 8370C"),
+            ("cpu_cores", 8),
+            ("memory_bytes", 68719476736),
+            ("docker_cpus", 8),
+            ("docker_memory_bytes", 34359738368),
+            ("docker_virtualized", False),
+        ):
+            with self.subTest(field=field):
+                other = derive_class_id(laptop_facts(**{field: value}))
+                self.assertNotEqual(other, LAPTOP_M5_CLASS_ID)
+
+    def test_patch_versions_do_not_change_the_class(self) -> None:
+        """Deliberate, and backed by measurement: the engine moved 29.7.2 to
+        29.8.0 and Python 3.12.13 to 3.12.14 between the holdout and a later
+        check, and the numbers did not move. Patch drift is reported through
+        the fingerprint instead, so it stays visible without crying wolf."""
+        drifted = laptop_facts(
+            os_release="27.3.0", docker_engine_version="30.0.1", python_version="3.12.20"
+        )
+        self.assertEqual(derive_class_id(drifted), LAPTOP_M5_CLASS_ID)
+        self.assertNotEqual(derive_fingerprint(drifted), derive_fingerprint(laptop_facts()))
+
+    def test_the_fingerprint_contains_the_patch_versions(self) -> None:
+        fingerprint = derive_fingerprint(laptop_facts())
+        self.assertIn("docker29.8.0", fingerprint)
+        self.assertIn("py3.12.14", fingerprint)
+        self.assertIn("os27.2.0", fingerprint)
+
+    def test_an_unreadable_fact_refuses_classification(self) -> None:
+        """A missing fact must not become a default. An unread core count
+        silently becoming 0 would produce a stable, meaningless class id that
+        someone could then freeze tolerances against."""
+        for field in ("cpu_model", "cpu_cores", "memory_bytes", "docker_memory_bytes"):
+            with self.subTest(field=field):
+                with self.assertRaises(HostClassError):
+                    derive_class_id(laptop_facts(**{field: None}))
+
+    def test_virtualization_is_detected_with_evidence(self) -> None:
+        facts = observe_host(
+            docker_info={
+                "ServerVersion": "29.8.0",
+                "OperatingSystem": "Docker Desktop",
+                "KernelVersion": "7.0.12-linuxkit",
+                "Architecture": "aarch64",
+                "NCPU": "10",
+                "MemTotal": "8319504384",
+            }
+        )
+        self.assertTrue(facts.docker_virtualized)
+        self.assertIn("linuxkit", facts.docker_virtualization_evidence)
+
+    def test_a_linux_engine_on_a_linux_host_is_not_virtualized(self) -> None:
+        """The Azure case. It must land in a different class from the laptop,
+        which is the entire point of the mechanism."""
+        facts = observe_host(
+            docker_info={
+                "ServerVersion": "27.1.1",
+                "OperatingSystem": "Ubuntu 22.04.4 LTS",
+                "KernelVersion": "6.5.0-1018-azure",
+                "Architecture": "x86_64",
+                "NCPU": "8",
+                "MemTotal": "34359738368",
+            }
+        )
+        if facts.os_name == "Linux":
+            self.assertIs(facts.docker_virtualized, False)
+        else:
+            # Observed from macOS, where a virtual machine is always present
+            # even when the engine did not advertise one, so the honest answer
+            # is unknown rather than False.
+            self.assertIsNone(facts.docker_virtualized)
+
+    def test_gibibytes_rounds_for_display_only(self) -> None:
+        self.assertEqual(gibibytes(34359738368), 32.0)
+        self.assertEqual(gibibytes(8319504384), 7.7)
+        self.assertIsNone(gibibytes(None))
+
+
+class HostQualificationRefusalTests(unittest.TestCase):
+    """An unknown host class must fail, not pass and not skip.
+
+    This is the positive control the brief asked for. The failure it guards
+    against is the quiet one: bounds fitted on a laptop being applied to a
+    cloud virtual machine and producing a verdict that looks exactly like a
+    real one.
+    """
+
+    def test_a_known_host_class_resolves(self) -> None:
+        """Control for every test below. Without it, they could all pass
+        because resolution never works rather than because it refuses."""
+        resolved, audit = resolve_tolerance_set(laptop_facts())
+        self.assertIsNotNone(resolved)
+        self.assertTrue(audit["resolved"])
+        self.assertIsNone(audit["refusal"])
+        self.assertEqual(audit["observedClass"], LAPTOP_M5_CLASS_ID)
+
+    def test_an_unknown_host_class_refuses(self) -> None:
+        resolved, audit = resolve_tolerance_set(
+            laptop_facts(cpu_model="Intel Xeon Platinum 8370C", cpu_cores=8)
+        )
+        self.assertIsNone(resolved)
+        self.assertFalse(audit["resolved"])
+        self.assertIn("no frozen tolerance set", audit["refusal"])
+
+    def test_an_unknown_host_class_fails_the_exit_criterion(self) -> None:
+        """The refusal has to reach the verdict, not just the audit block."""
+        cycles = [_cycle(i) for i in range(1, 11)]
+        unknown = laptop_facts(cpu_model="Neoverse-N2", cpu_cores=16)
+
+        known_report = build_report(
+            cycles, suite_id="s", cycles=10, host_facts=laptop_facts()
+        )
+        unknown_report = build_report(cycles, suite_id="s", cycles=10, host_facts=unknown)
+
+        self.assertTrue(known_report["exitCriterionMet"])
+        self.assertFalse(unknown_report["exitCriterionMet"])
+        self.assertIn("no frozen tolerance set", unknown_report["hostQualification"]["refusal"])
+
+    def test_an_unobserved_host_fails_the_exit_criterion(self) -> None:
+        report = build_report(
+            [_cycle(i) for i in range(1, 11)], suite_id="s", cycles=10, host_facts=None
+        )
+        self.assertFalse(report["exitCriterionMet"])
+        self.assertIn("not observed", report["hostQualification"]["refusal"])
+
+    def test_refusal_does_not_leave_an_empty_tolerance_list_passing(self) -> None:
+        """`all([])` is True, so a refused run would have satisfied the
+        tolerance clause vacuously and failed only by luck elsewhere. The
+        report must contain no tolerance entries and the verdict must be false
+        for that reason, not despite it."""
+        report = build_report(
+            [_cycle(i) for i in range(1, 11)], suite_id="s", cycles=10, host_facts=None
+        )
+        self.assertEqual(report["tolerances"], [])
+        self.assertTrue(all(entry["withinTolerance"] for entry in report["tolerances"]))
+        self.assertFalse(report["hostQualification"]["verdictPossible"])
+        self.assertFalse(report["exitCriterionMet"])
+
+    def test_a_registered_class_with_no_bounds_still_refuses(self) -> None:
+        """This is the case the second half of `verdict_possible` exists for,
+        and the only case that distinguishes it from the first half.
+
+        A class present in the registry but carrying an empty tolerance tuple
+        resolves successfully and then checks nothing. Without this test both
+        halves of the condition could be deleted one at a time with every test
+        still green, which is how the guard was written the first time.
+        """
+        empty_class = "test-only-empty-set"
+        FROZEN_TOLERANCE_SETS[empty_class] = ToleranceSet(
+            host_class=empty_class,
+            description="a registry entry with no bounds in it",
+            fitted_on="never fitted",
+            fitted_at_commit="none",
+            tolerances=(),
+            max_error_rate=MAX_ERROR_RATE,
+            max_stall_rate=MAX_STALL_RATE,
+        )
+        try:
+            with unittest.mock.patch(
+                "radius_perf_eval.trials.derive_class_id", return_value=empty_class
+            ):
+                report = build_report(
+                    [_cycle(i) for i in range(1, 11)],
+                    suite_id="s",
+                    cycles=10,
+                    host_facts=laptop_facts(),
+                )
+        finally:
+            del FROZEN_TOLERANCE_SETS[empty_class]
+
+        self.assertTrue(report["hostQualification"]["resolved"])
+        self.assertFalse(report["hostQualification"]["verdictPossible"])
+        self.assertIn("nothing to check", report["hostQualification"]["refusal"])
+        self.assertFalse(report["exitCriterionMet"])
+
+    def test_the_audit_names_the_classes_it_would_have_accepted(self) -> None:
+        _, audit = resolve_tolerance_set(laptop_facts(cpu_cores=4))
+        self.assertIn(LAPTOP_M5_CLASS_ID, audit["knownHostClasses"])
+        self.assertIn("facts", audit)
+
+    def test_every_frozen_set_is_keyed_by_its_own_host_class(self) -> None:
+        """A set filed under the wrong key would be applied to the wrong
+        machine, which is the exact failure this module exists to prevent."""
+        for class_id, tolerance_set in FROZEN_TOLERANCE_SETS.items():
+            with self.subTest(class_id=class_id):
+                self.assertEqual(tolerance_set.host_class, class_id)
+                self.assertTrue(tolerance_set.tolerances)
+                self.assertTrue(tolerance_set.fitted_at_commit)
