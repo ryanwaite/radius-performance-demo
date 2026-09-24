@@ -62,14 +62,52 @@ compliance is a *verified property* recorded in every run's provenance rather
 than an assumption. `tests/test_versions.py` fails if it regresses.
 
 CFS quarantine lag means pins must be chosen from what CFS actually serves,
-not from a public registry listing.
+not from a public registry listing. `uv` itself is pinned at 0.12.15 for this
+reason: 0.12.18 exists publicly but CFS does not serve it yet.
+
+### CI installs from public PyPI, by hash
+
+GitHub-hosted runners cannot reach CFS. It authorises by **network context
+rather than by credential** and returns 401 there, so adding a token would not
+fix it. CI therefore installs from public PyPI — using hashes exported from the
+CFS-resolved lock.
+
+That works because CFS serves byte-identical artifacts, so a hash minted
+against CFS validates against pythonhosted. This is checked, not assumed:
+
+```bash
+cd benchmark
+python3 tools/verify_lock_hashes.py
+```
+
+It asserts that every hash in `requirements-ci.txt` is a digest public PyPI
+publishes for that exact version, and fails otherwise. At the time of writing
+it passed for all 446 hashes across 88 packages. It compares published metadata
+and downloads no artifacts, so it runs on networks that cannot reach
+`files.pythonhosted.org`.
+
+Regenerate `requirements-ci.txt` whenever `uv.lock` changes, from `benchmark/`:
+
+```bash
+uv export --frozen --offline --format requirements.txt --all-groups --no-emit-project --output-file requirements-ci.txt
+```
+
+Commit the result. `--frozen` forbids re-resolution and `--offline` forbids
+reaching an index, so the export reflects the lock and nothing else. The file
+records this command in its own header, so the committed file states how to
+reproduce it.
+
+CI runs the identical command and fails if the committed file differs, which
+catches a lock change that skipped this step. CI installs with
+`--require-hashes --no-deps`, so a file whose hash differs from the lock fails
+the install and pip is never allowed to resolve a version of its own.
 
 ## Running
 
 ```bash
 cd benchmark
 uv sync
-uv run pytest                 # 133 tests, no model calls
+uv run pytest                 # 254 tests, no model calls
 uv run radius-perf-smoke --model gpt-5.4 --output ../artifacts/smoke
 ```
 
