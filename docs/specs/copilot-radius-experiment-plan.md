@@ -495,7 +495,7 @@ Scored campaigns use the [OpenTelemetry Astronomy Shop](https://github.com/open-
 
 The catalog application stays as the harness development fixture. Its scenarios below exercise the harness and are not part of the scored campaign.
 
-Astronomy Shop images come from `ghcr.io` with a floating `latest` tag. Every image is pinned by digest before any trial, as a declared exception alongside the Docker Hub images, and the environment passes the same determinism suite as the catalog application.
+Astronomy Shop images come from `ghcr.io` with a floating `latest` tag. Every image is pinned by digest before any trial, as a declared exception alongside the Docker Hub images, and the environment passes the same determinism suite as the catalog application. The digests are recorded once, in a manifest whose hash goes into provenance. Re-pinning a digest is a fixture change: the diagnosis-only flag incidents depend on the running images containing fault code that the visible source lacks, and a new image could change that without any check failing.
 
 ### Incident set
 
@@ -594,8 +594,14 @@ Infrastructure and adapter failures are reported and retried under a predetermin
 - Correct causal resource and connection.
 - Correct rejection of correlated but non-causal symptoms.
 - False-alarm rate on no-fault controls.
+
+For a no-fault trial, the validator must show it examined the telemetry it would have used to find a fault. A pass with no evidence examined is a vacuous pass.
 - Evidence validity and confidence calibration.
 - Time to first correct structured diagnosis.
+
+### Context headroom
+
+The Radius and architecture-document arms give the agent more to read, and the Radius arm may add tool definitions, so they approach a model's context limit before the native arm does. If trials hit the limit, the difference could look like a treatment effect. Each model request reports its prompt tokens and the model's ceiling, so the harness records peak headroom per trial, along with tool-definition tokens. Compaction and truncation events are recorded as flags. No run so far has come near the limit, so whether those events fire is unverified. Before any report states compaction rates by arm, a positive control forces one compaction on each scored model. Tokens spent by compaction are recorded as a separate usage line.
 
 ### Wall-clock timing
 
@@ -934,6 +940,10 @@ Work:
 - Run randomized sets of all three arms repeatedly.
 
 Determinism suites pull and build every image in an unmeasured setup phase, run one or more discarded warm-up cycles, and then run identical measured cycles with pulling disabled. Gate definitions, thresholds, and tolerances are frozen in code before the measured run. A gate calibrated on one run is validated on a separate holdout run with no changes between freeze and run.
+
+Tolerances are frozen per host class, because a laptop running Docker Desktop and a Linux VM running Docker Engine produce different healthy-phase timings. The driver derives the host class from facts it observes and records: operating system and kernel, CPU model and core count, memory, Docker engine and whether it runs inside a VM, and the Python patch version. It never accepts the class as an input. On a host class with no frozen tolerances, the suite gives no verdict and the run fails. A VM therefore qualifies only against tolerances fitted and held out on its own class. Its size is chosen from the Astronomy Shop's measured footprint under load, with headroom, because contention on an undersized host shows up as timing noise that looks like drift in the environment.
+
+The driver's per-service checks are generated from the Compose file. A service with no checks fails sign-off, so adding a service can't leave it unverified while every known check passes.
 
 Exit criteria:
 
