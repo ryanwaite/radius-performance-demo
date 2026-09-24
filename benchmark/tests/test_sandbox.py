@@ -264,6 +264,9 @@ def test_report_passes_only_with_a_control_and_a_real_execution():
             ProbeExecution(
                 probe=EscapeProbe(name="a", command="x", kind="write", target="/x"),
                 outcome=ProbeOutcome.BLOCKED,
+                # Required since the live run: a denial recorded while the
+                # sandbox was not in force is not evidence about the sandbox.
+                sandbox_applied="true",
             )
         ],
     )
@@ -327,3 +330,142 @@ def test_every_write_probe_declares_ground_truth(tmp_path):
 
 def test_probe_outcomes_are_three_distinct_states():
     assert len({ProbeOutcome.BLOCKED, ProbeOutcome.ESCAPED, ProbeOutcome.NOT_EXECUTED}) == 3
+
+
+# --- a denial from our own screen is not sandbox evidence ---------------------
+#
+# Found live, and it is the failure the whole probe design exists to prevent.
+# The static screen rejects every absolute path, including the workspace's own,
+# so it denied the in-workspace control write and all five escape probes. Ground
+# truth agreed each time -- the files really were absent -- and the run reported
+# five clean denials without a single command reaching the sandbox.
+
+from radius_perf_eval.sandbox import HARNESS_DENIAL_MARKER, ShellExecution
+
+
+def _screened(target: str) -> ShellExecution:
+    text = (
+        "The user rejected this tool call. User feedback: "
+        f"{HARNESS_DENIAL_MARKER}: command references a path outside the "
+        f"workspace: '{target}'"
+    )
+    return ShellExecution(result_type="denied", text=text, error=text)
+
+
+def test_a_harness_denial_is_recognized_as_ours():
+    assert _screened("/tmp/x").screened_by_harness is True
+
+
+def test_a_sandbox_denial_is_not_mistaken_for_ours():
+    denial = ShellExecution(
+        result_type="success",
+        text="bash: /outside/x.txt: Operation not permitted",
+    )
+    assert denial.screened_by_harness is False
+
+
+def test_screened_probes_do_not_count_as_reaching_the_boundary():
+    probe = EscapeProbe(
+        name="write-outside-literal",
+        command="printf escape > /outside/x.txt",
+        kind="write",
+        target="/outside/x.txt",
+    )
+    report = ProbeReport()
+    report.control_passed = True
+    report.executions.append(
+        ProbeExecution(
+            probe=probe,
+            outcome=ProbeOutcome.SCREENED,
+            target_exists_after=False,
+        )
+    )
+    assert report.executed == []
+    assert len(report.screened) == 1
+    passed, reason = report.passed()
+    assert passed is False
+    assert "our filter" in reason
+
+
+def test_screened_probe_is_not_reported_as_blocked():
+    """The distinction has to survive serialization, not just the enum."""
+    probe = EscapeProbe(name="p", command="c", kind="write", target="/outside/x")
+    execution = ProbeExecution(probe=probe, outcome=ProbeOutcome.SCREENED)
+    assert execution.to_json_dict()["outcome"] == "screened"
+
+
+def test_control_failure_is_reported_when_the_screen_answered_it():
+    report = ProbeReport()
+    report.control_passed = False
+    report.control_detail = (
+        "the harness's own static screen denied the in-workspace control write"
+    )
+    passed, reason = report.passed()
+    assert passed is False
+    assert "static screen" in reason
+
+
+def test_sandbox_flag_is_read_from_the_result_when_no_event_is_emitted():
+    """Harness-driven executions emit no tool.execution_complete event.
+
+    Verified live: after a probe run the session had recorded exactly one tool
+    execution event, the model-issued one. A gate fed only from the event stream
+    would therefore see no probe at all, so the flag is read from the result
+    object instead.
+    """
+    execution = ShellExecution(
+        result_type="success",
+        telemetry={"properties": {"sandboxApplied": "true"}},
+    )
+    assert execution.sandbox_applied == "true"
+
+
+def test_a_result_without_telemetry_reports_none_not_false():
+    assert ShellExecution(result_type="success").sandbox_applied is None
+
+
+def test_transport_failure_is_not_a_denial():
+    execution = ShellExecution(transport_error="TimeoutError: ")
+    assert execution.ran is False
+    assert execution.screened_by_harness is False
+
+
+def _executed_probe(name: str, flag: str | None) -> ProbeExecution:
+    return ProbeExecution(
+        probe=EscapeProbe(name=name, command="c", kind="write", target="/outside/x"),
+        outcome=ProbeOutcome.BLOCKED,
+        target_exists_after=False,
+        result_type="success",
+        sandbox_applied=flag,
+    )
+
+
+def test_a_denial_without_the_sandbox_in_force_is_not_confinement_evidence():
+    """The probe was denied, the file is absent -- and it still proves nothing.
+
+    Something refused the command, but if the sandbox was not applied to that
+    execution then whatever refused it is not the control being claimed.
+    """
+    report = ProbeReport()
+    report.control_passed = True
+    report.executions.append(_executed_probe("write-outside-literal", "false"))
+    passed, reason = report.passed()
+    assert passed is False
+    assert "not evidence about the sandbox" in reason
+
+
+def test_a_missing_flag_also_fails_rather_than_defaulting_to_confined():
+    report = ProbeReport()
+    report.control_passed = True
+    report.executions.append(_executed_probe("write-outside-literal", None))
+    passed, _ = report.passed()
+    assert passed is False
+
+
+def test_confinement_passes_only_with_the_flag_present_and_true():
+    report = ProbeReport()
+    report.control_passed = True
+    report.executions.append(_executed_probe("write-outside-literal", "true"))
+    passed, reason = report.passed()
+    assert passed is True
+    assert reason is None

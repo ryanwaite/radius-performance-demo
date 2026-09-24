@@ -253,17 +253,35 @@ class IsolationPolicy:
     ``full_command_text`` for escape-shaped tokens. That is **best effort
     only**: command substitution, encoding, or an interpreter can defeat any
     static screen, so it is defence in depth and must never be described as
-    confinement. Confinement would require an OS boundary around the agent
-    process. Compose containers bound the application under test, not the
-    agent, and so supply no confinement here; the runtime sandbox that could
-    supply it is reachable only after session creation and is not enabled by
-    this harness.
+    confinement.
+
+    Confinement comes from the runtime sandbox, which this harness now applies
+    through ``session.rpc.options.update`` before the first prompt. Verified
+    live on SDK 1.0.14 / CLI 1.0.87 with ``gpt-5.6-sol``: writes and reads
+    outside the workspace fail with ``Operation not permitted`` while an
+    in-workspace control write succeeds, and every execution reports
+    ``sandboxApplied=true``. Compose containers bound the application under
+    test, not the agent, and supply no confinement here.
+
+    One consequence of this screen is worth stating, because it produced a false
+    result. ``_shell_escape_token`` rejects **any** absolute path, including one
+    inside the workspace. A harness-driven probe must name its target
+    absolutely, so with the screen on, every probe -- and the in-workspace
+    control -- is denied here and never reaches the sandbox. Both denials leave
+    the file absent, so the run reads as perfect confinement while testing
+    nothing. ``screen_shell_paths=False`` exists for that case and must never be
+    set for a scored run.
     """
 
     workspace_root: Path
     allow_writes: bool = True
     allow_network: bool = False
     allow_shell: bool = False
+    #: Sandbox-probe mode. When False the static path screen is bypassed so the
+    #: runtime sandbox is the only thing that can deny a command. Scored runs
+    #: must leave this True; it exists so confinement evidence is about the
+    #: sandbox rather than about our own filter.
+    screen_shell_paths: bool = True
     violations: list[dict[str, Any]] = field(default_factory=list)
     decisions: list[dict[str, Any]] = field(default_factory=list)
 
@@ -332,6 +350,21 @@ class IsolationPolicy:
         # it appears tokenized and structured. Do not switch to it.
         escape = _shell_escape_token(command)
         if escape is not None:
+            if not self.screen_shell_paths:
+                # Sandbox-probe mode only. The screen and the sandbox both deny
+                # by leaving the file absent, so while the screen is answering
+                # no probe can say anything about the sandbox. Turning it off is
+                # what makes the sandbox the only thing that can deny. Never set
+                # this for a scored run.
+                self.decisions.append(
+                    {
+                        "kind": kind,
+                        "approved": True,
+                        "reason": "static screen disabled for sandbox probing",
+                        "command": command,
+                    }
+                )
+                return True, "static screen disabled for sandbox probing"
             return self._deny(
                 kind, f"command references a path outside the workspace: {escape!r}", detail
             )
@@ -632,6 +665,7 @@ class SpikeSession:
         reasoning_effort: str | None = None,
         allow_writes: bool = True,
         allow_shell: bool = False,
+        screen_shell_paths: bool = True,
         tools: list[Any] | None = None,
         sandbox_settings: Any = None,
     ) -> None:
@@ -651,6 +685,7 @@ class SpikeSession:
             workspace_root=workspace.root,
             allow_writes=allow_writes,
             allow_shell=allow_shell,
+            screen_shell_paths=screen_shell_paths,
         )
         self.timeline = ToolCallTimeline()
         self.assistant_usage: list[dict[str, Any]] = []

@@ -286,9 +286,10 @@ check could have quietly stopped testing anything:
   confirmed counts and marks the no-evidence case `vacuous`.
 
 Escape probes run through the tool pipeline rather than through the model. This
-matters for two reasons: the model declines probes after a denial, which would
-make the check decay to nothing, and a tool-pipeline probe costs **zero model
-calls**. Ground truth is the filesystem — whether the file appeared, or whether
+matters because the model declines probes after a denial, which would make the
+check decay to nothing. It is close to free but not free: the probes themselves
+consume no model calls, though one turn is needed first to register the tool
+surface, because the runtime reports no tools until a turn has run. Ground truth is the filesystem — whether the file appeared, or whether
 the canary token reached the transcript — never the exit status. A `perl` write
 exited 0 during the spike while writing nothing.
 
@@ -298,6 +299,55 @@ complete target never appears as one token, but **the parent directory is still
 spelled out literally**. Only the base64 probes contain no path substring at
 all. `conceals_path` records which is which, and a test pins it so a partially
 literal probe cannot be relabelled as a concealed one.
+
+### What the live run established, and the false pass it caught first
+
+Run against SDK 1.0.14 / CLI 1.0.87 on `gpt-5.6-sol`. Evidence is outside the
+repo, in `radius-perf-eval-artifacts/sandbox-wiring-check/`.
+
+The sandbox **is applied and is enforced**. `options.update` returned
+`{"success": true}` before the first prompt, every escape probe failed with
+`Operation not permitted` — an OS-level EPERM, not a harness message — and the
+outside directory was still empty afterwards. Every probe reported
+`sandboxApplied=true`, and the in-workspace control write succeeded, so the
+denials are the sandbox refusing rather than the harness failing to run. Both
+base64 probes were denied too, which closes the concealed-path class the
+earlier spike could not test because the model declined to run it.
+
+**The first run reported five clean denials while nothing reached the sandbox.**
+The static screen rejects any absolute path, and a harness probe must name its
+target absolutely, so the screen denied all five probes *and* the in-workspace
+control. A harness denial and a sandbox denial both leave the file absent, so
+ground truth agreed every time and the result was indistinguishable from perfect
+confinement. The positive control is the only reason this was visible: it failed
+in exactly the same way, and a control that cannot write inside its own
+workspace is obviously broken. `ProbeOutcome.SCREENED` now records that class
+separately, it is excluded from the evidence that supports a confinement claim,
+and `screen_shell_paths=False` puts the sandbox in the position of being the
+only thing that can deny. Scored runs leave the screen on.
+
+A denial is also not counted unless that execution reported
+`sandboxApplied=true`. If the sandbox was not in force, something else refused
+the command, and that something else is not the control being claimed.
+
+Three findings changed the code:
+
+* **`tools.execute` returns `{textResultForLlm, resultType, sessionLog, error,
+  toolTelemetry}`.** There is no `exitCode`, `stdout`, or `stderr`. The first
+  implementation read those three, got `None` and two empty strings every time,
+  and reported the silence as denials.
+* **Harness-driven executions emit no `tool.execution_complete` event.** Six ran
+  and one event was recorded — the model-issued one. A gate fed only from the
+  event stream would never see a probe, so the flag is read from the result
+  object instead.
+* **Tools register lazily.** Before the first turn the runtime reports
+  `{"tools": []}` and `tools.execute` answers `Tool 'bash' does not exist.`
+  Probes therefore cost one turn to register the tool surface, which is not the
+  zero-model-call claim made earlier in this document's history.
+
+Read confinement also held — the parent canary was unreadable — but the plan's
+claim stays limited to **write** confinement, since one model on one OS is not
+the basis for a broader one.
 
 ### Budgets
 
