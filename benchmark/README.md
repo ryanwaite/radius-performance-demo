@@ -469,19 +469,22 @@ cd /path/to/repo && python3.12 -m unittest discover -s benchmark/tests -t benchm
 
 ### What CI does and does not cover
 
-The `python` CI job runs `tests.test_driver` (120 tests) and **not** the four
-instrumentation modules — `test_events`, `test_isolation`, `test_usage`,
-`test_versions` (119 tests). Those are not skipped at runtime; they are never
-collected, because they import `github-copilot-sdk` and `inspect-ai`.
+The `python` CI job collects and runs **all five** test modules — `test_driver`,
+`test_events`, `test_isolation`, `test_usage`, `test_versions` — for **254 tests**.
+
+It previously ran only `test_driver` (120 tests). The other four import
+`github-copilot-sdk` and `inspect-ai`, which were reachable only through CFS, and CFS
+authorizes by **network context rather than by credential**: it resolves from a managed
+machine and returns 401 to a GitHub-hosted runner, so no token would have fixed it.
+
+CI now installs those packages from **public PyPI**, using hashes exported from the
+CFS-resolved `uv.lock` — see [CI installs from public PyPI, by hash](#ci-installs-from-public-pypi-by-hash).
 
 A job that quietly omits a test set reads as coverage it does not have, so the job
-prints both counts and names the omitted modules in the GitHub step summary. A green
-tick there means the driver tests passed and says nothing about the other 119.
-
-Those packages come from CFS, and CFS access depends on **network context rather than
-a credential**: it resolves from a managed machine and returns 401 to a GitHub-hosted
-runner. Adding a token does not fix it. The fix is a CFS-capable runner or a prebuilt
-test image, which is a repository-owner decision.
+still reports per-module counts in the step summary and fails if any module collects
+zero tests or if fewer tests ran than were collected. Collection is checked separately
+from execution, because an import error reports nothing for the module that broke while
+the run stays green on the rest.
 
 ### Every measured cycle is the same experiment
 
