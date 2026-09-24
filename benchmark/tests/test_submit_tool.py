@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 
 from radius_perf_eval.submit_tool import (
+    CATEGORY_DEFINITIONS,
+    CATEGORY_DISAMBIGUATION,
     CAUSAL_CATEGORIES,
     ComponentMap,
     SubmissionError,
@@ -201,14 +203,14 @@ def test_schema_constrains_category_but_not_component():
     Enumerating canonical names in the schema would hand every arm the answer
     key's naming, and would leak the fixture's component list into the prompt.
     """
-    schema = submit_tool_schema(_map())
+    schema = submit_tool_schema()
     properties = schema["properties"]
     assert properties["causalCategory"]["enum"] == list(CAUSAL_CATEGORIES)
     assert "enum" not in properties["component"]
 
 
 def test_schema_requires_the_plan_fields():
-    schema = submit_tool_schema(_map())
+    schema = submit_tool_schema()
     for field in ("faultPresent", "evidence", "confidence"):
         assert field in schema["required"]
 
@@ -263,3 +265,172 @@ def test_valid_submission_does_not_score_as_failure():
     recorder = SubmissionRecorder(component_map=_map())
     recorder.record(_valid())
     assert recorder.scored_as_failure is False
+
+
+# --- the fixture's component inventory must not leak to the agent -------------
+#
+# The canonical names are the application's service inventory. The Radius graph
+# and the architecture document supply that inventory to their own arms; putting
+# it in the tool schema would supply it to the native arm as well, shrinking the
+# very difference the experiment measures. A rejection must not leak it either,
+# or one throwaway guess buys the list.
+
+#: Deliberately unlovely names. A canonical name like "cart" is a substring of
+#: ordinary words, so a scan for it would fire on prose and the test would pass
+#: for the wrong reason -- or fail for it. These cannot occur by accident.
+LEAK_MAP = {
+    "zzcartsvc": "zzcanonicalcart",
+    "zzfrontendsvc": "zzcanonicalfrontend",
+    "/planes/radius/local/resourceGroups/demo/providers/Applications.Core/containers/zzcartsvc": "zzcanonicalcart",
+    "zzredissvc": "zzcanonicalcache",
+}
+
+LEAKED_NAMES = tuple(sorted(set(LEAK_MAP.values())))
+
+
+def _leaks(text: str) -> tuple[str, ...]:
+    """Every canonical name that appears in ``text``, case-insensitively."""
+    haystack = text.lower()
+    return tuple(name for name in LEAKED_NAMES if name.lower() in haystack)
+
+
+def test_the_leak_detector_itself_detects_a_leak():
+    """Positive control for the two tests below.
+
+    Both of those assert an absence. An absence passes just as happily when the
+    detector has stopped working, so the detector is shown to fire before it is
+    trusted to stay silent.
+    """
+    assert _leaks("the affected service is zzcanonicalcart") == ("zzcanonicalcart",)
+    assert _leaks("ZZCANONICALCACHE") == ("zzcanonicalcache",)
+    assert _leaks("nothing to see here") == ()
+
+
+def test_schema_does_not_contain_any_canonical_component_name():
+    import json
+
+    schema_text = json.dumps(submit_tool_schema())
+    assert _leaks(schema_text) == ()
+
+
+def test_schema_cannot_be_given_a_fixture_at_all():
+    """The strongest form of the guarantee: the leak is not reachable.
+
+    A schema that merely happens not to list the names today could start doing
+    so again. A schema that has no access to them cannot.
+    """
+    import inspect
+
+    assert inspect.signature(submit_tool_schema).parameters == {}
+
+
+def _every_rejection_text(component_map: ComponentMap) -> list[str]:
+    """Collect the rejection text from every path that can reject a payload."""
+    recorder = SubmissionRecorder(component_map=component_map)
+    bad_payloads = [
+        {},
+        {"faultPresent": True},
+        _valid(component="not-a-real-service"),
+        _valid(component="zzcanonicalcarts"),
+        _valid(component=""),
+        _valid(component=None),
+        _valid(causalCategory="gremlins"),
+        _valid(evidence=[]),
+        _valid(evidence="a string"),
+        _valid(confidence=5),
+        _valid(confidence="high"),
+        _valid(remediation=""),
+        {"faultPresent": False, "causalCategory": "cpu_saturation",
+         "evidence": [{"signal": "s", "observation": "o"}], "confidence": 0.5},
+        {"faultPresent": False, "component": "zzcartsvc",
+         "evidence": [{"signal": "s", "observation": "o"}], "confidence": 0.5},
+    ]
+    texts: list[str] = []
+    for payload in bad_payloads:
+        accepted, error = recorder.record(payload)
+        assert not accepted, f"expected {payload!r} to be rejected"
+        texts.append(str(error))
+    return texts
+
+
+def test_no_rejection_text_names_a_valid_component():
+    component_map = ComponentMap.from_mapping(LEAK_MAP)
+    texts = _every_rejection_text(component_map)
+    # Guard against the collection silently shrinking to nothing.
+    assert len(texts) >= 10
+    for text in texts:
+        assert _leaks(text) == (), f"rejection leaked a component name: {text!r}"
+
+
+def test_unknown_component_rejection_says_only_what_the_reviewer_asked():
+    component_map = ComponentMap.from_mapping(LEAK_MAP)
+    with pytest.raises(SubmissionError) as excinfo:
+        component_map.canonical("not-a-real-service")
+    assert str(excinfo.value) == "unknown component; name a service from the application"
+
+
+def test_rejection_does_not_echo_the_submitted_name_either():
+    """Echoing is harmless on its own but makes the map probeable by bisection.
+
+    A rejection that repeats the guess tells an agent nothing it did not already
+    know. A rejection that varies with the guess would, and the cheapest way to
+    keep the two apart is for the text to be constant.
+    """
+    component_map = ComponentMap.from_mapping(LEAK_MAP)
+    messages = set()
+    for guess in ("alpha", "beta", "zzcanonicalcar", "/planes/radius/nope"):
+        with pytest.raises(SubmissionError) as excinfo:
+            component_map.canonical(guess)
+        messages.add(str(excinfo.value))
+    assert len(messages) == 1
+
+
+# --- category definitions -----------------------------------------------------
+
+
+def test_every_category_has_a_definition():
+    assert tuple(CATEGORY_DEFINITIONS) == CAUSAL_CATEGORIES
+    for name, definition in CATEGORY_DEFINITIONS.items():
+        assert definition.strip(), f"{name} has no definition"
+
+
+def test_categories_are_derived_from_the_definitions():
+    """A category added without a definition would be an ambiguous label.
+
+    Deriving the tuple from the mapping makes that unrepresentable rather than
+    merely discouraged.
+    """
+    assert CAUSAL_CATEGORIES == tuple(CATEGORY_DEFINITIONS)
+
+
+def test_definitions_are_distinct():
+    definitions = list(CATEGORY_DEFINITIONS.values())
+    assert len(set(definitions)) == len(definitions)
+
+
+def test_schema_states_every_definition_and_tie_break():
+    description = submit_tool_schema()["properties"]["causalCategory"]["description"]
+    for name, definition in CATEGORY_DEFINITIONS.items():
+        assert name in description
+        assert definition in description
+    for rule in CATEGORY_DISAMBIGUATION:
+        assert rule in description
+
+
+def test_the_overlapping_pairs_are_separated_by_origin():
+    """The three pairs the reviewer named must be distinguishable on wording.
+
+    This is a text check, not a semantic one, so it is deliberately narrow: it
+    pins the distinguishing clause so a later edit cannot smooth it away.
+    """
+    definitions = CATEGORY_DEFINITIONS
+    assert "non-database" in definitions["dependency_latency"]
+    assert "inside the database engine" in definitions["slow_database"]
+    assert "its own locks" in definitions["slow_database"]
+    assert "in-process" in definitions["lock_contention"]
+    assert "while memory remains" in definitions["garbage_collection"]
+
+
+def test_component_is_defined_by_what_must_change():
+    description = submit_tool_schema()["properties"]["component"]["description"]
+    assert "whose behaviour must change to fix the fault" in description

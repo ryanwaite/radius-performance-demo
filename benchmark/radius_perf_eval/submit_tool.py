@@ -28,10 +28,13 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 __all__ = [
     "CAUSAL_CATEGORIES",
+    "CATEGORY_DEFINITIONS",
+    "CATEGORY_DISAMBIGUATION",
     "ComponentMap",
     "Citation",
     "Submission",
@@ -45,27 +48,79 @@ __all__ = [
 ]
 
 
-#: The fixed causal vocabulary, identical in every arm.
+#: The fixed causal vocabulary, identical in every arm, with the definition that
+#: makes each category disjoint from its neighbours.
 #:
-#: These cover the plan's incident classes: resource saturation (CPU, memory,
-#: garbage collection), dependency latency (including a slow database as its own
-#: category), queue backlog, cache failure, lock contention, partial error
-#: rates, and load surges.
+#: The definitions are the point. Without them a slow database satisfies both
+#: ``dependency_latency`` and ``slow_database``, and a database lock satisfies
+#: both ``slow_database`` and ``lock_contention`` -- so an arm could be marked
+#: wrong for choosing the other true label, and the measured difference between
+#: arms would partly be a difference in guessing the scorer's taste. Each
+#: definition therefore carves on *where the delay or failure originates*, which
+#: is a property of the incident rather than of the wording.
 #:
 #: The list is closed. An open vocabulary would make agreement a judgement call
 #: and let a scorer be generous to one arm's phrasing.
-CAUSAL_CATEGORIES: tuple[str, ...] = (
-    "cpu_saturation",
-    "memory_exhaustion",
-    "garbage_collection",
-    "dependency_latency",
-    "slow_database",
-    "queue_backlog",
-    "cache_failure",
-    "lock_contention",
-    "partial_errors",
-    "load_surge",
+CATEGORY_DEFINITIONS: Mapping[str, str] = MappingProxyType(
+    {
+        "cpu_saturation": (
+            "the component's work exceeds the CPU available to it, so requests "
+            "wait for the processor"
+        ),
+        "memory_exhaustion": (
+            "the component runs short of memory -- limit reached, out-of-memory "
+            "kill, swapping, or unbounded growth"
+        ),
+        "garbage_collection": (
+            "the managed runtime's collector is itself consuming the time, "
+            "through pause time or collector CPU, while memory remains "
+            "sufficient"
+        ),
+        "dependency_latency": (
+            "a call to a non-database downstream service, or the network path "
+            "between components, is slow while the calling component is healthy"
+        ),
+        "slow_database": (
+            "latency originating inside the database engine, including its own "
+            "locks, query plans, and storage I/O"
+        ),
+        "queue_backlog": (
+            "work is produced faster than consumers drain it, so the delay is "
+            "time spent waiting in the queue rather than time spent serving"
+        ),
+        "cache_failure": (
+            "the cache stops serving hits -- unavailable, cold, evicting, or "
+            "misconfigured -- pushing load onto the origin"
+        ),
+        "lock_contention": (
+            "in-process contention inside an application service, such as mutex "
+            "waits or exhaustion of a thread or connection pool"
+        ),
+        "partial_errors": (
+            "a fraction of requests fail or are retried while the rest succeed, "
+            "so the fault appears as an error rate rather than uniform slowness"
+        ),
+        "load_surge": (
+            "offered load rises beyond what the deployment is provisioned for, "
+            "and every component behaves correctly for the load it receives"
+        ),
+    }
 )
+
+#: Tie-breaks for the cases where two definitions could still both be read as
+#: fitting. These are stated to the agent verbatim and are identical in every
+#: arm, so no arm has to infer the scorer's convention.
+CATEGORY_DISAMBIGUATION: tuple[str, ...] = (
+    "Choose where the delay or failure originates, not where it is observed: a "
+    "service that is slow only because it is waiting on another names the other "
+    "one's category.",
+    "If every component would be healthy at normal load and the only change "
+    "needed is capacity or admission control, choose load_surge; otherwise "
+    "choose the category of the component that must change.",
+)
+
+#: Derived from the definitions so a category cannot be added without one.
+CAUSAL_CATEGORIES: tuple[str, ...] = tuple(CATEGORY_DEFINITIONS)
 
 
 class SubmissionError(ValueError):
@@ -113,8 +168,11 @@ class ComponentMap:
     def canonical(self, name: str) -> str:
         key = name.strip().lower()
         if key not in self.aliases:
+            # The rejection must not name the valid components either: an agent
+            # that guessed wrong would otherwise be handed the inventory it
+            # failed to discover, and a single throwaway guess would buy it.
             raise SubmissionError(
-                f"component {name!r} is not in the fixture's component map"
+                "unknown component; name a service from the application"
             )
         return self.aliases[key]
 
@@ -248,13 +306,25 @@ def validate_submission(
     )
 
 
-def submit_tool_schema(component_map: ComponentMap) -> dict[str, Any]:
+def submit_tool_schema() -> dict[str, Any]:
     """JSON schema advertised to the model.
 
-    The canonical component names are listed for guidance, but the schema does
-    not constrain ``component`` to them: an arm must be free to answer in its
-    own vocabulary and have the mapping resolve it.
+    This function takes no fixture input, and that is deliberate. The canonical
+    component names are the application's service inventory, which is part of
+    what the Radius graph and the architecture document supply to their arms.
+    Listing them here would hand that inventory to the native arm too, shrinking
+    the difference the experiment exists to measure. Because the schema is built
+    from module constants alone, it is byte-identical in every arm and cannot
+    leak a fixture's vocabulary even by accident.
+
+    ``component`` is therefore unconstrained: an arm answers in its own
+    vocabulary -- Compose service name, container name, or Radius resource id --
+    and the fixture's mapping resolves it after the fact.
     """
+    category_lines = "\n".join(
+        f"- {name}: {definition}" for name, definition in CATEGORY_DEFINITIONS.items()
+    )
+    disambiguation = " ".join(CATEGORY_DISAMBIGUATION)
     return {
         "type": "object",
         "properties": {
@@ -265,14 +335,21 @@ def submit_tool_schema(component_map: ComponentMap) -> dict[str, Any]:
             "causalCategory": {
                 "type": "string",
                 "enum": list(CAUSAL_CATEGORIES),
-                "description": "Omit entirely when faultPresent is false.",
+                "description": (
+                    "The kind of fault, chosen from the list below. Exactly one "
+                    "applies.\n"
+                    f"{category_lines}\n"
+                    f"{disambiguation}\n"
+                    "Omit entirely when faultPresent is false."
+                ),
             },
             "component": {
                 "type": "string",
                 "description": (
-                    "The affected service or dependency. Compose service names "
-                    "and Radius resource ids are both accepted. Known canonical "
-                    "names: " + ", ".join(component_map.canonical_names)
+                    "The component whose behaviour must change to fix the "
+                    "fault. Name it however the application names it: a "
+                    "service name, a container name, or a resource id are all "
+                    "accepted. Omit when faultPresent is false."
                 ),
             },
             "evidence": {
@@ -432,7 +509,7 @@ def build_submit_tool(recorder: SubmissionRecorder, *, event_recorder: Any = Non
         name=SUBMIT_TOOL_NAME,
         description=SUBMIT_TOOL_DESCRIPTION,
         handler=handler,
-        parameters=submit_tool_schema(recorder.component_map),
+        parameters=submit_tool_schema(),
         is_terminal=True,
         # The submission is the measured output, so it must never be blocked on
         # a permission prompt the harness would have to answer.

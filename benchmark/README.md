@@ -318,13 +318,35 @@ Fixed fields: `faultPresent`, `causalCategory`, `component`, `evidence`,
 submission ends the trial on the agent's own answer. A rejected submission
 returns a failure, which leaves the loop running so the model can correct it.
 
-`causalCategory` is a closed list, proposed in the PR for checking against the
-plan's incident classes. `component` is deliberately **not** constrained to
-canonical names: enumerating them in the schema would hand every arm the answer
-key's vocabulary and leak the fixture's component list into the prompt. Instead
-both Compose service names and Radius resource IDs are accepted and mapped to a
-canonical name through **a table the fixture supplies**. The harness carries no
-built-in mapping, and a test scans the module namespace to prove it.
+`causalCategory` is a closed list of ten, each with a one-line definition
+carried in the tool description and **identical in every arm**. The definitions
+are the point: without them a slow database satisfies both `dependency_latency`
+and `slow_database`, and a database lock satisfies both `slow_database` and
+`lock_contention`, so an arm could be marked wrong for choosing the other true
+label and part of the measured difference between arms would be a difference in
+guessing the scorer's taste. Each definition carves on **where the delay or
+failure originates**, and two tie-breaks are stated to the agent verbatim. The
+tuple is derived from the definitions mapping, so a category cannot be added
+without one.
+
+`component` is defined as **the component whose behaviour must change to fix
+the fault**, and is deliberately unconstrained. The canonical names are the
+application's service inventory, which is part of what the Radius graph and the
+architecture document supply to *their* arms; listing them in the schema would
+supply the inventory to the native arm too, shrinking the difference the
+experiment exists to measure. An arm answers in its own vocabulary — service
+name, container name, or Radius resource ID — and **a table the fixture
+supplies** resolves it afterwards. The harness carries no built-in mapping, and
+a test scans the module namespace to prove it.
+
+The rejection for an unknown component says only `unknown component; name a
+service from the application`. It names no valid component and does not vary
+with the guess, so a throwaway guess cannot buy the inventory and the map cannot
+be probed by bisection. `submit_tool_schema()` takes **no fixture argument at
+all**, which makes the leak unreachable rather than merely absent; a test pins
+the signature. The detector used by the no-leak tests is itself given a positive
+control, because an absence passes just as happily when the detector has stopped
+working.
 
 Two decisions the brief did not specify:
 
