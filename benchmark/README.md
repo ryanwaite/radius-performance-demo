@@ -62,14 +62,52 @@ compliance is a *verified property* recorded in every run's provenance rather
 than an assumption. `tests/test_versions.py` fails if it regresses.
 
 CFS quarantine lag means pins must be chosen from what CFS actually serves,
-not from a public registry listing.
+not from a public registry listing. `uv` itself is pinned at 0.12.15 for this
+reason: 0.12.18 exists publicly but CFS does not serve it yet.
+
+### CI installs from public PyPI, by hash
+
+GitHub-hosted runners cannot reach CFS. It authorises by **network context
+rather than by credential** and returns 401 there, so adding a token would not
+fix it. CI therefore installs from public PyPI — using hashes exported from the
+CFS-resolved lock.
+
+That works because CFS serves byte-identical artifacts, so a hash minted
+against CFS validates against pythonhosted. This is checked, not assumed:
+
+```bash
+cd benchmark
+python3 tools/verify_lock_hashes.py
+```
+
+It asserts that every hash in `requirements-ci.txt` is a digest public PyPI
+publishes for that exact version, and fails otherwise. At the time of writing
+it passed for all 446 hashes across 88 packages. It compares published metadata
+and downloads no artifacts, so it runs on networks that cannot reach
+`files.pythonhosted.org`.
+
+Regenerate `requirements-ci.txt` whenever `uv.lock` changes, from `benchmark/`:
+
+```bash
+uv export --frozen --offline --format requirements.txt --all-groups --no-emit-project --output-file requirements-ci.txt
+```
+
+Commit the result. `--frozen` forbids re-resolution and `--offline` forbids
+reaching an index, so the export reflects the lock and nothing else. The file
+records this command in its own header, so the committed file states how to
+reproduce it.
+
+CI runs the identical command and fails if the committed file differs, which
+catches a lock change that skipped this step. CI installs with
+`--require-hashes --no-deps`, so a file whose hash differs from the lock fails
+the install and pip is never allowed to resolve a version of its own.
 
 ## Running
 
 ```bash
 cd benchmark
 uv sync
-uv run pytest                 # 133 tests, no model calls
+uv run pytest                 # 254 tests, no model calls
 uv run radius-perf-smoke --model gpt-5.4 --output ../artifacts/smoke
 ```
 
@@ -480,19 +518,23 @@ cd /path/to/repo && python3.12 -m unittest discover -s benchmark/tests -t benchm
 
 ### What CI does and does not cover
 
-The `python` CI job runs `tests.test_driver` (150 tests) and **not** the four
-instrumentation modules — `test_events`, `test_isolation`, `test_usage`,
-`test_versions` (119 tests). Those are not skipped at runtime; they are never
-collected, because they import `github-copilot-sdk` and `inspect-ai`.
+The `python` CI job collects and runs **all five** test modules — `test_driver`,
+`test_events`, `test_isolation`, `test_usage`, `test_versions` — for **284 tests**,
+of which `test_driver` contributes **150**.
+
+It previously ran only `test_driver` (120 tests). The other four import
+`github-copilot-sdk` and `inspect-ai`, which were reachable only through CFS, and CFS
+authorizes by **network context rather than by credential**: it resolves from a managed
+machine and returns 401 to a GitHub-hosted runner, so no token would have fixed it.
+
+CI now installs those packages from **public PyPI**, using hashes exported from the
+CFS-resolved `uv.lock` — see [CI installs from public PyPI, by hash](#ci-installs-from-public-pypi-by-hash).
 
 A job that quietly omits a test set reads as coverage it does not have, so the job
-prints both counts and names the omitted modules in the GitHub step summary. A green
-tick there means the driver tests passed and says nothing about the other 119.
-
-Those packages come from CFS, and CFS access depends on **network context rather than
-a credential**: it resolves from a managed machine and returns 401 to a GitHub-hosted
-runner. Adding a token does not fix it. The fix is a CFS-capable runner or a prebuilt
-test image, which is a repository-owner decision.
+still reports per-module counts in the step summary and fails if any module collects
+zero tests or if fewer tests ran than were collected. Collection is checked separately
+from execution, because an import error reports nothing for the module that broke while
+the run stays green on the rest.
 
 ### Every measured cycle is the same experiment
 
