@@ -107,7 +107,7 @@ the install and pip is never allowed to resolve a version of its own.
 ```bash
 cd benchmark
 uv sync
-uv run pytest                 # 254 tests, no model calls
+uv run pytest                 # 284 tests, no model calls
 uv run radius-perf-smoke --model gpt-5.4 --output ../artifacts/smoke
 ```
 
