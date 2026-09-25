@@ -2947,6 +2947,189 @@ class ShopCheckPlanTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+class DemandStreamParseTests(unittest.TestCase):
+    """The parser that turns kernel counters into per-service demand.
+
+    These matter more than they look. The limits that throttled 19 of 28
+    services were fitted from ``docker stats`` averages, and this parser
+    exists to replace that basis, so a defect here reproduces the original
+    fault with better provenance.
+    """
+
+    IDS = {"aaa": "payment", "bbb": "frontend"}
+
+    def test_rate_uses_observed_elapsed_time(self):
+        # 1.0s apart, 500_000us consumed -> 0.5 cores.
+        text = "@100.0\naaa 1000000\n@101.0\naaa 1500000\n"
+        got = cpu_limits.parse_demand_stream(text, {"aaa": "payment"})
+        self.assertAlmostEqual(got["payment"].peak_cores, 0.5, places=6)
+
+    def test_rate_reflects_real_interval_not_requested_one(self):
+        # Same usage delta over 2s is half the rate of the same delta over 1s.
+        slow = cpu_limits.parse_demand_stream(
+            "@100.0\naaa 0\n@102.0\naaa 1000000\n", {"aaa": "payment"}
+        )
+        self.assertAlmostEqual(slow["payment"].peak_cores, 0.5, places=6)
+
+    def test_peak_is_the_burst_not_the_average(self):
+        """The defect that produced the bad fit, in miniature.
+
+        A service idle for three intervals and then briefly at a full core
+        averages 0.25 cores. Fitting 2x the average gives 0.5 and the burst
+        needs 1.0, which is how payment ended up throttled at 17%.
+        """
+        # The burst sits in the middle deliberately. With it last, "the
+        # maximum rate" and "the most recent rate" are the same number, and a
+        # parser that reported the latter would pass while losing every burst
+        # that is not the final one.
+        text = (
+            "@0.0\naaa 0\n"
+            "@1.0\naaa 0\n"
+            "@2.0\naaa 1000000\n"
+            "@3.0\naaa 1000000\n"
+            "@4.0\naaa 1000000\n"
+        )
+        got = cpu_limits.parse_demand_stream(text, {"aaa": "payment"})
+        self.assertAlmostEqual(got["payment"].peak_cores, 1.0, places=6)
+        self.assertAlmostEqual(got["payment"].mean_cores, 0.25, places=6)
+        self.assertLess(got["payment"].mean_cores, got["payment"].peak_cores)
+        # And the final interval really is quiet, so the assertion above can
+        # only be satisfied by remembering the earlier burst.
+        self.assertEqual(got["payment"].intervals, 4)
+
+    def test_single_frame_is_rejected_rather_than_reported_as_zero(self):
+        with self.assertRaises(cpu_limits.CpuLimitError) as ctx:
+            cpu_limits.parse_demand_stream("@100.0\naaa 5\n", {"aaa": "payment"})
+        self.assertIn("at least two", str(ctx.exception))
+
+    def test_empty_stream_is_rejected(self):
+        with self.assertRaises(cpu_limits.CpuLimitError):
+            cpu_limits.parse_demand_stream("", {"aaa": "payment"})
+
+    def test_non_advancing_clock_is_skipped_not_divided_by(self):
+        """10ms clock resolution means consecutive frames can tie."""
+        text = (
+            "@100.0\naaa 0\n"
+            "@100.0\naaa 500000\n"
+            "@101.0\naaa 1000000\n"
+        )
+        got = cpu_limits.parse_demand_stream(text, {"aaa": "payment"})
+        self.assertAlmostEqual(got["payment"].peak_cores, 0.5, places=6)
+        self.assertEqual(got["payment"].intervals, 1)
+
+    def test_counter_going_backwards_is_skipped(self):
+        """usage_usec is monotonic, so a drop means the container was replaced."""
+        text = (
+            "@100.0\naaa 9000000\n"
+            "@101.0\naaa 10\n"
+            "@102.0\naaa 200010\n"
+        )
+        got = cpu_limits.parse_demand_stream(text, {"aaa": "payment"})
+        self.assertAlmostEqual(got["payment"].peak_cores, 0.2, places=6)
+        self.assertEqual(got["payment"].intervals, 1)
+
+    def test_service_absent_from_a_frame_skips_only_that_interval(self):
+        text = (
+            "@100.0\naaa 0\nbbb 0\n"
+            "@101.0\naaa 100000\n"
+            "@102.0\naaa 200000\nbbb 400000\n"
+        )
+        got = cpu_limits.parse_demand_stream(
+            text, self.IDS, expected_interval=1.0
+        )
+        self.assertEqual(got["payment"].intervals, 2)
+        # Measured across the gap rather than dropped: 400_000us over 2.0s.
+        self.assertEqual(got["frontend"].intervals, 1)
+        self.assertAlmostEqual(got["frontend"].peak_cores, 0.2, places=6)
+        self.assertEqual(got["frontend"].gap_intervals, 1)
+        self.assertEqual(got["payment"].gap_intervals, 0)
+
+    def test_unknown_container_ids_are_ignored(self):
+        text = "@100.0\nzzz 0\naaa 0\n@101.0\nzzz 9000000\naaa 100000\n"
+        got = cpu_limits.parse_demand_stream(text, {"aaa": "payment"})
+        self.assertEqual(sorted(got), ["payment"])
+
+    def test_malformed_lines_do_not_abort_the_parse(self):
+        text = (
+            "@100.0\naaa 0\ngarbage line here\n"
+            "@not-a-clock\n"
+            "@101.0\naaa 100000\naaa notanumber\n"
+        )
+        got = cpu_limits.parse_demand_stream(text, {"aaa": "payment"})
+        self.assertAlmostEqual(got["payment"].peak_cores, 0.1, places=6)
+
+    def test_mean_is_time_weighted_across_uneven_intervals(self):
+        # 0.1 cores for 1s, then 1.0 core for 4s -> 4.1 core-seconds / 5s.
+        text = (
+            "@0.0\naaa 0\n"
+            "@1.0\naaa 100000\n"
+            "@5.0\naaa 4100000\n"
+        )
+        got = cpu_limits.parse_demand_stream(text, {"aaa": "payment"})
+        self.assertAlmostEqual(got["payment"].mean_cores, 0.82, places=6)
+        self.assertAlmostEqual(got["payment"].peak_cores, 1.0, places=6)
+
+    def test_a_gap_understates_a_burst_so_it_is_counted(self):
+        """A rate averaged over a gap hides the burst inside it.
+
+        This is the same error as fitting from a multi-second average, so a
+        gap is recorded rather than silently folded into the result.
+        """
+        text = (
+            "@0.0\naaa 0\n"
+            "@1.0\n"
+            "@2.0\naaa 1000000\n"
+        )
+        got = cpu_limits.parse_demand_stream(
+            text, {"aaa": "payment"}, expected_interval=1.0
+        )
+        self.assertEqual(got["payment"].gap_intervals, 1)
+        # 1.0 core-second over 2.0s reads as 0.5, though the burst was 1.0.
+        self.assertAlmostEqual(got["payment"].peak_cores, 0.5, places=6)
+
+    def test_clean_run_reports_no_gaps(self):
+        text = "@0.0\naaa 0\n@1.0\naaa 100000\n@2.0\naaa 200000\n"
+        got = cpu_limits.parse_demand_stream(
+            text, {"aaa": "payment"}, expected_interval=1.0
+        )
+        self.assertEqual(got["payment"].gap_intervals, 0)
+        self.assertEqual(got["payment"].intervals, 2)
+
+
+class DemandSamplerGuardTests(unittest.TestCase):
+    """Argument guards, verified without a daemon."""
+
+    def test_non_positive_duration_is_rejected(self):
+        for bad in (0, -1.0):
+            with self.assertRaises(cpu_limits.CpuLimitError):
+                cpu_limits.sample_cpu_demand("p", duration_seconds=bad)
+
+    def test_non_positive_interval_is_rejected(self):
+        for bad in (0, -0.5):
+            with self.assertRaises(cpu_limits.CpuLimitError):
+                cpu_limits.sample_cpu_demand(
+                    "p", duration_seconds=10, interval_seconds=bad
+                )
+
+    def test_sampler_does_not_use_date_percent_n(self):
+        """busybox date ignores %N and returns whole seconds.
+
+        That collapses every sub-second interval to a zero time delta, which
+        the parser then skips, so the sampler would return almost no data
+        while appearing to work. The clock must be /proc/uptime.
+        """
+        source = inspect.getsource(cpu_limits.sample_cpu_demand)
+        body = source.split('"""')[-1]
+        self.assertNotIn("date +", body)
+        self.assertIn("/proc/uptime", body)
+
+    def test_sidecar_is_unprivileged_and_has_no_docker_socket(self):
+        source = inspect.getsource(cpu_limits.sample_cpu_demand)
+        self.assertNotIn("--privileged", source)
+        self.assertNotIn("docker.sock", source)
+        self.assertIn("/hostcg:ro", source)
+
+
 class CpuLimitFittingTests(unittest.TestCase):
     """The rule, and the manifest that records what it produced."""
 

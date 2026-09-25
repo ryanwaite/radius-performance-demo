@@ -58,7 +58,9 @@ __all__ = [
     "fit_limit",
     "fit_limits",
     "load_fitted_limits",
+    "parse_demand_stream",
     "read_throttling",
+    "sample_cpu_demand",
     "verdict_from_readings",
 ]
 
@@ -114,6 +116,239 @@ def fit_limits(peaks: Mapping[str, float]) -> dict[str, float]:
     if not peaks:
         raise CpuLimitError("no peaks supplied; nothing to fit")
     return {name: fit_limit(peak) for name, peak in sorted(peaks.items())}
+
+
+@dataclass(frozen=True)
+class DemandSample:
+    """Observed CPU demand for one service, derived from the kernel.
+
+    ``peak_cores`` is the highest rate seen between two consecutive readings.
+    It is not a ``docker stats`` percentage: that is an average over a
+    multi-second interval, which averages sub-second bursts away entirely.
+    Fitting from those averages produced limits that the kernel then throttled
+    at 17% of periods, which is the reason this type exists.
+    """
+
+    service: str
+    peak_cores: float
+    mean_cores: float
+    intervals: int
+    gap_intervals: int = 0
+
+
+def parse_demand_stream(
+    text: str,
+    id_to_service: Mapping[str, str],
+    *,
+    expected_interval: float = 0.25,
+) -> dict[str, DemandSample]:
+    """Turn the sampler's raw output into per-service demand.
+
+    Rates come from the *observed* elapsed time between readings rather than
+    the requested interval, so loop overhead lengthens the interval instead of
+    inflating the rate.
+    """
+    frames: list[tuple[float, dict[str, int]]] = []
+    clock: float | None = None
+    current: dict[str, int] = {}
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("@"):
+            if clock is not None:
+                frames.append((clock, current))
+            try:
+                clock = float(line[1:])
+            except ValueError:
+                clock = None
+            current = {}
+            continue
+        parts = line.split()
+        if len(parts) == 2 and clock is not None:
+            try:
+                current[parts[0]] = int(parts[1])
+            except ValueError:
+                continue
+    if clock is not None:
+        frames.append((clock, current))
+
+    if len(frames) < 2:
+        raise CpuLimitError(
+            f"demand sampling produced {len(frames)} frame(s); at least two "
+            "are needed to compute a rate, and one frame is a cumulative "
+            "counter rather than a measurement"
+        )
+
+    totals: dict[str, float] = {}
+    elapsed: dict[str, float] = {}
+    peaks: dict[str, float] = {}
+    counts: dict[str, int] = {}
+    gaps: dict[str, int] = {}
+    # Per-service last-seen, not consecutive frames. A single failed read
+    # would otherwise drop the service from the whole run, turning a transient
+    # glitch into a lost measurement window.
+    last: dict[str, tuple[float, int]] = {}
+
+    for clock_value, frame in frames:
+        for full_id, usage in frame.items():
+            service = id_to_service.get(full_id)
+            if service is None:
+                continue
+            previous = last.get(service)
+            last[service] = (clock_value, usage)
+            if previous is None:
+                continue
+            t0, u0 = previous
+            dt = clock_value - t0
+            if dt <= 0:
+                # Clock resolution is 10ms; a tie carries no information and a
+                # negative step would invert the rate.
+                continue
+            delta = usage - u0
+            if delta < 0:
+                # usage_usec is monotonic per container, so a decrease means
+                # the container was replaced. That is not a negative rate.
+                continue
+            cores = (delta / 1_000_000.0) / dt
+            peaks[service] = max(peaks.get(service, 0.0), cores)
+            totals[service] = totals.get(service, 0.0) + delta / 1_000_000.0
+            elapsed[service] = elapsed.get(service, 0.0) + dt
+            counts[service] = counts.get(service, 0) + 1
+            if dt > expected_interval * 1.5:
+                # A rate averaged over a long gap understates a burst, which
+                # is the exact error this module was written to remove, so
+                # gaps are counted rather than passed over in silence.
+                gaps[service] = gaps.get(service, 0) + 1
+
+    return {
+        service: DemandSample(
+            service=service,
+            peak_cores=peaks[service],
+            mean_cores=(
+                totals[service] / elapsed[service] if elapsed[service] > 0 else 0.0
+            ),
+            intervals=counts[service],
+            gap_intervals=gaps.get(service, 0),
+        )
+        for service in sorted(peaks)
+    }
+
+
+def _full_ids_by_service(
+    project: str, *, timeout: float, runner
+) -> dict[str, str]:
+    """Map full container id to Compose service name for one project.
+
+    Full ids, because the cgroup directories are named by full id. Selection
+    is by Compose project label rather than by name prefix: upstream sets an
+    explicit ``container_name`` on every service, so names carry no project
+    prefix and a name-based filter silently matches nothing.
+    """
+    listing = runner(
+        [
+            "docker", "ps", "-a",
+            "--filter", f"label=com.docker.compose.project={project}",
+            "--format", "{{.ID}}\t{{.Label \"com.docker.compose.service\"}}",
+        ],
+        capture_output=True, text=True, timeout=timeout,
+    )
+    if listing.returncode != 0:
+        raise CpuLimitError(f"could not list containers: {listing.stderr.strip()}")
+
+    short_ids = [
+        line.split("\t", 1)[0].strip()
+        for line in listing.stdout.splitlines()
+        if "\t" in line and line.split("\t", 1)[0].strip()
+    ]
+    if not short_ids:
+        raise CpuLimitError(
+            f"project {project!r} has no containers; there is nothing to read, "
+            "which is not the same as nothing being throttled"
+        )
+
+    inspect = runner(
+        ["docker", "inspect", "-f",
+         "{{.Id}}\t{{index .Config.Labels \"com.docker.compose.service\"}}",
+         *short_ids],
+        capture_output=True, text=True, timeout=timeout,
+    )
+    if inspect.returncode != 0:
+        raise CpuLimitError(f"could not inspect containers: {inspect.stderr.strip()}")
+
+    full: dict[str, str] = {}
+    for line in inspect.stdout.splitlines():
+        if "\t" in line:
+            full_id, service = line.split("\t", 1)
+            if full_id.strip() and service.strip():
+                full[full_id.strip()] = service.strip()
+    return full
+
+
+def sample_cpu_demand(
+    project: str,
+    *,
+    duration_seconds: float,
+    interval_seconds: float = 0.25,
+    timeout: float | None = None,
+    runner=subprocess.run,
+) -> dict[str, DemandSample]:
+    """Sample per-service CPU demand from the kernel for a whole project.
+
+    One long-lived sidecar loops internally rather than one container per
+    sample, because container start-up costs about a second and would set a
+    floor on the sampling interval far above the bursts we are trying to see.
+
+    The clock is ``/proc/uptime``, not ``date +%s%N``: busybox ``date`` ignores
+    ``%N`` and returns whole seconds, which silently collapses every sub-second
+    interval to a zero time delta.
+    """
+    if duration_seconds <= 0:
+        raise CpuLimitError("duration_seconds must be positive")
+    if interval_seconds <= 0:
+        raise CpuLimitError("interval_seconds must be positive")
+
+    full = _full_ids_by_service(project, timeout=timeout or 120.0, runner=runner)
+
+    reads = "; ".join(
+        f'printf "%s " {full_id}; '
+        f'awk "/usage_usec/{{print \\$2}}" /hostcg/docker/{full_id}/cpu.stat '
+        f'2>/dev/null || echo'
+        for full_id in full
+    )
+    script = (
+        f'end=$(awk "{{print \\$1 + {duration_seconds}}}" /proc/uptime); '
+        f'while :; do '
+        f'now=$(cut -d" " -f1 /proc/uptime); '
+        f'echo "@$now"; {reads}; '
+        f'stop=$(awk -v n="$now" -v e="$end" "BEGIN{{print (n>=e)?1:0}}"); '
+        f'[ "$stop" = "1" ] && break; '
+        f'sleep {interval_seconds}; done'
+    )
+
+    result = runner(
+        [
+            "docker", "run", "--rm", "--cgroupns=host",
+            "-v", f"{_CGROUP_ROOT}:/hostcg:ro",
+            "--entrypoint", "sh", SIDECAR_IMAGE, "-c", script,
+        ],
+        capture_output=True, text=True,
+        timeout=timeout or (duration_seconds + 120.0),
+    )
+    if result.returncode != 0:
+        raise CpuLimitError(f"demand sidecar failed: {result.stderr.strip()[:400]}")
+
+    samples = parse_demand_stream(
+        result.stdout, full, expected_interval=interval_seconds
+    )
+    missing = sorted(set(full.values()) - set(samples))
+    if missing:
+        raise CpuLimitError(
+            f"no demand samples for {missing}; a service that was not measured "
+            "must not be fitted from a peak of zero"
+        )
+    return samples
 
 
 def cpu_limits_path(repo_root: Path) -> Path:
@@ -277,45 +512,7 @@ def read_throttling(
     readings are close to simultaneous and the two distroless services are
     covered by the same mechanism as everything else.
     """
-    listing = runner(
-        [
-            "docker", "ps", "-a",
-            "--filter", f"label=com.docker.compose.project={project}",
-            "--format", "{{.ID}}\t{{.Label \"com.docker.compose.service\"}}",
-        ],
-        capture_output=True, text=True, timeout=timeout,
-    )
-    if listing.returncode != 0:
-        raise CpuLimitError(f"could not list containers: {listing.stderr.strip()}")
-
-    by_id: dict[str, str] = {}
-    for line in listing.stdout.splitlines():
-        if "\t" not in line:
-            continue
-        container_id, service = line.split("\t", 1)
-        if container_id.strip() and service.strip():
-            by_id[container_id.strip()] = service.strip()
-    if not by_id:
-        raise CpuLimitError(
-            f"project {project!r} has no containers; there is nothing to read, "
-            "which is not the same as nothing being throttled"
-        )
-
-    # Long ids: the cgroup directories are named by full id.
-    inspect = runner(
-        ["docker", "inspect", "-f", "{{.Id}}\t{{index .Config.Labels \"com.docker.compose.service\"}}",
-         *by_id],
-        capture_output=True, text=True, timeout=timeout,
-    )
-    if inspect.returncode != 0:
-        raise CpuLimitError(f"could not inspect containers: {inspect.stderr.strip()}")
-
-    full: dict[str, str] = {}
-    for line in inspect.stdout.splitlines():
-        if "\t" in line:
-            full_id, service = line.split("\t", 1)
-            if full_id.strip() and service.strip():
-                full[full_id.strip()] = service.strip()
+    full = _full_ids_by_service(project, timeout=timeout, runner=runner)
 
     script_lines = []
     for full_id in full:
