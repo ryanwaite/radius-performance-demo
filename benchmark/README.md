@@ -731,3 +731,180 @@ almost entirely. Valkey still runs and is still verified empty before load, and
 `cacheHitRatio` / `valkeyP95Seconds` are therefore legitimately `null` rather than `0`,
 per the telemetry contract. Incident variants that exercise the cache will want to flip
 this.
+
+## The Astronomy Shop
+
+Scored trials move from the catalog app to the OpenTelemetry Astronomy Shop.
+Upstream is vendored at release `3.1.0`, pinned to a commit, with every image
+resolved to a digest. The trial stack is *generated* from the vendored files by
+applying a declared list of transforms, rather than being layered with a Compose
+overlay, because Compose merges `volumes` and `ports` by appending: an overlay
+can add a mount but can never remove one, and most of what the shop needs is
+removal.
+
+### It is 28 services, not 17
+
+The plan said about 17. The real count is 28: `compose.yaml` declares 20,
+`compose.full.yaml` adds 3, `compose.observability.yaml` adds 5.
+
+### Three isolation defects in upstream, all the same family
+
+Upstream is built to run once, on a developer's laptop, so it hard-codes
+identity in three places. Each would stop a second trial from starting or make
+two trials interfere:
+
+- an explicit `container_name` on all 28 services, so names carry no project
+  prefix and a second stack collides;
+- `networks.default.name: opentelemetry-demo`, so two trials share one bridge;
+- fixed published ports on `frontend-proxy` and `prometheus`.
+
+All three are removed by transforms. Because upstream sets `container_name`,
+anything that identifies containers by name prefix silently matches nothing;
+the footprint sampler selects on
+`label=com.docker.compose.project` instead and asserts it saw every expected
+service.
+
+### Removing a mount is not the same as removing what needs it
+
+The first transform pass removed the Docker socket and the `/hostfs` bind but
+left the `docker_stats` and `host_metrics` receivers that read them. The
+collector validates receivers at startup, so it crash-looped:
+`invalid root_path: stat /hostfs`. `up --wait` correctly refused to proceed,
+which is the gate doing its job.
+
+The collector configs are therefore *derived* at tooling time and committed, so
+the change is reviewable in a diff and the driver stays dependency-free. A
+missing derived config is a hard error rather than a fallback, because Docker
+would otherwise create an empty directory at the mount point and the collector
+would start against a config nobody reviewed.
+
+### Readiness is per service, at application level
+
+`up --wait` reports container health, and several shop services report healthy
+before they serve anything. All 28 have an application-level probe. Every probe
+below was corrected against a live stack rather than inferred from the Compose
+file:
+
+- `telemetry-docs` serves on 8000 and `quote` on 8090, not 8080;
+- `opamp-server` and `kafka` declare no ports, so they are probed by exec on
+  the internal listener; Kafka's CLI lives at `/opt/kafka/bin` and the broker
+  listens on `kafka:9092`, not `localhost`;
+- `image-provider` returns 403 on `/` because nginx denies directory listing;
+- `jaeger` is base-pathed, so `/api/services` is a 404 and the UI is under
+  `/jaeger/ui/`;
+- `flagd` and `flagd-ui` are distroless, so exec is impossible, and they are
+  unpublished, so the host cannot reach them. Both are probed from a throwaway
+  curl container on the project network, pinned by digest;
+- `accounting` and `fraud-detection` expose nothing at all, so readiness is
+  read from the broker's consumer-group list, which is an external fact rather
+  than a self-report.
+
+A probe that cannot be evaluated is recorded as not-ready with a reason. It is
+never skipped and never aborts the sweep, so "could not tell" stays distinct
+from "not ready".
+
+### The fault flags are read from flagd, not assumed
+
+The healthy baseline requires every fault flag off. The gate reads resolved
+state from flagd's OFREP endpoint and compares *variant* rather than value,
+because several flags carry numeric or duration payloads whose neutral setting
+is not boolean false. It fails closed: state it cannot read is not a clean
+baseline, and a flag missing from the response is unknown rather than off.
+
+The expected baseline is recorded from a verified-clean stack rather than
+derived from `defaultVariant`. `productCatalogFailure` is the only flag with
+targeting rules, and targeting bypasses the default, so a baseline derived from
+defaults would disagree with reality for that flag. On 3.1.0 the recorded state
+and the shipped defaults agree exactly, and a test pins that agreement so a
+newly targeted flag surfaces rather than quietly weakening the gate.
+
+### CPU limits are fitted, applied to every service, and verified by the kernel
+
+Upstream declares `deploy.resources.limits.memory` on all 28 services and
+`cpus` on none, so 28 services contend freely for the host's cores underneath
+every measurement.
+
+Limits are fitted as `max(2 x measured healthy peak, 0.25 cores)` and committed
+in `cpu-limits.json`. The rule is frozen in code and the loader refuses a
+manifest fitted under a different rule, so the committed numbers cannot drift
+away from a fitting anyone can reproduce.
+
+Every service gets a limit, including the twenty that sit at the floor and do
+not need one for their own sake. A CPU-limit incident changes a *value*; if
+only the faulted service carried a limit, the shape of the file would announce
+which service was faulted before the agent read any telemetry.
+
+The arithmetic is not the evidence. A `docker stats` peak is an average over a
+sampling interval, so a sub-second spike can look comfortable on paper and
+still be throttled. A limit is accepted only if the kernel reports no
+throttling during the measurement window, read from each container's cgroup
+`cpu.stat`:
+
+- **Delta, not cumulative.** `nr_throttled` counts from container start, and
+  startup throttling during image decompression and JIT warmup is expected and
+  harmless. Readings are taken at window open and close and subtracted.
+  Cumulative counters are still recorded, so startup throttling stays visible.
+- **Every service, including the two we cannot exec into.** Readings come from
+  the host cgroup hierarchy through a sidecar run with `--cgroupns=host` and a
+  read-only bind of `/sys/fs/cgroup`. It needs no `--privileged` (verified) and
+  never receives the Docker socket. An exempt service is exactly where an
+  unnoticed throttle would hide.
+
+A window with no scheduling periods is recorded as unmeasured, not as clean,
+and a service absent from a reading fails the verdict rather than passing by
+omission.
+
+### Egress: `internal: true` works, and costs all port publishing
+
+Measured rather than assumed, with a control. On a routing bridge a probe
+container reached the internet (HTTP 301); on an `internal` network the same
+probe failed to connect (`curl` exit 7) while container-to-container DNS still
+resolved.
+
+Running the whole 28-service stack on an internal network seals egress and
+breaks the harness, and the split is total:
+
+| probe kind | ready | failed |
+| --- | --- | --- |
+| consumer-group | 2 | 0 |
+| exec | 5 | 0 |
+| internal-http | 2 | 0 |
+| http | 0 | 8 |
+| tcp | 0 | 11 |
+
+All 19 failures report `container port N is not published`. This is the same
+constraint the catalog app hit: **Docker publishes no host ports for a
+container that is only on an `internal` network.** The shop will need the same
+shape the catalog app uses, a routed network for the ingress container and an
+internal one for the rest.
+
+### Only one service reaches outside at startup, and it is a determinism problem
+
+Checked by reading all 28 service logs, not by watching for healthcheck
+failures, because a service that reaches out and then degrades quietly would
+never fail a healthcheck. Four services logged connection or DNS errors and
+three are false positives worth naming, since each would have been easy to
+misreport:
+
+- `frontend-proxy` to `www.envoyproxy.io` is a documentation link inside a
+  deprecation warning;
+- `otel-collector` to `github.com` is a README link inside a feature-gate
+  warning;
+- `jaeger` and `otel-collector` failing to resolve `prometheus` and
+  `otel-collector` are *internal* names during startup ordering. On an internal
+  network Docker's embedded DNS cannot forward, so a not-yet-registered
+  container returns "server misbehaving" rather than NXDOMAIN. Both recovered.
+
+The one real egress is **grafana to `grafana.com`**. `compose.observability.yaml`
+sets `GF_INSTALL_PLUGINS=grafana-opensearch-datasource`, so grafana downloads an
+unpinned plugin from a third party on every startup. That defeats the
+byte-identical environment premise on the routed network we use today, not only
+on an internal one, and the digest manifest does not cover it because the plugin
+arrives after the image.
+
+### A dangling exporter
+
+The collector's observability config exports to `firepit:4317`. No Compose file
+in our set declares `firepit` and it is not among the 28, so the exporter
+retries against a host that will never exist for the whole of every measurement
+window.

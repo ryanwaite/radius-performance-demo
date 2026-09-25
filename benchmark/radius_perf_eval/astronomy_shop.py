@@ -241,7 +241,74 @@ def _hide_flag_services(config: dict[str, Any]) -> list[str]:
     return changed
 
 
+
+def _apply_cpu_limits(config: dict) -> list[str]:
+    """Give every service a fitted CPU limit.
+
+    Upstream sets ``deploy.resources.limits.memory`` on all 28 services and
+    ``cpus`` on none, so the services compete freely for the host's cores and
+    every measurement sits on top of that contention.
+
+    Every service gets one, not just the heavy ones. A CPU-limit incident
+    changes a service's limit, and if only the faulted service carried a limit
+    its mere presence would announce which service was faulted. Uniform limits
+    keep the fault where it belongs, in the value rather than the shape.
+
+    The numbers come from ``cpu-limits.json``, fitted from measurement. A
+    service missing from that manifest is an error rather than a service left
+    unlimited, because an unlimited service is precisely the variance this
+    removes.
+    """
+    from .cpu_limits import CpuLimitError, load_fitted_limits
+
+    repo_root = _repo_root_from_config(config)
+    limits = load_fitted_limits(repo_root)["limitCores"]
+    changed: list[str] = []
+    unfitted: list[str] = []
+    for name, spec in (config.get("services") or {}).items():
+        if name not in limits:
+            unfitted.append(name)
+            continue
+        deploy = spec.setdefault("deploy", {})
+        resources = deploy.setdefault("resources", {})
+        service_limits = resources.setdefault("limits", {})
+        service_limits["cpus"] = str(limits[name])
+        changed.append(name)
+    if unfitted:
+        raise CpuLimitError(
+            "no fitted CPU limit for "
+            + ", ".join(sorted(unfitted))
+            + "; refit rather than leaving a service unlimited"
+        )
+    return changed
+
+
+def _repo_root_from_config(config: dict) -> "Path":
+    """Locate the repository from this module, not from the caller.
+
+    The config is rendered in a temporary directory, so deriving the root from
+    it would be unreliable.
+    """
+    return Path(__file__).resolve().parents[2]
+
+
 TRANSFORMS: tuple[Transform, ...] = (
+    Transform(
+        name="apply-cpu-limits",
+        rationale=(
+            "Upstream declares a memory limit on every service and a CPU "
+            "limit on none, so 28 services contend for the host's cores "
+            "underneath every measurement. Limits are fitted from a measured "
+            "healthy peak and applied to all 28, including the ones far below "
+            "the floor: a CPU-limit incident changes a value, and if only the "
+            "faulted service carried a limit, the shape of the file would "
+            "give away which service was faulted before the agent looked at "
+            "any telemetry. The fitted numbers are a starting point; the "
+            "acceptance test is that the kernel reports no throttling during "
+            "the measurement window."
+        ),
+        apply=_apply_cpu_limits,
+    ),
     Transform(
         name="remove-docker-socket",
         rationale=(

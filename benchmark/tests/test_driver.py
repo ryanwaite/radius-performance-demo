@@ -33,6 +33,8 @@ from radius_perf_eval.compose import (  # noqa: E402
     parse_resource_lines,
 )
 from radius_perf_eval import astronomy_shop  # noqa: E402
+import pathlib
+from radius_perf_eval import cpu_limits  # noqa: E402
 import inspect
 from radius_perf_eval import checks  # noqa: E402
 from radius_perf_eval import shop_readiness  # noqa: E402
@@ -2938,3 +2940,223 @@ class ShopCheckPlanTests(unittest.TestCase):
         )
         self.assertEqual(len(plan.problems), 2)
         self.assertFalse(plan.complete)
+
+
+# ---------------------------------------------------------------------------
+# CPU limits: fitting, and the throttling acceptance test
+# ---------------------------------------------------------------------------
+
+
+class CpuLimitFittingTests(unittest.TestCase):
+    """The rule, and the manifest that records what it produced."""
+
+    def test_the_rule_is_twice_the_peak(self):
+        self.assertAlmostEqual(cpu_limits.fit_limit(0.60), 1.20)
+
+    def test_a_small_service_gets_the_floor_not_a_tiny_limit(self):
+        """Twice a 0.01-core peak is 0.02 cores, which would throttle the
+        service constantly for no measurement benefit."""
+        self.assertAlmostEqual(cpu_limits.fit_limit(0.01), cpu_limits.FLOOR_CORES)
+
+    def test_rounding_never_lands_below_the_rule(self):
+        for peak in (0.333, 0.1234, 0.9999, 1.005):
+            self.assertGreaterEqual(
+                cpu_limits.fit_limit(peak) + 1e-9,
+                max(cpu_limits.MULTIPLIER * peak, cpu_limits.FLOOR_CORES),
+                peak,
+            )
+
+    def test_fitting_nothing_is_an_error(self):
+        with self.assertRaises(cpu_limits.CpuLimitError):
+            cpu_limits.fit_limits({})
+
+    def test_every_shop_service_has_a_fitted_limit(self):
+        payload = cpu_limits.load_fitted_limits(_repo_root())
+        digests = json.loads(
+            (_repo_root() / "benchmark/apps/astronomy-shop/image-digests.json").read_text()
+        )
+        self.assertEqual(
+            sorted(payload["limitCores"]), sorted(digests["images"])
+        )
+
+    def test_the_committed_limits_reproduce_from_the_committed_peaks(self):
+        """The manifest is not free to drift from the rule that made it."""
+        payload = cpu_limits.load_fitted_limits(_repo_root())
+        refitted = cpu_limits.fit_limits(payload["peakCores"])
+        self.assertEqual(refitted, payload["limitCores"])
+
+    def test_a_manifest_fitted_under_a_different_rule_is_rejected(self):
+        """Positive control for the rule check.
+
+        Without it, changing the multiplier would leave 28 committed numbers
+        describing a fitting nobody could reproduce.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            path = cpu_limits.cpu_limits_path(root)
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "rule": {"multiplier": 99.0, "floorCores": 0.25},
+                        "limitCores": {"a": 1.0},
+                    }
+                )
+            )
+            with self.assertRaises(cpu_limits.CpuLimitError) as caught:
+                cpu_limits.load_fitted_limits(root)
+        self.assertIn("frozen rule", str(caught.exception))
+
+    def test_a_missing_manifest_is_an_error_not_an_empty_set(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(cpu_limits.CpuLimitError):
+                cpu_limits.load_fitted_limits(pathlib.Path(tmp))
+
+
+class CpuLimitTransformTests(unittest.TestCase):
+    """Every service gets a limit, including the ones that barely use CPU."""
+
+    def _config(self, *names: str) -> dict:
+        return {
+            "services": {
+                n: {"image": "x@sha256:" + "0" * 64,
+                    "deploy": {"resources": {"limits": {"memory": "1000"}}}}
+                for n in names
+            }
+        }
+
+    def test_the_transform_is_declared(self):
+        self.assertIn(
+            "apply-cpu-limits", {t.name for t in astronomy_shop.TRANSFORMS}
+        )
+
+    def test_a_service_with_no_fitted_limit_is_an_error(self):
+        """Not a service left unlimited.
+
+        An unlimited service in an otherwise limited stack is both a variance
+        source and a tell: it is the one service whose shape differs.
+        """
+        with self.assertRaises(cpu_limits.CpuLimitError) as caught:
+            astronomy_shop._apply_cpu_limits(self._config("not-a-real-service"))
+        self.assertIn("not-a-real-service", str(caught.exception))
+
+    def test_the_memory_limit_survives_the_transform(self):
+        config = self._config("ad")
+        astronomy_shop._apply_cpu_limits(config)
+        limits = config["services"]["ad"]["deploy"]["resources"]["limits"]
+        self.assertEqual(limits["memory"], "1000")
+        self.assertIn("cpus", limits)
+
+    def test_the_lightest_service_is_limited_too(self):
+        """The uniformity property, stated as a test.
+
+        `shipping` peaks at 0.01 cores and needs no limit for its own sake. It
+        is limited so that a CPU-limit incident on some other service cannot
+        be spotted by noticing which service has a limit at all.
+        """
+        payload = cpu_limits.load_fitted_limits(_repo_root())
+        self.assertIn("shipping", payload["limitCores"])
+        self.assertEqual(payload["limitCores"]["shipping"], cpu_limits.FLOOR_CORES)
+
+
+class ThrottleVerdictTests(unittest.TestCase):
+    """The acceptance test, which is the part that counts as evidence."""
+
+    def _reading(self, service, periods, throttled, quota=1.0):
+        return cpu_limits.ThrottleReading(
+            service=service, nr_periods=periods, nr_throttled=throttled,
+            throttled_usec=throttled * 1000, quota_cores=quota,
+        )
+
+    def test_a_clean_window_is_accepted(self):
+        opened = {"a": self._reading("a", 100, 0)}
+        closed = {"a": self._reading("a", 200, 0)}
+        verdict = cpu_limits.verdict_from_readings(opened, closed, {"a": 1.0})
+        self.assertTrue(verdict.accepted)
+
+    def test_throttling_during_the_window_fails(self):
+        opened = {"a": self._reading("a", 100, 0)}
+        closed = {"a": self._reading("a", 200, 5)}
+        verdict = cpu_limits.verdict_from_readings(opened, closed, {"a": 1.0})
+        self.assertFalse(verdict.accepted)
+        self.assertEqual(verdict.over_budget, ("a",))
+
+    def test_startup_throttling_alone_does_not_fail_the_window(self):
+        """Throttling before the window opened is expected and harmless.
+
+        Image decompression and JIT warmup throttle a tight limit. What
+        corrupts a measurement is throttling while measuring, so the counters
+        are subtracted. The cumulative figure is still reported so the startup
+        throttling stays visible rather than being silently discarded.
+        """
+        opened = {"a": self._reading("a", 100, 40)}
+        closed = {"a": self._reading("a", 200, 40)}
+        verdict = cpu_limits.verdict_from_readings(opened, closed, {"a": 1.0})
+        self.assertTrue(verdict.accepted)
+        self.assertEqual(verdict.services[0].cumulative_throttled, 40)
+        self.assertEqual(verdict.services[0].throttled, 0)
+
+    def test_a_service_absent_from_the_reading_fails(self):
+        """A verdict that passed because a service went unread would be a
+        check that examined nothing and reported success."""
+        verdict = cpu_limits.verdict_from_readings({}, {}, {"a": 1.0})
+        self.assertFalse(verdict.accepted)
+        self.assertEqual(verdict.missing, ("a",))
+
+    def test_a_window_with_no_scheduling_periods_is_unmeasured_not_clean(self):
+        opened = {"a": self._reading("a", 100, 0)}
+        closed = {"a": self._reading("a", 100, 0)}
+        verdict = cpu_limits.verdict_from_readings(opened, closed, {"a": 1.0})
+        self.assertFalse(verdict.accepted)
+        self.assertEqual(verdict.unmeasured, ("a",))
+
+    def test_an_unfitted_service_present_in_the_project_is_reported(self):
+        opened = {"a": self._reading("a", 100, 0), "b": self._reading("b", 100, 0)}
+        closed = {"a": self._reading("a", 200, 0), "b": self._reading("b", 200, 0)}
+        verdict = cpu_limits.verdict_from_readings(opened, closed, {"a": 1.0})
+        self.assertFalse(verdict.accepted)
+        self.assertTrue(any("b" in m for m in verdict.missing))
+
+    def test_the_budget_is_zero_by_default(self):
+        """Frozen before the run, per the standing rule on gates."""
+        self.assertEqual(cpu_limits.THROTTLE_BUDGET_PERCENT, 0.0)
+
+    def test_a_relaxed_budget_tolerates_a_little_throttling(self):
+        opened = {"a": self._reading("a", 0, 0)}
+        closed = {"a": self._reading("a", 1000, 5)}
+        strict = cpu_limits.verdict_from_readings(opened, closed, {"a": 1.0})
+        relaxed = cpu_limits.verdict_from_readings(
+            opened, closed, {"a": 1.0}, budget_percent=1.0
+        )
+        self.assertFalse(strict.accepted)
+        self.assertTrue(relaxed.accepted)
+
+
+class ThrottleReadingParseTests(unittest.TestCase):
+    """Parsing the kernel's files, with no daemon involved."""
+
+    def test_cpu_stat_is_parsed(self):
+        values = cpu_limits._parse_cpu_stat(
+            "usage_usec 31557\nnr_periods 12\nnr_throttled 3\nthrottled_usec 99\n"
+        )
+        self.assertEqual(values["nr_periods"], 12)
+        self.assertEqual(values["nr_throttled"], 3)
+
+    def test_an_unset_cpu_max_reads_as_no_limit_not_as_zero(self):
+        """`max 100000` means unlimited. Reading it as 0.0 would make an
+        unlimited service look like the most constrained one."""
+        self.assertIsNone(cpu_limits._parse_cpu_max("max 100000"))
+
+    def test_a_quota_is_converted_to_cores(self):
+        self.assertAlmostEqual(cpu_limits._parse_cpu_max("25000 100000"), 0.25)
+
+    def test_a_project_with_no_containers_raises(self):
+        """Nothing to read is not the same as nothing throttled."""
+        def runner(*args, **kwargs):
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        with self.assertRaises(cpu_limits.CpuLimitError):
+            cpu_limits.read_throttling("empty", runner=runner)
+
+    def test_the_sidecar_image_is_pinned_by_digest(self):
+        self.assertIn("@sha256:", cpu_limits.SIDECAR_IMAGE)
