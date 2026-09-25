@@ -1,0 +1,35 @@
+{
+  "upstreamTag": "3.1.0",
+  "upstreamCommit": "dedc0178918e260823323b8d95005a8cb924b007",
+  "removedReceivers": {
+    "docker_stats": "remove-docker-socket",
+    "host_metrics": "remove-host-filesystem"
+  },
+  "files": {
+    "otelcol-config-extras.yml": {
+      "removed": [],
+      "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+    },
+    "otelcol-config-full.yml": {
+      "removed": [
+        "service::pipelines::metrics::docker_stats",
+        "service::pipelines::metrics::host_metrics"
+      ],
+      "sha256": "85d605f6b237d8215c020d4729265c637fdb60b69a57d61a2f8d27c075d970ee"
+    },
+    "otelcol-config-observability.yml": {
+      "removed": [],
+      "sha256": "3dd756a121d2fc09bda8e0271972af5297ef644235774419a52b72e0c7db931e"
+    },
+    "otelcol-config.yml": {
+      "removed": [
+        "receivers::docker_stats",
+        "receivers::host_metrics",
+        "service::pipelines::metrics::docker_stats",
+        "service::pipelines::metrics::host_metrics"
+      ],
+      "sha256": "8120fb549c40e1ff5b5c081a53ac4fc6cb84ee8c46592e374157461bf5c369e1"
+    }
+  },
+  "manifestHash": "sha256:617b29737494195c161228577ecf25dc274acdffc17bd85ee14cb81a1f050165"
+}

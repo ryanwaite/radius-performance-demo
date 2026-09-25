@@ -32,6 +32,7 @@ from radius_perf_eval.compose import (  # noqa: E402
     parse_port_mapping,
     parse_resource_lines,
 )
+from radius_perf_eval import astronomy_shop  # noqa: E402
 from radius_perf_eval import environment as environment_module  # noqa: E402
 from radius_perf_eval.environment import (  # noqa: E402
     EGRESS_EXCEPTIONS,
@@ -2330,3 +2331,325 @@ class ScoredGateInReportTests(unittest.TestCase):
         self.assertIsNone(
             FROZEN_TOLERANCE_SETS[LAPTOP_M5_CLASS_ID].fitted_fingerprint
         )
+
+
+# ---------------------------------------------------------------------------
+# Astronomy Shop: vendored upstream, declared transforms, pinned digests
+# ---------------------------------------------------------------------------
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _vendored_compose_text() -> str:
+    return "\n".join(
+        path.read_text() for path in astronomy_shop.compose_file_paths(_repo_root())
+    )
+
+
+def _fake_config() -> dict:
+    """A config shaped like the merged upstream one, built by hand.
+
+    These tests run with the Docker daemon unreachable, so they cannot call
+    `docker compose config`. The fixture carries one instance of everything
+    the transforms are supposed to act on, and the separate `...OnRealUpstream`
+    tests below check that the vendored files still contain those constructs,
+    so the fixture cannot drift into describing a stack that no longer exists.
+    """
+    return {
+        "name": "opentelemetry-demo",
+        "networks": {"default": {"name": "opentelemetry-demo", "driver": "bridge"}},
+        "services": {
+            "otel-collector": {
+                "container_name": "otel-collector",
+                "image": "otel/opentelemetry-collector-contrib:0.119.0",
+                "user": "0:0",
+                "volumes": [
+                    {"source": "/", "target": "/hostfs", "read_only": True},
+                    {
+                        "source": "/var/run/docker.sock",
+                        "target": "/var/run/docker.sock",
+                        "read_only": True,
+                    },
+                    {
+                        "source": str(
+                            astronomy_shop.upstream_dir(_repo_root())
+                            / "src/otel-collector/otelcol-config.yml"
+                        ),
+                        "target": "/etc/otelcol-config.yml",
+                    },
+                ],
+            },
+            "frontend-proxy": {
+                "container_name": "frontend-proxy",
+                "image": "ghcr.io/open-telemetry/demo:latest-frontend-proxy",
+                "ports": [
+                    {"target": 8080, "published": "8080"},
+                    {"target": 10000, "published": "10000"},
+                ],
+            },
+            "flagd": {
+                "container_name": "flagd",
+                "image": "ghcr.io/open-feature/flagd:v0.12.2",
+                "ports": [{"target": 8013, "published": "8013"}],
+            },
+            "flagd-ui": {
+                "container_name": "flagd-ui",
+                "image": "ghcr.io/open-telemetry/demo:latest-flagd-ui",
+                "ports": [{"target": 4000, "published": "4000"}],
+            },
+            "cart": {
+                "container_name": "cart",
+                "image": "ghcr.io/open-telemetry/demo:latest-cart",
+                "ports": [{"target": 8080}],
+            },
+        },
+    }
+
+
+class AstronomyShopPinTests(unittest.TestCase):
+    """The vendored tree is pinned to one release and one commit."""
+
+    def test_the_upstream_pin_names_a_tag_and_a_full_commit(self):
+        self.assertEqual(astronomy_shop.UPSTREAM_TAG, "3.1.0")
+        self.assertRegex(astronomy_shop.UPSTREAM_COMMIT, r"^[0-9a-f]{40}$")
+
+    def test_the_vendored_tree_is_present_and_has_the_three_compose_files(self):
+        paths = astronomy_shop.compose_file_paths(_repo_root())
+        self.assertEqual(len(paths), 3)
+        for path in paths:
+            self.assertTrue(path.is_file(), f"missing vendored file: {path}")
+
+    def test_the_upstream_directory_is_absolute(self):
+        """Every caller runs `docker compose` with cwd set to this directory,
+        so a relative path would be resolved twice and land nowhere."""
+        self.assertTrue(astronomy_shop.upstream_dir(_repo_root()).is_absolute())
+
+    def test_the_apache_licence_notice_is_kept(self):
+        licence = astronomy_shop.upstream_dir(_repo_root()) / "LICENSE"
+        self.assertTrue(licence.is_file())
+        self.assertIn("Apache License", licence.read_text())
+
+
+class AstronomyShopTransformTests(unittest.TestCase):
+    """Each transform removes what it claims, and nothing else."""
+
+    def test_the_docker_socket_mount_is_removed(self):
+        config = _fake_config()
+        changed = astronomy_shop.apply_transforms(config).applied
+        self.assertEqual(changed["remove-docker-socket"], ["otel-collector"])
+        sources = [
+            v["source"] for v in config["services"]["otel-collector"]["volumes"]
+        ]
+        self.assertNotIn("/var/run/docker.sock", sources)
+
+    def test_the_host_filesystem_mount_is_removed(self):
+        config = _fake_config()
+        changed = astronomy_shop.apply_transforms(config).applied
+        self.assertEqual(changed["remove-host-filesystem"], ["otel-collector"])
+        targets = [
+            v["target"] for v in config["services"]["otel-collector"]["volumes"]
+        ]
+        self.assertNotIn("/hostfs", targets)
+
+    def test_every_container_name_is_removed(self):
+        config = _fake_config()
+        changed = astronomy_shop.apply_transforms(config).applied
+        self.assertEqual(len(changed["scope-container-names"]), 5)
+        for name, service in config["services"].items():
+            self.assertNotIn("container_name", service, name)
+
+    def test_the_fixed_network_name_is_removed(self):
+        config = _fake_config()
+        changed = astronomy_shop.apply_transforms(config).applied
+        self.assertEqual(changed["scope-network-names"], ["default"])
+        self.assertNotIn("name", config["networks"]["default"])
+        self.assertEqual(config["networks"]["default"]["driver"], "bridge")
+
+    def test_published_ports_are_dropped_but_container_ports_are_kept(self):
+        config = _fake_config()
+        astronomy_shop.apply_transforms(config)
+        proxy = config["services"]["frontend-proxy"]["ports"]
+        self.assertEqual([p["target"] for p in proxy], [8080, 10000])
+        for port in proxy:
+            self.assertNotIn("published", port)
+
+    def test_the_flag_services_lose_their_ports_entirely(self):
+        config = _fake_config()
+        changed = astronomy_shop.apply_transforms(config).applied
+        self.assertEqual(sorted(changed["hide-flag-services"]), ["flagd", "flagd-ui"])
+        for name in astronomy_shop.FLAG_SERVICES:
+            self.assertEqual(config["services"][name]["ports"], [])
+
+    def test_a_service_the_transforms_do_not_target_is_untouched(self):
+        config = _fake_config()
+        before = json.dumps(config["services"]["cart"]["ports"])
+        astronomy_shop.apply_transforms(config)
+        self.assertEqual(json.dumps(config["services"]["cart"]["ports"]), before)
+
+    def test_a_transform_with_nothing_to_remove_reports_an_empty_list(self):
+        """An upstream bump that drops the socket mount itself must show up as
+        a transform that changed nothing, not as one that silently became a
+        no-op while still claiming to protect something."""
+        config = _fake_config()
+        astronomy_shop.apply_transforms(config)
+        again = astronomy_shop.apply_transforms(config).applied
+        self.assertEqual(again["remove-docker-socket"], [])
+        self.assertEqual(again["scope-container-names"], [])
+        self.assertEqual(again["scope-network-names"], [])
+
+    def test_every_declared_transform_is_reported_even_when_it_changes_nothing(self):
+        report = astronomy_shop.apply_transforms(_fake_config())
+        self.assertEqual(
+            sorted(report.applied),
+            sorted(t.name for t in astronomy_shop.TRANSFORMS),
+        )
+
+    def test_every_transform_carries_a_rationale(self):
+        for transform in astronomy_shop.TRANSFORMS:
+            self.assertGreater(len(transform.rationale), 80, transform.name)
+
+
+class AstronomyShopTransformsOnRealUpstreamTests(unittest.TestCase):
+    """Positive controls: the vendored files still contain what we remove.
+
+    Without these the transform tests above could keep passing against a
+    fixture describing constructs upstream no longer has, which is the shape
+    of a test that proves nothing.
+    """
+
+    def test_upstream_really_does_bind_the_docker_socket(self):
+        self.assertIn("DOCKER_SOCK", _vendored_compose_text())
+
+    def test_upstream_really_does_bind_the_host_filesystem(self):
+        self.assertIn("HOST_FILESYSTEM", _vendored_compose_text())
+
+    def test_upstream_really_does_set_container_name_on_every_service(self):
+        text = _vendored_compose_text()
+        self.assertGreaterEqual(text.count("container_name:"), 28)
+
+    def test_upstream_really_does_pin_the_network_name(self):
+        self.assertIn("name: opentelemetry-demo", _vendored_compose_text())
+
+
+class AstronomyShopCollectorConfigTests(unittest.TestCase):
+    """The derived collector configs match the mounts the stack actually has."""
+
+    def _derived_dir(self):
+        return _repo_root() / "benchmark/apps/astronomy-shop/derived/otel-collector"
+
+    def test_the_derived_configs_exist(self):
+        self.assertTrue(self._derived_dir().is_dir())
+        self.assertTrue((self._derived_dir() / "otelcol-config.yml").is_file())
+
+    def test_the_removed_receivers_are_absent_from_every_derived_config(self):
+        for path in self._derived_dir().glob("otelcol-config*.yml"):
+            text = path.read_text()
+            self.assertNotIn("docker_stats", text, path.name)
+            self.assertNotIn("host_metrics", text, path.name)
+
+    def test_upstream_really_does_configure_those_receivers(self):
+        """Positive control. If upstream stops shipping them, the derivation
+        is a no-op and this test says so instead of passing quietly."""
+        source = (
+            astronomy_shop.upstream_dir(_repo_root())
+            / "src/otel-collector/otelcol-config.yml"
+        ).read_text()
+        self.assertIn("docker_stats", source)
+        self.assertIn("host_metrics", source)
+
+    def test_the_collector_mounts_are_repointed_at_the_derived_copies(self):
+        config = _fake_config()
+        changed = astronomy_shop.apply_transforms(config).applied
+        self.assertEqual(changed["use-derived-collector-config"], ["otel-collector"])
+        source = config["services"]["otel-collector"]["volumes"][-1]["source"]
+        self.assertIn("derived/otel-collector/", source)
+        self.assertNotIn("upstream/src/", source)
+
+    def test_a_missing_derived_config_is_a_hard_error(self):
+        """Docker would create an empty directory at the mount point and the
+        collector would start against a config nobody reviewed."""
+        config = _fake_config()
+        config["services"]["otel-collector"]["volumes"] = [
+            {
+                "source": "/nowhere/upstream/src/otel-collector/otelcol-config.yml",
+                "target": "/etc/otelcol-config.yml",
+            }
+        ]
+        with self.assertRaises(FileNotFoundError):
+            astronomy_shop.apply_transforms(config)
+
+    def test_the_collector_config_manifest_records_what_was_removed(self):
+        manifest = json.loads(
+            (
+                _repo_root()
+                / "benchmark/apps/astronomy-shop/derived/collector-config-manifest.json"
+            ).read_text()
+        )
+        self.assertEqual(manifest["upstreamTag"], astronomy_shop.UPSTREAM_TAG)
+        self.assertEqual(manifest["upstreamCommit"], astronomy_shop.UPSTREAM_COMMIT)
+        self.assertRegex(manifest["manifestHash"], r"^sha256:[0-9a-f]{64}$")
+        removed = manifest["files"]["otelcol-config.yml"]["removed"]
+        self.assertIn("receivers::docker_stats", removed)
+        self.assertIn("receivers::host_metrics", removed)
+
+
+class AstronomyShopFlagTests(unittest.TestCase):
+    """The flags AIOpsLab drives are present, and the baseline is off."""
+
+    def test_the_vendored_release_declares_every_flag_aiopslab_uses(self):
+        flags = astronomy_shop.declared_flags(_repo_root())
+        missing = sorted(set(astronomy_shop.AIOPSLAB_REQUIRED_FLAGS) - set(flags))
+        self.assertEqual(missing, [], f"3.1.0 is missing {missing}")
+
+    def test_the_required_flag_list_is_not_empty(self):
+        """Guards the test above against passing because it compared nothing."""
+        self.assertGreaterEqual(len(astronomy_shop.AIOPSLAB_REQUIRED_FLAGS), 11)
+
+    def test_default_variants_are_read_from_the_definition_not_assumed_off(self):
+        """Graded flags have numeric or duration neutral variants, so assuming
+        the string "off" would mislabel them."""
+        flags = astronomy_shop.declared_flags(_repo_root())
+        defaults = astronomy_shop.default_off_flags(flags)
+        self.assertEqual(sorted(defaults), sorted(flags))
+        for name, variant in defaults.items():
+            self.assertIn(variant, flags[name]["variants"], name)
+
+    def test_the_flag_services_are_named(self):
+        self.assertIn("flagd", astronomy_shop.FLAG_SERVICES)
+        self.assertIn("flagd-ui", astronomy_shop.FLAG_SERVICES)
+
+
+class AstronomyShopDigestTests(unittest.TestCase):
+    """Every image is pinned by digest, and the manifest covers every service."""
+
+    def _manifest(self) -> dict:
+        return json.loads(
+            (
+                _repo_root() / "benchmark/apps/astronomy-shop/image-digests.json"
+            ).read_text()
+        )
+
+    def test_the_manifest_hash_is_recorded(self):
+        self.assertRegex(self._manifest()["manifestHash"], r"^sha256:[0-9a-f]{64}$")
+
+    def test_every_pinned_reference_is_a_digest_not_a_tag(self):
+        for service, reference in self._manifest()["images"].items():
+            self.assertIn("@sha256:", reference, service)
+            self.assertNotIn(":latest", reference, service)
+
+    def test_the_manifest_covers_all_twenty_eight_services(self):
+        self.assertEqual(len(self._manifest()["images"]), 28)
+
+    def test_upstream_references_really_are_floating(self):
+        """Positive control for the pinning step: if upstream ever ships
+        digests itself, pinning is a no-op and this says so."""
+        floating = astronomy_shop.floating_references(_fake_config())
+        self.assertGreater(len(floating), 0)
+        self.assertIn("cart", floating)
+
+    def test_a_digest_reference_is_not_reported_as_floating(self):
+        config = _fake_config()
+        config["services"]["cart"]["image"] = "ghcr.io/x/demo@sha256:" + "a" * 64
+        self.assertNotIn("cart", astronomy_shop.floating_references(config))
