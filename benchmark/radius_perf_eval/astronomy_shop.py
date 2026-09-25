@@ -445,6 +445,42 @@ def floating_references(config: dict[str, Any]) -> dict[str, str]:
     }
 
 
+
+# ---------------------------------------------------------------------------
+# Environment checks for the shop
+# ---------------------------------------------------------------------------
+
+#: Services whose egress we would have to justify if the shop ran on an
+#: ``internal: true`` network. Recorded, deliberately unused: see
+#: ``shop_check_plan`` for why nothing here suppresses a check.
+KNOWN_EGRESS_GAP = "all services share the routing default bridge network"
+
+
+def shop_check_plan(config_text: str, readiness_probes=()):
+    """Generate the shop's environment checks from its own compose file.
+
+    Nothing is enumerated here and nothing is suppressed. Two families of
+    problem are expected on the vendored 3.1.0 stack and are left failing on
+    purpose, because a suppressed check is indistinguishable from a passing
+    one at sign-off:
+
+    * every service declares ``deploy.resources.limits.memory`` and no
+      ``cpus``, so no service has a complete resource limit;
+    * every service sits on the routing default bridge, so no service can be
+      shown to have no egress.
+
+    Both are upstream properties, not driver defects, and both are decisions
+    about the fixture rather than about this module. Passing an
+    ``egress_exceptions`` mapping here would make the second family disappear
+    from sign-off while changing nothing about the environment, which is the
+    failure mode these generated checks exist to prevent.
+    """
+    from . import checks as _checks
+
+    model = _checks.parse_compose_config(config_text)
+    return _checks.generate_check_plan(model, readiness_probes=readiness_probes)
+
+
 __all__ = [
     "AIOPSLAB_REQUIRED_FLAGS",
     "COMPOSE_FILES",
@@ -458,7 +494,9 @@ __all__ = [
     "AstronomyShopError",
     "Transform",
     "TransformReport",
+    "KNOWN_EGRESS_GAP",
     "apply_transforms",
+    "shop_check_plan",
     "compose_file_paths",
     "declared_flags",
     "default_off_flags",

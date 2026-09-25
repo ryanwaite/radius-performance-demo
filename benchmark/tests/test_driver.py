@@ -33,6 +33,8 @@ from radius_perf_eval.compose import (  # noqa: E402
     parse_resource_lines,
 )
 from radius_perf_eval import astronomy_shop  # noqa: E402
+import inspect
+from radius_perf_eval import checks  # noqa: E402
 from radius_perf_eval import shop_readiness  # noqa: E402
 from radius_perf_eval import environment as environment_module  # noqa: E402
 from radius_perf_eval.environment import (  # noqa: E402
@@ -2848,3 +2850,91 @@ class ShopFlagGateTests(unittest.TestCase):
         self.assertEqual(state.missing, ())
         self.assertEqual(state.unexpected_on, ())
         self.assertFalse(state.baseline_clean)
+
+
+class ShopCheckPlanTests(unittest.TestCase):
+    """The shop's checks are generated, and its known gaps stay visible.
+
+    The rendered 28-service stack is run-specific (project name, dynamically
+    allocated ports), so committing one would pin a single run's ports as
+    though they were a property of the fixture. These tests therefore exercise
+    the machinery on a synthetic config that reproduces the two upstream
+    properties that matter, and coverage of the real 28 services is asserted
+    against the vendored digest manifest in `ShopReadinessCoverageTests`.
+    """
+
+    def _upstream_shaped_config(self, services: int = 3) -> str:
+        """A config shaped like upstream: memory limits, no cpu, routing bridge."""
+        return json.dumps(
+            {
+                "networks": {"default": {"driver": "bridge", "ipam": {}}},
+                "services": {
+                    f"svc{i}": {
+                        "image": f"ghcr.io/x/svc{i}@sha256:{'0' * 64}",
+                        "deploy": {"resources": {"limits": {"memory": "314572800"}}},
+                        "networks": {"default": None},
+                        "environment": {"OTEL_SERVICE_NAME": f"svc{i}"},
+                    }
+                    for i in range(services)
+                },
+            }
+        )
+
+    def test_every_service_gets_one_check_of_each_required_kind(self):
+        plan = astronomy_shop.shop_check_plan(
+            self._upstream_shaped_config(3),
+            readiness_probes=("svc0", "svc1", "svc2"),
+        )
+        self.assertEqual(len(plan.checks), 3 * len(checks.REQUIRED_CHECK_KINDS))
+        for service in ("svc0", "svc1", "svc2"):
+            kinds = {c.kind for c in plan.checks if c.service == service}
+            self.assertEqual(kinds, set(checks.REQUIRED_CHECK_KINDS), service)
+
+    def test_adding_a_service_grows_the_check_set(self):
+        """Positive control: the plan is derived, not enumerated."""
+        small = astronomy_shop.shop_check_plan(self._upstream_shaped_config(3))
+        large = astronomy_shop.shop_check_plan(self._upstream_shaped_config(4))
+        self.assertEqual(
+            len(large.checks) - len(small.checks), len(checks.REQUIRED_CHECK_KINDS)
+        )
+
+    def test_a_memory_only_limit_does_not_count_as_a_limit(self):
+        """Upstream sets `deploy.resources.limits.memory` and no `cpus`.
+
+        Half a limit must not read as a limit, because an unbounded CPU share
+        across 28 services is the variance this check exists to catch.
+        """
+        plan = astronomy_shop.shop_check_plan(
+            self._upstream_shaped_config(1), readiness_probes=("svc0",)
+        )
+        self.assertIn(
+            "service 'svc0' declares no cpu and memory limits", plan.problems
+        )
+
+    def test_the_routing_default_bridge_is_reported_as_egress(self):
+        plan = astronomy_shop.shop_check_plan(
+            self._upstream_shaped_config(1), readiness_probes=("svc0",)
+        )
+        self.assertIn(
+            "service 'svc0' can reach the network and declares no egress exception",
+            plan.problems,
+        )
+
+    def test_the_shop_plan_takes_no_egress_exceptions(self):
+        """The generator deliberately exposes no suppression parameter.
+
+        `generate_check_plan` accepts `egress_exceptions`, which would silence
+        the egress family for all 28 services while changing nothing about the
+        environment. `shop_check_plan` does not forward it, so the gap cannot
+        be made to disappear from sign-off by a caller.
+        """
+        signature = inspect.signature(astronomy_shop.shop_check_plan)
+        self.assertNotIn("egress_exceptions", signature.parameters)
+
+    def test_the_known_gaps_are_the_only_ones_on_an_otherwise_sound_service(self):
+        """Pins the gap count, so a third family cannot appear unnoticed."""
+        plan = astronomy_shop.shop_check_plan(
+            self._upstream_shaped_config(1), readiness_probes=("svc0",)
+        )
+        self.assertEqual(len(plan.problems), 2)
+        self.assertFalse(plan.complete)
