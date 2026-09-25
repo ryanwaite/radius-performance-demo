@@ -33,6 +33,7 @@ from radius_perf_eval.compose import (  # noqa: E402
     parse_resource_lines,
 )
 from radius_perf_eval import astronomy_shop  # noqa: E402
+from radius_perf_eval import shop_readiness  # noqa: E402
 from radius_perf_eval import environment as environment_module  # noqa: E402
 from radius_perf_eval.environment import (  # noqa: E402
     EGRESS_EXCEPTIONS,
@@ -2653,3 +2654,197 @@ class AstronomyShopDigestTests(unittest.TestCase):
         config = _fake_config()
         config["services"]["cart"]["image"] = "ghcr.io/x/demo@sha256:" + "a" * 64
         self.assertNotIn("cart", astronomy_shop.floating_references(config))
+
+
+# ---------------------------------------------------------------------------
+# Astronomy Shop readiness and the flag gate
+# ---------------------------------------------------------------------------
+
+
+def _shop_services() -> list[str]:
+    """Service names taken from the vendored compose files, not hard-coded."""
+    text = _vendored_compose_text()
+    names = set()
+    for line in text.splitlines():
+        if line.startswith("  ") and line.endswith(":") and not line.startswith("    "):
+            name = line.strip().rstrip(":")
+            if name and not name.startswith("#"):
+                names.add(name)
+    return sorted(names)
+
+
+class ShopReadinessCoverageTests(unittest.TestCase):
+    """Every service is probed, and every probe names a real service."""
+
+    def test_there_is_one_probe_for_every_service_in_the_compose_file(self):
+        config = json.loads(
+            (
+                _repo_root()
+                / "benchmark/apps/astronomy-shop/image-digests.json"
+            ).read_text()
+        )
+        gaps = shop_readiness.missing_probes(sorted(config["images"]))
+        self.assertEqual(gaps["servicesWithoutProbe"], [])
+        self.assertEqual(gaps["probesWithoutService"], [])
+
+    def test_the_probe_count_matches_the_service_count(self):
+        self.assertEqual(len(shop_readiness.build_probes()), 28)
+
+    def test_a_service_with_no_probe_is_reported(self):
+        """Positive control for the reconciliation itself."""
+        gaps = shop_readiness.missing_probes(["frontend", "a-new-service"])
+        self.assertIn("a-new-service", gaps["servicesWithoutProbe"])
+
+    def test_a_probe_naming_an_absent_service_is_reported(self):
+        gaps = shop_readiness.missing_probes(["frontend"])
+        self.assertIn("kafka", gaps["probesWithoutService"])
+
+    def test_the_two_portless_services_are_probed_through_the_broker(self):
+        """`accounting` and `fraud-detection` publish nothing, so the only
+        externally observable readiness is consumer-group membership."""
+        by_service = {p.service: p for p in shop_readiness.build_probes()}
+        for name in shop_readiness.KAFKA_CONSUMERS:
+            self.assertEqual(by_service[name].kind, "consumer-group", name)
+
+    def test_the_flag_services_are_probed_from_inside_the_network(self):
+        """They are unpublished by `hide-flag-services`, so a host probe could
+        not reach them, and both images are distroless so exec is impossible."""
+        by_service = {p.service: p for p in shop_readiness.build_probes()}
+        for name in ("flagd", "flagd-ui"):
+            self.assertEqual(by_service[name].kind, "internal-http", name)
+
+    def test_every_probe_has_a_detail_describing_what_it_asks(self):
+        for probe in shop_readiness.build_probes():
+            self.assertTrue(probe.detail.strip(), probe.service)
+
+
+class ShopReadinessResultTests(unittest.TestCase):
+    """An unevaluable probe is a failure, never a skip."""
+
+    def test_an_unevaluable_probe_is_recorded_as_not_ready_with_a_reason(self):
+        context = shop_readiness.ProbeContext(
+            project="p", compose_file="none.json", ports={}, timeout=0.1
+        )
+        with self.assertRaises(shop_readiness.ReadinessError):
+            context.host_port("frontend", 8080)
+
+    def test_a_missing_port_does_not_abort_the_whole_sweep(self):
+        """A probe that raises must not hide the state of every probe after
+        it, and must not be silently dropped from the result set."""
+        probe = shop_readiness.Probe(
+            service="x", kind="http", detail="d",
+            evaluate=lambda _: (_ for _ in ()).throw(
+                shop_readiness.ReadinessError("no port")
+            ),
+        )
+        with unittest.mock.patch.object(
+            shop_readiness, "build_probes", return_value=(probe,)
+        ):
+            results, ready = shop_readiness.evaluate_all(
+                shop_readiness.ProbeContext(
+                    project="p", compose_file="f", ports={}
+                )
+            )
+        self.assertFalse(ready)
+        self.assertEqual(len(results), 1)
+        self.assertIn("no port", results[0].error)
+
+    def test_the_probe_image_is_pinned_by_digest(self):
+        self.assertIn("@sha256:", shop_readiness.PROBE_IMAGE)
+
+
+class ShopFlagGateTests(unittest.TestCase):
+    """The baseline gate reads flagd, and fails closed."""
+
+    def _baseline(self) -> dict:
+        return json.loads(
+            (
+                _repo_root() / "benchmark/apps/astronomy-shop/flag-baseline.json"
+            ).read_text()
+        )
+
+    def test_the_recorded_baseline_covers_every_declared_flag(self):
+        baseline = self._baseline()
+        declared = astronomy_shop.declared_flags(_repo_root())
+        self.assertEqual(sorted(baseline["resolved"]), sorted(declared))
+
+    def test_the_recorded_baseline_agrees_with_the_shipped_default_variants(self):
+        """Pins today's agreement. A flag whose targeting rules make it
+        resolve to something other than its defaultVariant would show up here
+        rather than silently weakening the gate."""
+        self.assertEqual(self._baseline()["disagreements"], {})
+
+    def test_unreadable_flag_state_fails_the_gate(self):
+        """A gate that cannot see the flags has observed nothing, which is not
+        the same as having observed a clean baseline."""
+        with unittest.mock.patch.object(
+            shop_readiness, "read_flag_state", return_value=(False, {}, "boom")
+        ):
+            state = shop_readiness.evaluate_flag_gate("p", {"adFailure": "off"})
+        self.assertFalse(state.readable)
+        self.assertFalse(state.baseline_clean)
+        self.assertIn("boom", state.error)
+
+    def test_a_flag_that_is_on_fails_the_gate(self):
+        with unittest.mock.patch.object(
+            shop_readiness, "read_flag_state",
+            return_value=(True, {"adFailure": "on", "cartFailure": "off"}, ""),
+        ):
+            state = shop_readiness.evaluate_flag_gate(
+                "p", {"adFailure": "off", "cartFailure": "off"}
+            )
+        self.assertFalse(state.baseline_clean)
+        self.assertEqual(state.unexpected_on, ("adFailure",))
+
+    def test_a_clean_baseline_passes(self):
+        with unittest.mock.patch.object(
+            shop_readiness, "read_flag_state",
+            return_value=(True, {"adFailure": "off", "cartFailure": "off"}, ""),
+        ):
+            state = shop_readiness.evaluate_flag_gate(
+                "p", {"adFailure": "off", "cartFailure": "off"}
+            )
+        self.assertTrue(state.baseline_clean)
+        self.assertEqual(state.unexpected_on, ())
+
+    def test_a_flag_missing_from_the_response_fails_the_gate(self):
+        """flagd answering with a subset must not read as the subset being
+        clean; the unreported flag's state is unknown, not off."""
+        with unittest.mock.patch.object(
+            shop_readiness, "read_flag_state",
+            return_value=(True, {"adFailure": "off"}, ""),
+        ):
+            state = shop_readiness.evaluate_flag_gate(
+                "p", {"adFailure": "off", "cartFailure": "off"}
+            )
+        self.assertFalse(state.baseline_clean)
+        self.assertEqual(state.missing, ("cartFailure",))
+
+    def test_a_graded_flag_is_compared_by_variant_not_by_truthiness(self):
+        """Several flags carry numeric or duration payloads whose neutral
+        setting is not boolean false, so comparing values would mislabel
+        them."""
+        with unittest.mock.patch.object(
+            shop_readiness, "read_flag_state",
+            return_value=(True, {"aiRunawayAgent": "high"}, ""),
+        ):
+            state = shop_readiness.evaluate_flag_gate("p", {"aiRunawayAgent": "off"})
+        self.assertEqual(state.unexpected_on, ("aiRunawayAgent",))
+
+    def test_unreadable_state_fails_even_when_nothing_else_could_fail(self):
+        """Isolates the `readable` term.
+
+        The other unreadable-state test passes because the early return also
+        populates `missing`, so it would still pass if `readable` were dropped
+        from the verdict entirely. With no expected flags there is nothing for
+        `missing` or `unexpectedOn` to catch, so only `readable` can fail this.
+        Found by mutation: removing `self.readable` from `baseline_clean` left
+        the whole suite green.
+        """
+        with unittest.mock.patch.object(
+            shop_readiness, "read_flag_state", return_value=(False, {}, "unreachable")
+        ):
+            state = shop_readiness.evaluate_flag_gate("p", {})
+        self.assertEqual(state.missing, ())
+        self.assertEqual(state.unexpected_on, ())
+        self.assertFalse(state.baseline_clean)
