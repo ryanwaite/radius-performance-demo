@@ -242,3 +242,199 @@ def test_outcome_serializes_the_gate_and_the_budget_reason():
     ).to_json_dict()
     assert payload["budgetStopReason"].startswith("tool-call")
     assert payload["sandboxGate"]["passed"] is True
+
+
+# --- the scored shell configuration: screen off, sandbox verified per command --
+
+
+def _gate(*, static_screen="on", shell_enabled=False, flags=("true",)):
+    """A gate with one execution per entry in ``flags``.
+
+    ``flags`` entries are the ``sandboxApplied`` values the runtime reported;
+    ``None`` means the telemetry carried no flag at all, which is a different
+    failure from reporting ``"false"`` and is kept distinguishable.
+    """
+    gate = SandboxGate(static_screen=static_screen, shell_enabled=shell_enabled)
+    gate.record_application(
+        SandboxApplication(
+            requested={}, succeeded=True, applied_before_first_prompt=True
+        )
+    )
+    for index, flag in enumerate(flags):
+        properties = {} if flag is None else {"sandboxApplied": flag}
+        gate.observe_tool_execution(
+            {"toolCallId": f"t{index}", "toolTelemetry": {"properties": properties}},
+            tool_name="bash",
+        )
+    return gate
+
+
+def test_screen_off_trial_is_valid_when_every_execution_is_confirmed():
+    """The permissive configuration must still be able to pass.
+
+    Without this the next test would be satisfied by a gate that fails on
+    everything, which would prove nothing about the condition being tested.
+    """
+    result = _gate(
+        static_screen="off", shell_enabled=True, flags=("true", "true", "true")
+    ).evaluate()
+    assert result.passed is True
+    outcome = score_trial(
+        terminal_class="validated_success",
+        recorder=_recorder(_valid()),
+        gate_result=result,
+        shell_enabled=True,
+        static_screen="off",
+    )
+    assert outcome.scored is True
+    assert outcome.valid is True
+
+
+@pytest.mark.parametrize("bad_flag", ["false", None])
+def test_one_unconfirmed_execution_among_confirmed_ones_invalidates_the_trial(bad_flag):
+    """The positive control: a single unconfirmed command spoils the trial.
+
+    The unconfirmed execution is deliberately placed *between* confirmed ones.
+    A gate that only inspected the first or last execution would pass this, and
+    a majority-style check would too, since two of three are confirmed.
+    """
+    result = _gate(
+        static_screen="off", shell_enabled=True, flags=("true", bad_flag, "true")
+    ).evaluate()
+    assert result.passed is False
+    assert result.tool_executions_observed == 3
+    assert result.tool_executions_confirmed == 2
+
+    outcome = score_trial(
+        terminal_class="validated_success",
+        recorder=_recorder(_valid()),
+        gate_result=result,
+        shell_enabled=True,
+        static_screen="off",
+    )
+    assert outcome.valid is False
+    assert outcome.scored is False
+    # Counted as the harness's failure, not charged to the agent, whose own
+    # outcome is preserved rather than overwritten.
+    assert outcome.terminal_class == "harness_failure"
+    assert outcome.agent_terminal_class == "submitted"
+    assert outcome.to_json_dict()["harnessFailure"] is True
+
+
+def test_screen_off_without_a_gate_result_is_a_harness_failure():
+    """Omitting the gate must not be the way to skip the requirement.
+
+    This is the hole the module docstring warned about: with shell enabled and
+    the screen off, the sandbox is the only boundary, so "no gate result" is
+    absence of evidence and cannot score.
+    """
+    outcome = score_trial(
+        terminal_class="validated_success",
+        recorder=_recorder(_valid()),
+        gate_result=None,
+        shell_enabled=True,
+        static_screen="off",
+    )
+    assert outcome.valid is False
+    assert outcome.terminal_class == "harness_failure"
+    assert any("never confirmed" in r for r in outcome.reasons)
+
+
+def test_a_shell_disabled_trial_still_scores_without_a_gate():
+    """The rule is scoped to the configuration that needs it.
+
+    A trial with no shell has no shell commands to confine, so requiring a gate
+    there would fail trials for missing evidence they could not produce.
+    """
+    outcome = score_trial(
+        terminal_class="validated_success",
+        recorder=_recorder(_valid()),
+        gate_result=None,
+    )
+    assert outcome.scored is True
+    assert outcome.valid is True
+
+
+def test_the_default_configuration_keeps_the_screen_on():
+    """The permissive setting must be chosen, never inherited."""
+    assert SandboxGate().static_screen == "on"
+    assert SandboxGate().shell_enabled is False
+    assert SandboxGate().screen_off_with_shell is False
+
+    outcome = score_trial(
+        terminal_class="validated_success", recorder=_recorder(_valid())
+    )
+    assert outcome.static_screen == "on"
+    assert outcome.shell_enabled is False
+    assert outcome.to_json_dict()["staticScreen"] == "on"
+
+
+def test_screen_off_cannot_waive_its_own_evidence_requirement():
+    """`require_evidence=False` must not buy a vacuous pass in this mode.
+
+    A gate that observed nothing has confirmed nothing. Letting the caller opt
+    out would make the strictest configuration the easiest one to satisfy.
+    """
+    vacuous = SandboxGate(
+        require_evidence=False, static_screen="off", shell_enabled=True
+    )
+    vacuous.record_application(
+        SandboxApplication(
+            requested={}, succeeded=True, applied_before_first_prompt=True
+        )
+    )
+    result = vacuous.evaluate()
+    assert result.passed is False
+    assert result.vacuous is True
+
+    # The opt-out still works where the sandbox is not the only boundary.
+    permitted = SandboxGate(require_evidence=False)
+    permitted.record_application(
+        SandboxApplication(
+            requested={}, succeeded=True, applied_before_first_prompt=True
+        )
+    )
+    assert permitted.evaluate().passed is True
+
+
+def test_the_trial_record_carries_the_setting_and_every_confirmation():
+    """The setting must be readable from the data, not from the config."""
+    result = _gate(
+        static_screen="off", shell_enabled=True, flags=("true", "false")
+    ).evaluate()
+    payload = score_trial(
+        terminal_class="validated_success",
+        recorder=_recorder(_valid()),
+        gate_result=result,
+        shell_enabled=True,
+        static_screen="off",
+    ).to_json_dict()
+
+    assert payload["staticScreen"] == "off"
+    assert payload["shellEnabled"] is True
+    gate_payload = payload["sandboxGate"]
+    assert gate_payload["staticScreen"] == "off"
+
+    # Every execution, not only the failures: a reader must be able to tell
+    # "all confirmed" from "nothing ran" without trusting a summary count.
+    executions = gate_payload["toolExecutions"]
+    assert len(executions) == 2
+    assert [e["sandboxApplied"] for e in executions] == ["true", "false"]
+    assert [e["confirmed"] for e in executions] == [True, False]
+    assert executions[0]["toolName"] == "bash"
+
+
+def test_an_unrecognised_screen_value_is_rejected_rather_than_assumed_safe():
+    """A typo must not silently read as the strict setting.
+
+    Defaulting an unknown value to "on" would record a boundary the trial did
+    not actually have, which is the more dangerous direction of the two.
+    """
+    with pytest.raises(ValueError, match="static_screen"):
+        SandboxGate(static_screen="offf")
+    with pytest.raises(ValueError, match="static_screen"):
+        score_trial(
+            terminal_class="validated_success",
+            recorder=_recorder(_valid()),
+            static_screen="OFF",
+        )

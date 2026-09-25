@@ -349,6 +349,46 @@ Read confinement also held — the parent canary was unreadable — but the plan
 claim stays limited to **write** confinement, since one model on one OS is not
 the basis for a broader one.
 
+### The static screen is off in shell trials, and the sandbox is the only boundary
+
+The benchmark's static screen matches command *text*. Tested against 38
+realistic diagnosis commands with no model calls, it denied 11. Five of those
+were `/proc` and cgroup reads such as `cpu.max` — the most direct evidence for
+the CPU, memory, and garbage-collection faults we inject — and it also denied
+`df -h /`, on the bare `/` argument. Meanwhile it allowed three of five
+escape-shaped commands, including `cat $HOME/.ssh/config` and a path assembled
+from a shell variable, which the sandbox denies at the OS level. Its error
+profile is close to inverted.
+
+It also biases the comparison. The screen is identical in every arm, but the
+arms do not depend on it equally: the Radius and document arms can learn some
+resource facts from the graph or the document, while the native arm's route to
+them is mostly the files the screen blocks. Removing the native arm's substitute
+would inflate the measured Radius advantage.
+
+So shell trials run with the screen **off**, and the trial is valid only if
+every tool execution reports `sandboxApplied: "true"`. A trial that cannot
+confirm that is recorded as `harness_failure` — excluded from scoring and
+counted as such, never charged to the agent. There is no allowlist: each entry
+would be an unexamined decision about what the agent may look at. The screen
+stays **on by default** (`SandboxGate().static_screen == "on"`) everywhere the
+sandbox is not confirmed, so the permissive setting has to be chosen rather than
+inherited, and `require_evidence=False` cannot buy a vacuous pass in it.
+
+`staticScreen`, `shellEnabled`, and the per-execution confirmations are written
+into the trial record, so which boundary was in force is readable from the data
+rather than from the config that produced it.
+
+Two caveats:
+
+* **The sandbox result is one model on macOS.** Linux hosts are unverified, and
+  so are other model pins. The per-execution `sandboxApplied` requirement is
+  what keeps this a per-trial claim rather than a general one; re-verify
+  whenever the SDK, CLI, or model pin changes.
+* **The setting is fixed before the pilot and does not change during it.** It
+  changes what an agent can reach, so pilot and scored runs must not straddle
+  the change.
+
 ### Budgets
 
 30 minutes of wall clock or 100 tool calls, whichever comes first, at high

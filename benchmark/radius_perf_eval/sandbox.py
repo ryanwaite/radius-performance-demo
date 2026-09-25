@@ -59,6 +59,7 @@ __all__ = [
     "SandboxApplication",
     "SandboxGate",
     "SandboxGateResult",
+    "STATIC_SCREEN_STATES",
     "EscapeProbe",
     "ProbeOutcome",
     "ProbeExecution",
@@ -198,6 +199,12 @@ def sandbox_applied_flag(payload: Mapping[str, Any]) -> str | None:
     return str(value)
 
 
+#: The two states of the benchmark's static shell screen. ``on`` is the default
+#: everywhere; ``off`` is only defensible while the sandbox is confirmed per
+#: execution, which is what :class:`SandboxGate` enforces.
+STATIC_SCREEN_STATES = ("on", "off")
+
+
 @dataclass
 class SandboxGateResult:
     """Outcome of the per-command sandbox check."""
@@ -208,6 +215,9 @@ class SandboxGateResult:
     tool_executions_confirmed: int
     unconfirmed: list[dict[str, Any]] = field(default_factory=list)
     vacuous: bool = False
+    static_screen: str = "on"
+    shell_enabled: bool = False
+    tool_executions: list[dict[str, Any]] = field(default_factory=list)
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -219,6 +229,14 @@ class SandboxGateResult:
             "toolExecutionsConfirmed": self.tool_executions_confirmed,
             "unconfirmed": list(self.unconfirmed),
             "vacuous": self.vacuous,
+            # The configuration is recorded next to its evidence so a reader can
+            # tell which boundary was in force from the trial record alone,
+            # without consulting the config that produced it.
+            "staticScreen": self.static_screen,
+            "shellEnabled": self.shell_enabled,
+            # Every execution, not only the failures: an empty failure list is
+            # equally consistent with "all confirmed" and "nothing observed".
+            "toolExecutions": list(self.tool_executions),
         }
 
 
@@ -229,14 +247,55 @@ class SandboxGate:
     unconfined" passes trivially when no tool ever ran, so the result carries
     the observed and confirmed counts and marks the no-evidence case
     ``vacuous``. A vacuous gate does not pass.
+
+    **The screen-off condition.** The benchmark's static shell screen denies
+    ordinary diagnosis commands -- ``/proc`` and cgroup reads among them -- and
+    misses variable-assembled paths that the sandbox denies at the OS level, so
+    it is turned off when shell is enabled. That is only defensible while the
+    sandbox is confirmed for *every* execution, so with ``static_screen="off"``
+    and shell enabled the gate requires evidence and cannot be configured not
+    to. A trial that cannot confirm confinement is a harness failure: it is
+    excluded from scoring and counted as such, never charged to the agent.
     """
 
-    def __init__(self, *, require_evidence: bool = True) -> None:
-        self._require_evidence = require_evidence
+    def __init__(
+        self,
+        *,
+        require_evidence: bool = True,
+        static_screen: str = "on",
+        shell_enabled: bool = False,
+    ) -> None:
+        if static_screen not in STATIC_SCREEN_STATES:
+            # Fail loudly rather than treating an unrecognised value as the
+            # safe default: a typo that silently reads as "on" would report a
+            # boundary the trial did not have.
+            raise ValueError(
+                f"static_screen must be one of {STATIC_SCREEN_STATES!r}, "
+                f"got {static_screen!r}"
+            )
+        self._static_screen = static_screen
+        self._shell_enabled = shell_enabled
+        # The permissive configuration cannot waive its own evidence
+        # requirement, so this is an `or`, not a parameter the caller wins.
+        self._require_evidence = require_evidence or self.screen_off_with_shell
         self._observed = 0
         self._confirmed = 0
         self._unconfirmed: list[dict[str, Any]] = []
+        self._executions: list[dict[str, Any]] = []
         self._application: SandboxApplication | None = None
+
+    @property
+    def static_screen(self) -> str:
+        return self._static_screen
+
+    @property
+    def shell_enabled(self) -> bool:
+        return self._shell_enabled
+
+    @property
+    def screen_off_with_shell(self) -> bool:
+        """True when the sandbox is the only boundary on shell commands."""
+        return self._shell_enabled and self._static_screen == "off"
 
     def record_application(self, application: SandboxApplication) -> None:
         self._application = application
@@ -251,16 +310,31 @@ class SandboxGate:
         """Record one ``tool.execution_complete`` payload."""
         self._observed += 1
         flag = sandbox_applied_flag(payload)
+        record = {
+            "toolCallId": payload.get("toolCallId"),
+            "toolName": tool_name,
+            # Distinguish "reported not applied" from "reported nothing".
+            "sandboxApplied": flag,
+            "confirmed": flag == "true",
+        }
+        self._executions.append(record)
         if flag == "true":
             self._confirmed += 1
             return
-        self._unconfirmed.append(
-            {
-                "toolCallId": payload.get("toolCallId"),
-                "toolName": tool_name,
-                # Distinguish "reported not applied" from "reported nothing".
-                "sandboxApplied": flag,
-            }
+        self._unconfirmed.append(record)
+
+    def _result(self, passed: bool, reason: str | None) -> SandboxGateResult:
+        """Build a result carrying the configuration and all observations."""
+        return SandboxGateResult(
+            passed=passed,
+            reason=reason,
+            tool_executions_observed=self._observed,
+            tool_executions_confirmed=self._confirmed,
+            unconfirmed=list(self._unconfirmed),
+            vacuous=self._observed == 0,
+            static_screen=self._static_screen,
+            shell_enabled=self._shell_enabled,
+            tool_executions=list(self._executions),
         )
 
     def evaluate(self) -> SandboxGateResult:
@@ -268,66 +342,42 @@ class SandboxGate:
         if application is None:
             # An update that never ran must fail the trial, not pass it by
             # leaving the gate with nothing to object to.
-            return SandboxGateResult(
-                passed=False,
-                reason="sandbox was never applied: no options.update was recorded",
-                tool_executions_observed=self._observed,
-                tool_executions_confirmed=self._confirmed,
-                unconfirmed=list(self._unconfirmed),
-                vacuous=self._observed == 0,
+            return self._result(
+                False,
+                "sandbox was never applied: no options.update was recorded",
             )
         if not application.succeeded:
-            return SandboxGateResult(
-                passed=False,
-                reason=f"sandbox application failed: {application.error}",
-                tool_executions_observed=self._observed,
-                tool_executions_confirmed=self._confirmed,
-                unconfirmed=list(self._unconfirmed),
-                vacuous=self._observed == 0,
+            return self._result(
+                False, f"sandbox application failed: {application.error}"
             )
         if not application.applied_before_first_prompt:
-            return SandboxGateResult(
-                passed=False,
-                reason=(
-                    "sandbox was applied after the first prompt, so tools may "
-                    "have run unconfined"
-                ),
-                tool_executions_observed=self._observed,
-                tool_executions_confirmed=self._confirmed,
-                unconfirmed=list(self._unconfirmed),
-                vacuous=self._observed == 0,
+            return self._result(
+                False,
+                "sandbox was applied after the first prompt, so tools may "
+                "have run unconfined",
             )
         if self._unconfirmed:
             first = self._unconfirmed[0]
-            return SandboxGateResult(
-                passed=False,
-                reason=(
-                    f"{len(self._unconfirmed)} of {self._observed} tool executions "
-                    f"did not report sandboxApplied=true (first: "
-                    f"toolCallId={first['toolCallId']!r}, "
-                    f"sandboxApplied={first['sandboxApplied']!r})"
-                ),
-                tool_executions_observed=self._observed,
-                tool_executions_confirmed=self._confirmed,
-                unconfirmed=list(self._unconfirmed),
+            screen_note = (
+                " and the static screen was off, so these commands had no "
+                "boundary at all"
+                if self.screen_off_with_shell
+                else ""
+            )
+            return self._result(
+                False,
+                f"{len(self._unconfirmed)} of {self._observed} tool executions "
+                f"did not report sandboxApplied=true (first: "
+                f"toolCallId={first['toolCallId']!r}, "
+                f"sandboxApplied={first['sandboxApplied']!r}){screen_note}",
             )
         if self._observed == 0 and self._require_evidence:
-            return SandboxGateResult(
-                passed=False,
-                reason=(
-                    "no tool execution was observed, so the sandbox was never "
-                    "exercised and the gate has no evidence to pass on"
-                ),
-                tool_executions_observed=0,
-                tool_executions_confirmed=0,
-                vacuous=True,
+            return self._result(
+                False,
+                "no tool execution was observed, so the sandbox was never "
+                "exercised and the gate has no evidence to pass on",
             )
-        return SandboxGateResult(
-            passed=True,
-            reason=None,
-            tool_executions_observed=self._observed,
-            tool_executions_confirmed=self._confirmed,
-        )
+        return self._result(True, None)
 
 
 async def apply_sandbox(
