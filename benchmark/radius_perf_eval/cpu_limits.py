@@ -39,6 +39,7 @@ the Docker socket.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import subprocess
@@ -49,7 +50,6 @@ from typing import Any, Mapping
 __all__ = [
     "FLOOR_CORES",
     "MULTIPLIER",
-    "THROTTLE_BUDGET_PERCENT",
     "CpuLimitError",
     "ServiceThrottle",
     "ThrottleReading",
@@ -57,6 +57,7 @@ __all__ = [
     "cpu_limits_path",
     "fit_limit",
     "fit_limits",
+    "fitted_limits_hash",
     "load_fitted_limits",
     "parse_demand_stream",
     "read_throttling",
@@ -66,15 +67,36 @@ __all__ = [
 
 #: Frozen fitting rule. Fitted numbers live in ``cpu-limits.json``; these two
 #: constants say how those numbers were derived and must not drift with them.
+#:
+#: Both numbers are measured, and the floor was raised twice as measurement
+#: corrected the one before it.
+#:
+#: The first fit used a 0.25 floor against ``docker stats`` peaks, and the
+#: kernel throttled 19 of 28 services. ``email`` was the clearest case: a
+#: sampled peak of 0.05 cores against a true peak of 0.87, understated
+#: seventeenfold, throttled at 11% of its periods. Worse, the load generator
+#: was itself throttled, so it offered less load, so downstream services saw
+#: lighter traffic and looked healthy. A binding limit does not merely add
+#: noise, it hides the fact that it is adding noise.
+#:
+#: Refitting from kernel counters at a 1.0 floor cleared the steady-state
+#: window but not the kernel's lifetime counters: kafka had spent 131
+#: throttled periods starting up, ad 60, fraud-detection 39. A probe at
+#: uniform quotas then bracketed the answer. At 4.0 cores kafka still
+#: throttled one period during startup; at 8.0 every service was clean for
+#: its whole life. One period out of thousands means 4.0 sits on the edge,
+#: and a limit on the edge binds on some runs and not others, which is the
+#: run-to-run variance this driver exists to remove. So the floor is the
+#: proven-clean value, not the smallest value that nearly worked.
+#:
+#: These limits are guard rails, not constraints. They are uniform in
+#: presence so the shape of the Compose file cannot reveal which service is
+#: faulted, they bound a runaway container, and verification proves they
+#: never bind in healthy operation. They are not the mechanism of any fault:
+#: the shop's faults are flag-driven. The multiplier still governs any
+#: service whose measured peak exceeds half the floor.
 MULTIPLIER = 2.0
-FLOOR_CORES = 0.25
-
-#: Acceptance threshold, as a percentage of scheduling periods throttled
-#: during the measurement window. Zero is the rule the reviewer asked for
-#: first. If zero proves unreachable the fallback is 1.0, and which one was
-#: used is recorded in the verdict rather than chosen silently.
-THROTTLE_BUDGET_PERCENT = 0.0
-THROTTLE_BUDGET_FALLBACK_PERCENT = 1.0
+FLOOR_CORES = 8.0
 
 #: Read-only, unprivileged. Pinned by digest like every other image we run.
 SIDECAR_IMAGE = (
@@ -355,6 +377,23 @@ def cpu_limits_path(repo_root: Path) -> Path:
     return repo_root / "benchmark/apps/astronomy-shop/cpu-limits.json"
 
 
+def fitted_limits_hash(payload: Mapping[str, Any]) -> str:
+    """Hash the parts of the fit that change what actually runs.
+
+    Over the rule and the fitted limits only. The peaks and means that
+    motivated the fit are provenance, and re-measuring them on the same host
+    will move the last decimal place without changing a single quota, so
+    including them would make the hash report a fixture change that is not
+    one. Everything that reaches a container is covered.
+    """
+    basis = {
+        "rule": dict(payload.get("rule", {})),
+        "limitCores": dict(payload.get("limitCores", {})),
+    }
+    canonical = json.dumps(basis, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+
+
 def load_fitted_limits(repo_root: Path) -> dict[str, Any]:
     path = cpu_limits_path(repo_root)
     if not path.exists():
@@ -375,6 +414,25 @@ def load_fitted_limits(repo_root: Path) -> dict[str, Any]:
             f"is multiplier={MULTIPLIER} floorCores={FLOOR_CORES}; refit or "
             "restore the constants"
         )
+    # The hash goes into provenance, so it has to be recomputed from the file
+    # rather than trusted. An earlier revision carried a hash that matched no
+    # basis anyone could reconstruct, which is provenance that proves nothing.
+    stored_hash = payload.get("manifestHash")
+    actual_hash = fitted_limits_hash(payload)
+    if stored_hash != actual_hash:
+        raise CpuLimitError(
+            f"{path} records manifestHash {stored_hash!r} but its contents "
+            f"hash to {actual_hash!r}; the file was edited without refitting"
+        )
+    # A limit that does not follow the rule would make the rule a comment.
+    for service, peak in sorted(payload.get("peakCores", {}).items()):
+        expected = fit_limit(peak)
+        stored = payload.get("limitCores", {}).get(service)
+        if stored != expected:
+            raise CpuLimitError(
+                f"{path}: {service} has limit {stored} but the rule applied "
+                f"to its peak of {peak} cores gives {expected}"
+            )
     return payload
 
 
@@ -441,35 +499,44 @@ class ServiceThrottle:
 @dataclass(frozen=True)
 class ThrottleVerdict:
     services: tuple[ServiceThrottle, ...]
-    budget_percent: float
     unmeasured: tuple[str, ...] = ()
     missing: tuple[str, ...] = ()
-    over_budget: tuple[str, ...] = ()
+    lifetime_bound: tuple[str, ...] = ()
     error: str = ""
 
     @property
     def accepted(self) -> bool:
-        """Every expected service was measured and stayed within budget.
+        """Every expected service was measured and never once throttled.
 
         An unmeasured or missing service fails. A verdict that passed because
         a service was absent from the reading would be the same vacuity we
         keep finding: a check that examined nothing and reported success.
+
+        The criterion is the kernel's lifetime counter rather than a sampled
+        window, because measurement showed most throttling happens before any
+        window opens, while containers start, and startup throttling makes
+        readiness timing depend on host contention. An earlier version also
+        gated on a window budget. That was removed rather than kept: periods
+        throttled inside a window are a subset of those counted since
+        container start, so this criterion subsumes it and the threshold
+        would have been unreachable decoration. Per-service window figures
+        are still reported, because they localise *when* throttling happened,
+        which is a diagnostic the lifetime total cannot give.
         """
         return (
             not self.error
             and not self.unmeasured
             and not self.missing
-            and not self.over_budget
+            and not self.lifetime_bound
         )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "accepted": self.accepted,
-            "budgetPercent": self.budget_percent,
             "services": [s.to_dict() for s in self.services],
             "unmeasured": list(self.unmeasured),
             "missing": list(self.missing),
-            "overBudget": list(self.over_budget),
+            "lifetimeBound": list(self.lifetime_bound),
             "error": self.error,
         }
 
@@ -574,14 +641,12 @@ def verdict_from_readings(
     opened: Mapping[str, ThrottleReading],
     closed: Mapping[str, ThrottleReading],
     expected: Mapping[str, float],
-    *,
-    budget_percent: float = THROTTLE_BUDGET_PERCENT,
 ) -> ThrottleVerdict:
-    """Subtract window-open from window-close and judge the difference."""
+    """Judge a window, and judge each container's whole life alongside it."""
     services: list[ServiceThrottle] = []
     unmeasured: list[str] = []
     missing: list[str] = []
-    over: list[str] = []
+    bound: list[str] = []
 
     for name in sorted(expected):
         start, end = opened.get(name), closed.get(name)
@@ -599,8 +664,12 @@ def verdict_from_readings(
         services.append(entry)
         if not entry.measured:
             unmeasured.append(name)
-        elif entry.percent > budget_percent:
-            over.append(name)
+        # Counted from container start, so this catches throttling spent
+        # before the window opened, which is where nearly all of it was.
+        # Independent of how many periods elapsed inside the window, so an
+        # unmeasured service is still judged on its lifetime.
+        if entry.cumulative_throttled > 0:
+            bound.append(name)
 
     # A reading for a service nobody expected means the project contains
     # something the fitted set does not describe.
@@ -609,8 +678,7 @@ def verdict_from_readings(
 
     return ThrottleVerdict(
         services=tuple(services),
-        budget_percent=budget_percent,
         unmeasured=tuple(unmeasured),
         missing=tuple(missing),
-        over_budget=tuple(over),
+        lifetime_bound=tuple(bound),
     )

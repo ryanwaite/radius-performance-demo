@@ -824,26 +824,64 @@ Upstream declares `deploy.resources.limits.memory` on all 28 services and
 `cpus` on none, so 28 services contend freely for the host's cores underneath
 every measurement.
 
-Limits are fitted as `max(2 x measured healthy peak, 0.25 cores)` and committed
+Limits are fitted as `max(2 x measured healthy peak, 8.0 cores)` and committed
 in `cpu-limits.json`. The rule is frozen in code and the loader refuses a
 manifest fitted under a different rule, so the committed numbers cannot drift
-away from a fitting anyone can reproduce.
+away from a fitting anyone can reproduce. `tools/refit_cpu_limits.py` applies
+the rule to a recorded measurement, so the file is reproducible rather than
+hand-edited.
 
-Every service gets a limit, including the twenty that sit at the floor and do
-not need one for their own sake. A CPU-limit incident changes a *value*; if
-only the faulted service carried a limit, the shape of the file would announce
-which service was faulted before the agent read any telemetry.
+On this host class no measured peak reaches half the floor, so every service
+receives the same 8.0 cores and the multiplier does not bind. The uniformity
+is wanted: the agent under test reads this Compose file, and limits fitted
+per service would tell it which service we expect to strain before it read any
+telemetry.
 
-The arithmetic is not the evidence. A `docker stats` peak is an average over a
-sampling interval, so a sub-second spike can look comfortable on paper and
-still be throttled. A limit is accepted only if the kernel reports no
-throttling during the measurement window, read from each container's cgroup
-`cpu.stat`:
+**These limits are guard rails, not constraints, and that is deliberate.** The
+first two fits tried to be tight, and both were wrong in instructive ways.
 
-- **Delta, not cumulative.** `nr_throttled` counts from container start, and
-  startup throttling during image decompression and JIT warmup is expected and
-  harmless. Readings are taken at window open and close and subtracted.
-  Cumulative counters are still recorded, so startup throttling stays visible.
+The first fitted `max(2 x peak, 0.25)` from `docker stats` peaks. The kernel
+then throttled 19 of 28 services. A `docker stats` percentage averages over a
+multi-second interval while a CPU quota binds within a 100ms scheduling
+period, so the peaks were understated by up to seventeenfold: `email` measured
+0.05 cores against a true peak of 0.87 and throttled 11% of its periods. The
+three worst-throttled services were exactly the three most understated.
+
+The failure of that fit's positive control mattered more than the fit. A
+service deliberately starved to a quarter of its measured peak throttled
+*zero* times. The quota had reached the daemon and the service was being
+measured, so the instrument was working. The load generator had itself been
+throttled, so it offered less load, so downstream services saw lighter traffic
+and looked healthy. **A binding CPU limit does not merely add noise to a
+measurement; it suppresses the load that would have revealed the noise.** That
+is why the load generator must never be throttled, and why limits are now set
+where nothing binds.
+
+Refitting from kernel counters at a 1.0 floor cleared the steady-state window
+but not the kernel's lifetime counters: kafka had spent 131 throttled periods
+starting up, ad 60, fraud-detection 39. A probe at uniform quotas then
+bracketed the floor. At 4.0 cores kafka still throttled one period during
+startup; at 8.0 every service was clean for its whole life. One period out of
+thousands means 4.0 sits on the edge, and a limit on the edge binds on some
+runs and not others, which is the run-to-run variance this driver exists to
+remove.
+
+The arithmetic is not the evidence. A limit is accepted only if the kernel
+reports **zero throttled periods over each container's whole life**, read from
+each container's cgroup `cpu.stat`:
+
+- **Lifetime, not a sampled window.** An earlier version subtracted window
+  open from window close on the reasoning that only throttling during
+  measurement can corrupt a measurement. Measurement disproved the premise:
+  throttling lengthens bring-up, so readiness timing becomes a function of
+  host contention, which is variance in the environment itself. The window
+  figures are still reported, because they localise *when* throttling
+  happened, which a lifetime total cannot.
+- **No tunable threshold.** The window criterion came with a budget
+  percentage. Periods throttled inside a window are a subset of those counted
+  since container start, so the lifetime criterion subsumes it entirely and
+  the budget could never decide a verdict. It was removed rather than left as
+  a knob that invites being turned until the gate passes.
 - **Every service, including the two we cannot exec into.** Readings come from
   the host cgroup hierarchy through a sidecar run with `--cgroupns=host` and a
   read-only bind of `/sys/fs/cgroup`. It needs no `--privileged` (verified) and
@@ -853,6 +891,15 @@ throttling during the measurement window, read from each container's cgroup
 A window with no scheduling periods is recorded as unmeasured, not as clean,
 and a service absent from a reading fails the verdict rather than passing by
 omission.
+
+Two limits of this approach are worth stating plainly. A quota of 8.0 cores on
+a ten-core host does not meaningfully constrain a single container, and the
+limits sum to 224 cores, so they are ceilings rather than reservations. They
+do not protect against several services bursting at once and saturating the
+host; the only thing that does is the plan's rule of one trial at a time per
+machine. And the floor is fitted for this host class. A VM with fewer cores
+needs its own fit, and the loader will reject the committed file there rather
+than apply a number nobody measured on it.
 
 ### Egress: `internal: true` works, and costs all port publishing
 

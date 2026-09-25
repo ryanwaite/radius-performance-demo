@@ -3134,7 +3134,32 @@ class CpuLimitFittingTests(unittest.TestCase):
     """The rule, and the manifest that records what it produced."""
 
     def test_the_rule_is_twice_the_peak(self):
-        self.assertAlmostEqual(cpu_limits.fit_limit(0.60), 1.20)
+        """Above half the floor, the multiplier is what decides the limit.
+
+        The probe value used to be 0.60, which stopped exercising the
+        multiplier the moment the floor rose to 8.0: the assertion still
+        passed as a floor test while claiming to test the multiplier.
+        """
+        self.assertGreater(cpu_limits.MULTIPLIER * 5.0, cpu_limits.FLOOR_CORES)
+        self.assertAlmostEqual(cpu_limits.fit_limit(5.0), 10.0)
+
+    def test_the_floor_dominates_every_service_in_the_committed_fit(self):
+        """Stated rather than left to be noticed from the numbers.
+
+        No measured peak on this host class reaches half the floor, so every
+        committed limit is the floor and the set is uniform. That uniformity
+        is wanted: the agent under test reads this Compose file, and a limit
+        fitted per service would tell it which service we expect to strain.
+        It also means the multiplier does not bind here, which is why the
+        test above picks a peak where it does.
+        """
+        payload = cpu_limits.load_fitted_limits(_repo_root())
+        limits = set(payload["limitCores"].values())
+        self.assertEqual(limits, {cpu_limits.FLOOR_CORES})
+        self.assertLess(
+            max(payload["peakCores"].values()),
+            cpu_limits.FLOOR_CORES / cpu_limits.MULTIPLIER,
+        )
 
     def test_a_small_service_gets_the_floor_not_a_tiny_limit(self):
         """Twice a 0.01-core peak is 0.02 cores, which would throttle the
@@ -3152,6 +3177,92 @@ class CpuLimitFittingTests(unittest.TestCase):
     def test_fitting_nothing_is_an_error(self):
         with self.assertRaises(cpu_limits.CpuLimitError):
             cpu_limits.fit_limits({})
+
+    def test_a_stale_hash_is_rejected_on_load(self):
+        """The positive control for the guard, not just for the function.
+
+        Mutation testing showed the previous tests pinned only that the hash
+        changes when contents change. Disabling the guard in
+        ``load_fitted_limits`` still passed them all, so the check that
+        actually protects a run was itself unchecked.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            path = cpu_limits.cpu_limits_path(root)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = json.loads(
+                cpu_limits.cpu_limits_path(_repo_root()).read_text()
+            )
+            payload["manifestHash"] = "sha256:" + "0" * 64
+            path.write_text(json.dumps(payload))
+            with self.assertRaises(cpu_limits.CpuLimitError) as caught:
+                cpu_limits.load_fitted_limits(root)
+            self.assertIn("manifestHash", str(caught.exception))
+
+    def test_a_faithful_copy_loads(self):
+        """So the test above fails for the hash, not for the copying."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            path = cpu_limits.cpu_limits_path(root)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                cpu_limits.cpu_limits_path(_repo_root()).read_text()
+            )
+            self.assertEqual(
+                cpu_limits.load_fitted_limits(root)["manifestHash"],
+                json.loads(path.read_text())["manifestHash"],
+            )
+
+    def test_the_committed_hash_matches_the_committed_contents(self):
+        """The hash reaches provenance, so it has to be recomputable.
+
+        An earlier revision carried a hash matching no basis that could be
+        reconstructed from the file, which is provenance proving nothing.
+        """
+        payload = json.loads(
+            cpu_limits.cpu_limits_path(_repo_root()).read_text()
+        )
+        self.assertEqual(
+            payload["manifestHash"], cpu_limits.fitted_limits_hash(payload)
+        )
+
+    def test_an_edited_limit_invalidates_the_hash(self):
+        """The positive control for the check above."""
+        payload = json.loads(
+            cpu_limits.cpu_limits_path(_repo_root()).read_text()
+        )
+        before = cpu_limits.fitted_limits_hash(payload)
+        payload["limitCores"]["kafka"] = 99.0
+        self.assertNotEqual(cpu_limits.fitted_limits_hash(payload), before)
+
+    def test_the_hash_ignores_remeasured_peaks_that_change_no_limit(self):
+        """Re-measuring moves the last decimal without moving a quota.
+
+        If that counted as a fixture change, every re-measurement would
+        look like one and the signal would stop meaning anything.
+        """
+        payload = json.loads(
+            cpu_limits.cpu_limits_path(_repo_root()).read_text()
+        )
+        before = cpu_limits.fitted_limits_hash(payload)
+        payload["peakCores"]["kafka"] = payload["peakCores"]["kafka"] + 0.0001
+        self.assertEqual(cpu_limits.fitted_limits_hash(payload), before)
+
+    def test_a_limit_that_does_not_follow_the_rule_is_rejected(self):
+        """Otherwise the rule is a comment and the numbers are magic."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            path = cpu_limits.cpu_limits_path(root)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = json.loads(
+                cpu_limits.cpu_limits_path(_repo_root()).read_text()
+            )
+            payload["limitCores"]["kafka"] = cpu_limits.FLOOR_CORES / 2
+            payload["manifestHash"] = cpu_limits.fitted_limits_hash(payload)
+            path.write_text(json.dumps(payload))
+            with self.assertRaises(cpu_limits.CpuLimitError) as caught:
+                cpu_limits.load_fitted_limits(root)
+            self.assertIn("kafka", str(caught.exception))
 
     def test_every_shop_service_has_a_fitted_limit(self):
         payload = cpu_limits.load_fitted_limits(_repo_root())
@@ -3256,26 +3367,36 @@ class ThrottleVerdictTests(unittest.TestCase):
         closed = {"a": self._reading("a", 200, 0)}
         verdict = cpu_limits.verdict_from_readings(opened, closed, {"a": 1.0})
         self.assertTrue(verdict.accepted)
+        # A service that never throttled must not be listed as bound. A
+        # check that fires on everything is as useless as one that never
+        # fires, and mutation testing showed nothing else pinned this.
+        self.assertEqual(verdict.lifetime_bound, ())
 
     def test_throttling_during_the_window_fails(self):
         opened = {"a": self._reading("a", 100, 0)}
         closed = {"a": self._reading("a", 200, 5)}
         verdict = cpu_limits.verdict_from_readings(opened, closed, {"a": 1.0})
         self.assertFalse(verdict.accepted)
-        self.assertEqual(verdict.over_budget, ("a",))
+        self.assertEqual(verdict.lifetime_bound, ("a",))
+        # The window figure survives as diagnostic detail: it localises when
+        # the throttling happened, which the lifetime total cannot.
+        self.assertEqual(verdict.services[0].throttled, 5)
 
-    def test_startup_throttling_alone_does_not_fail_the_window(self):
-        """Throttling before the window opened is expected and harmless.
+    def test_startup_throttling_fails_even_though_the_window_is_clean(self):
+        """This assertion was inverted by measurement, deliberately.
 
-        Image decompression and JIT warmup throttle a tight limit. What
-        corrupts a measurement is throttling while measuring, so the counters
-        are subtracted. The cumulative figure is still reported so the startup
-        throttling stays visible rather than being silently discarded.
+        It used to assert that startup throttling was harmless, on the
+        reasoning that only throttling during measurement can corrupt a
+        measurement. A probe disproved the premise: throttling lengthens
+        bring-up, so readiness timing becomes a function of host contention,
+        which is run-to-run variance in the environment itself. The window
+        subtraction it checked is still correct and still checked.
         """
         opened = {"a": self._reading("a", 100, 40)}
         closed = {"a": self._reading("a", 200, 40)}
         verdict = cpu_limits.verdict_from_readings(opened, closed, {"a": 1.0})
-        self.assertTrue(verdict.accepted)
+        self.assertFalse(verdict.accepted)
+        self.assertEqual(verdict.lifetime_bound, ("a",))
         self.assertEqual(verdict.services[0].cumulative_throttled, 40)
         self.assertEqual(verdict.services[0].throttled, 0)
 
@@ -3300,20 +3421,48 @@ class ThrottleVerdictTests(unittest.TestCase):
         self.assertFalse(verdict.accepted)
         self.assertTrue(any("b" in m for m in verdict.missing))
 
-    def test_the_budget_is_zero_by_default(self):
-        """Frozen before the run, per the standing rule on gates."""
-        self.assertEqual(cpu_limits.THROTTLE_BUDGET_PERCENT, 0.0)
+    def test_lifetime_throttling_is_reported_even_when_the_window_is_clean(self):
+        """Measurement showed most throttling happens before any window opens.
 
-    def test_a_relaxed_budget_tolerates_a_little_throttling(self):
-        opened = {"a": self._reading("a", 0, 0)}
-        closed = {"a": self._reading("a", 1000, 5)}
-        strict = cpu_limits.verdict_from_readings(opened, closed, {"a": 1.0})
-        relaxed = cpu_limits.verdict_from_readings(
-            opened, closed, {"a": 1.0}, budget_percent=1.0
+        Kafka spent 131 throttled periods starting up and one in a 300s
+        steady window. A verdict that reported only the window would call
+        that stack clean, so the lifetime counter is surfaced separately.
+        """
+        opened = {"a": self._reading("a", 100, 40)}
+        closed = {"a": self._reading("a", 200, 40)}
+        verdict = cpu_limits.verdict_from_readings(opened, closed, {"a": 1.0})
+        self.assertEqual(verdict.lifetime_bound, ("a",))
+        self.assertEqual(verdict.to_dict()["lifetimeBound"], ["a"])
+
+    def test_window_throttling_always_implies_lifetime_throttling(self):
+        """Why the window budget was removed rather than kept alongside.
+
+        Throttled periods counted inside a window are a subset of those
+        counted since container start, so the lifetime criterion subsumes a
+        window threshold entirely and that threshold could never decide a
+        verdict. Keeping both would have been a dead conjunct. This pins the
+        implication so the removal cannot be quietly undone.
+        """
+        opened = {"a": self._reading("a", 100, 0)}
+        closed = {"a": self._reading("a", 200, 5)}
+        verdict = cpu_limits.verdict_from_readings(opened, closed, {"a": 1.0})
+        self.assertGreater(verdict.services[0].throttled, 0)
+        self.assertEqual(verdict.lifetime_bound, ("a",))
+
+    def test_the_verdict_exposes_no_tunable_throttling_threshold(self):
+        """A gate with a knob invites the knob being turned until it passes.
+
+        The criterion is zero throttled periods, which needs no threshold.
+        """
+        import inspect as _inspect
+        sig = _inspect.signature(cpu_limits.verdict_from_readings)
+        self.assertEqual(
+            [p for p in sig.parameters if "budget" in p or "threshold" in p],
+            [],
         )
-        self.assertFalse(strict.accepted)
-        self.assertTrue(relaxed.accepted)
-
+        self.assertFalse(
+            [n for n in dir(cpu_limits) if "BUDGET" in n or "THRESHOLD" in n]
+        )
 
 class ThrottleReadingParseTests(unittest.TestCase):
     """Parsing the kernel's files, with no daemon involved."""
