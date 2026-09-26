@@ -22,28 +22,40 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import incidents as incidents_module
+from .checks import (
+    CheckPlan,
+    ComposeModel,
+    generate_check_plan,
+    parse_compose_config,
+    redact_env,
+    summarise_problems,
+)
 from .compose import (
     BASE_COMPOSE_FILE,
     ComposeError,
     ComposeProject,
     ResidualResources,
     container_env,
+    container_networks,
     container_resource_limits,
 )
 from .docker_cli import DockerError, daemon_info, docker
 from .images import PinnedImage, build_local_image, resolve_registry_image, verify_container_image
 from .incidents import MYSQL_POOL_DELAY_V1, IncidentVariant, IncidentVerification
 from .load import LoadProfile, LoadResult, run_load
-from .manifest import EnvironmentManifest, hash_fixture, hash_text
+from .manifest import CATALOG_APPLICATION_GATES, EnvironmentManifest, hash_fixture, hash_text
 from .telemetry import PrometheusClient, TelemetryWindow, capture_window
 
-SERVICES = ("mysql", "valkey", "catalog-api", "prometheus")
-
-# Services whose containers must have no route off the host. catalog-api and
-# prometheus are excluded because Docker cannot publish a host port from an
-# internal-only network; that limitation is recorded in the manifest rather
-# than silently claimed as blocked.
-EGRESS_BLOCKED_SERVICES = ("mysql", "valkey")
+# Why each service that can reach the network is allowed to. Reconciliation
+# fails for any reachable service absent from this mapping, so a service added
+# to the edge network cannot quietly acquire egress: someone has to say why.
+EGRESS_EXCEPTIONS: dict[str, str] = {
+    "catalog-api": (
+        "joins the edge network because Docker cannot publish a host port from an "
+        "internal-only network; the image is distroless with no shell or package manager"
+    ),
+    "prometheus": "joins the edge network to publish its query port for the driver",
+}
 
 
 @dataclass(frozen=True)
@@ -96,6 +108,13 @@ class EnvironmentSpec:
     )
 
     def baseline_container_env(self) -> dict[str, str]:
+        """The healthy values the incident overlay departs from.
+
+        Verification no longer reads this: the environment check compares the
+        daemon's view of each container against the Compose file's declaration,
+        which covers every service rather than this one list. It remains as the
+        driver's own record of the healthy configuration.
+        """
         return {
             "DB_READ_DELAY": self.db_read_delay,
             "DB_MAX_OPEN_CONNS": str(self.db_max_open_conns),
@@ -183,6 +202,8 @@ class TrialEnvironment:
 
         self.images: dict[str, PinnedImage] = {}
         self.project: ComposeProject | None = None
+        self.compose_model: ComposeModel | None = None
+        self.check_plan: CheckPlan | None = None
         self.ports: dict[str, Any] = {}
         self.api_base_url = ""
         self.prometheus_base_url = ""
@@ -277,77 +298,130 @@ class TrialEnvironment:
         # Fail closed before creating anything if the slate is not clean.
         self.project.assert_absent()
         self.manifest.compose_config_hash = hash_text(self.project.config())
+        self._generate_check_plan()
 
         self.project.up(wait_timeout=300)
         self._discover_ports()
         self._stop("create")
 
-    def _discover_ports(self) -> None:
+    def _generate_check_plan(self) -> CheckPlan:
+        """Derive the per-service checks from the Compose file itself.
+
+        Both gates recorded here are load-bearing. Without
+        `check-plan-generated`, a run that never reached this point would have
+        an empty derived requirement and could sign off having verified
+        nothing. Without `check-plan-covers-compose-services`, a plan that
+        omitted a service would omit that service's gates from the requirement
+        too, so the omission would erase its own evidence.
+        """
         assert self.project is not None
-        api_host, api_port = self.project.port("catalog-api", 8080)
-        prom_host, prom_port = self.project.port("prometheus", 9090)
-        self.ports = {
-            "catalog-api": {"host": api_host, "hostPort": api_port, "containerPort": 8080},
-            "prometheus": {"host": prom_host, "hostPort": prom_port, "containerPort": 9090},
-        }
-        self.api_base_url = f"http://{api_host}:{api_port}"
-        self.prometheus_base_url = f"http://{prom_host}:{prom_port}"
+        self._start("generateCheckPlan")
+        model = parse_compose_config(self.project.config_json())
+        plan = generate_check_plan(
+            model,
+            readiness_probes=set(self._readiness_probes()),
+            egress_exceptions=EGRESS_EXCEPTIONS,
+        )
+        self.compose_model = model
+        self.check_plan = plan
+        self.manifest.check_plan = plan.to_dict()
+        self.manifest.require_gates(plan.gate_names | CATALOG_APPLICATION_GATES)
+        self.manifest.add_gate(
+            "check-plan-generated",
+            bool(plan.checks),
+            f"{len(plan.checks)} checks over {len(plan.services)} services",
+        )
+        self.manifest.add_gate(
+            "check-plan-covers-compose-services",
+            plan.complete,
+            summarise_problems(plan.problems),
+        )
+        self._stop("generateCheckPlan")
+        return plan
+
+    def _discover_ports(self) -> None:
+        """Re-read every published port from Compose after container creation.
+
+        Recreating a container reassigns its ephemeral host port, so this runs
+        again after injection and reversion. The set of ports comes from the
+        Compose model rather than a list here, so a service that starts
+        publishing a port is discovered rather than ignored.
+        """
+        assert self.project is not None
+        model = self.compose_model
+        published: dict[str, tuple[int, ...]] = (
+            {name: model.services[name].published_ports for name in model.service_names}
+            if model is not None
+            else {"catalog-api": (8080,), "prometheus": (9090,)}
+        )
+        ports: dict[str, Any] = {}
+        for service, container_ports in sorted(published.items()):
+            for container_port in container_ports:
+                host, host_port = self.project.port(service, container_port)
+                ports[service] = {
+                    "host": host,
+                    "hostPort": host_port,
+                    "containerPort": container_port,
+                }
+        self.ports = ports
+        api = ports["catalog-api"]
+        prom = ports["prometheus"]
+        self.api_base_url = f"http://{api['host']}:{api['hostPort']}"
+        self.prometheus_base_url = f"http://{prom['host']}:{prom['hostPort']}"
         self.prometheus = PrometheusClient(self.prometheus_base_url)
         self.manifest.ports = self.ports
 
     # -- verification ---------------------------------------------------------
 
     def verify_start_state(self) -> bool:
-        """Verify images, data, cache, configuration, limits, network, readiness."""
+        """Execute the generated plan: images, limits, environment, egress, readiness.
+
+        Every check here is driven by the plan rather than by a list in this
+        file, so the set of things verified grows with the Compose file instead
+        of with someone remembering to update a tuple.
+        """
         assert self.project is not None
         self._start("verifyStartState")
-        project = self.project
         manifest = self.manifest
         spec = self.spec
+        if self.check_plan is None or self.compose_model is None:
+            self._generate_check_plan()
+        plan = self.check_plan
+        model = self.compose_model
+        assert plan is not None and model is not None
 
-        for service in SERVICES:
-            container = project.container_id(service)
-            matches, actual = verify_container_image(container, self.images[service])
-            manifest.add_gate(
-                f"image-pinned:{service}",
-                matches,
-                f"expected {self.images[service].image_id}, observed {actual}",
-            )
+        containers = {service: self.project.container_id(service) for service in plan.services}
 
+        for check in plan.for_kind("image-pinned"):
+            self._check_image_pinned(check.service, containers[check.service], model)
         limits: dict[str, Any] = {}
-        for service in SERVICES:
-            container = project.container_id(service)
-            observed = container_resource_limits(container)
-            declared = spec.resources[service]
-            limits[service] = {
-                "declared": {"cpus": declared.cpus, "memory": declared.memory},
-                "observed": observed,
-            }
-            manifest.add_gate(
-                f"resource-limits:{service}",
-                observed["nanoCpus"] == declared.nano_cpus
-                and observed["memoryBytes"] == declared.memory_bytes,
-                f"declared cpus={declared.cpus} memory={declared.memory}; observed {observed}",
+        for check in plan.for_kind("resource-limits"):
+            limits[check.service] = self._check_resource_limits(
+                check.service, containers[check.service], model
             )
         manifest.resource_limits = limits
 
-        api_env = container_env(project.container_id("catalog-api"))
-        expected_env = spec.baseline_container_env()
-        env_ok = all(api_env.get(key) == value for key, value in expected_env.items())
-        manifest.environment_variables = {
-            "catalog-api": {
-                "expected": expected_env,
-                "observed": {key: api_env.get(key, "<unset>") for key in expected_env},
-            }
+        observed_env: dict[str, Any] = {}
+        for check in plan.for_kind("environment-variables"):
+            observed_env[check.service] = self._check_environment(
+                check.service, containers[check.service], model
+            )
+        manifest.environment_variables = observed_env
+
+        posture: dict[str, Any] = {"networks": {}, "egressBlocked": {}, "exceptions": {}}
+        for check in plan.for_kind("egress"):
+            self._check_egress(check.service, containers[check.service], model, posture)
+        posture["exceptions"] = {
+            service: reason
+            for service, reason in plan.egress_exceptions.items()
         }
-        manifest.add_gate("environment-variables:catalog-api", env_ok)
 
         readiness_ok = self._verify_readiness()
         manifest.readiness_verified = readiness_ok
         manifest.add_gate("application-readiness", readiness_ok)
 
         seed_count = incidents_module.count_seed_rows(
-            project, spec.mysql_database, self.mysql_root_password
+            self.project, spec.mysql_database, self.mysql_root_password
         )
         manifest.seed_count = seed_count
         manifest.add_gate(
@@ -356,79 +430,223 @@ class TrialEnvironment:
             f"expected {spec.expected_seed_count}, observed {seed_count}",
         )
 
-        cache_keys = incidents_module.count_cache_keys(project)
+        cache_keys = incidents_module.count_cache_keys(self.project)
         manifest.cache_keys = cache_keys
         manifest.add_gate("valkey-empty", cache_keys == 0, f"observed {cache_keys} keys")
 
-        manifest.network_posture = self._verify_network_posture()
+        posture["catalogApiImageHasNoShell"] = self._check_image_hermetic()
+        manifest.network_posture = posture
         self._stop("verifyStartState")
         return not manifest.failed_gates
 
-    def _verify_readiness(self) -> bool:
-        """Application-level readiness, beyond container health."""
-        spec = self.spec
-        checks: list[bool] = []
+    # -- generated checks -----------------------------------------------------
 
-        checks.append(_wait_for(lambda: _http_get(f"{self.api_base_url}/healthz")[0] == 200))
-        checks.append(_wait_for(lambda: _http_get(f"{self.api_base_url}/readyz")[0] == 200))
+    def _check_image_pinned(self, service: str, container: str, model: ComposeModel) -> None:
+        declared = model.services[service].image
+        pinned = self.images.get(service)
+        if pinned is not None:
+            matches, actual = verify_container_image(container, pinned)
+            detail = f"expected {pinned.image_id}, observed {actual}"
+        else:
+            # A service the driver did not pin itself. The Compose declaration
+            # is still required to be a digest, and the daemon must agree.
+            actual = str(
+                json.loads(docker("inspect", container, timeout=60).stdout)[0].get("Image") or ""
+            )
+            matches = bool(actual) and (
+                "@sha256:" in declared or declared.startswith("sha256:")
+            )
+            detail = f"declared {declared}, observed image {actual}"
+        self.manifest.add_gate(f"image-pinned:{service}", matches, detail)
 
-        def products_seeded() -> bool:
-            status, body = _http_get(f"{self.api_base_url}/api/products?limit=50")
-            if status != 200:
-                return False
-            payload = json.loads(body)
-            return payload.get("count") == spec.expected_seed_count
+    def _check_resource_limits(
+        self, service: str, container: str, model: ComposeModel
+    ) -> dict[str, Any]:
+        declared = model.services[service]
+        observed = container_resource_limits(container)
+        ok = (
+            declared.limits_declared
+            and observed["nanoCpus"] == declared.nano_cpus
+            and observed["memoryBytes"] == declared.memory_bytes
+        )
+        self.manifest.add_gate(
+            f"resource-limits:{service}",
+            ok,
+            f"declared nanoCpus={declared.nano_cpus} memoryBytes={declared.memory_bytes}; "
+            f"observed {observed}",
+        )
+        return {
+            "declared": {
+                "nanoCpus": declared.nano_cpus,
+                "memoryBytes": declared.memory_bytes,
+            },
+            "observed": observed,
+        }
 
-        checks.append(_wait_for(products_seeded))
+    def _check_environment(
+        self, service: str, container: str, model: ComposeModel
+    ) -> dict[str, Any]:
+        """Every variable the Compose file declares must be set in the container.
 
-        def metrics_exposed() -> bool:
-            status, body = _http_get(f"{self.api_base_url}/metrics")
-            return status == 200 and "catalog_http_requests_total" in body
+        Values are compared in full and recorded redacted: per-run MySQL
+        credentials appear in `mysql`'s environment and inside catalog-api's
+        DSN, and manifests outlive the trial.
 
-        checks.append(_wait_for(metrics_exposed))
+        A service that declares no environment, such as valkey or prometheus
+        which are configured by command arguments, passes this check having
+        examined nothing. That is a correct result and a vacuous one, so the
+        declared count is recorded and the detail says so rather than reading
+        as a verification that happened.
+        """
+        declared = dict(model.services[service].environment)
+        observed = container_env(container)
+        mismatched = sorted(
+            key for key, value in declared.items() if observed.get(key) != value
+        )
+        if not declared:
+            detail = "no environment declared; nothing to verify (coverage 0)"
+        elif mismatched:
+            detail = f"{len(declared)} declared; mismatched: {mismatched}"
+        else:
+            detail = f"{len(declared)} declared variables all match"
+        self.manifest.add_gate(f"environment-variables:{service}", not mismatched, detail)
+        return {
+            "declaredCount": len(declared),
+            "declared": redact_env(declared),
+            "observed": redact_env({key: observed.get(key, "<unset>") for key in declared}),
+            "mismatched": mismatched,
+        }
 
-        assert self.prometheus is not None
-        checks.append(self.prometheus.ready())
-        checks.append(_wait_for(self.prometheus.scrape_target_up, attempts=40, interval=1.0))
-        return all(checks)
+    def _check_egress(
+        self, service: str, container: str, model: ComposeModel, posture: dict[str, Any]
+    ) -> None:
+        """Network attachment matches the declaration, and internal means internal.
 
-    def _verify_network_posture(self) -> dict[str, Any]:
-        """Negative test: the data tier must not be able to leave the host.
-
-        Trial containers fetch nothing from package registries at runtime; this
-        proves it for the services that can be fully isolated, and records the
-        honest exception for the two that must publish host ports.
+        For every service this compares the networks the daemon reports against
+        the networks the Compose file declares. For services on internal-only
+        networks it additionally proves there is no route off the host, which
+        is the assertion that would otherwise be taken on trust.
         """
         assert self.project is not None
-        posture: dict[str, Any] = {"egressBlocked": {}, "exceptions": {}}
+        expected = model.observed_network_names(service)
+        actual = container_networks(container)
+        attached_ok = set(actual) == set(expected)
+        posture["networks"][service] = {"declared": list(expected), "observed": list(actual)}
 
-        for service in EGRESS_BLOCKED_SERVICES:
+        reachable = model.egress_reachable(service)
+        blocked_ok = True
+        detail = f"declared networks {list(expected)}, observed {list(actual)}"
+        if not reachable:
             result = self.project.exec(
                 service,
-                ["sh", "-c", "timeout 4 getent hosts pypi.org >/dev/null 2>&1 && echo OPEN || echo BLOCKED"],
+                [
+                    "sh",
+                    "-c",
+                    "timeout 4 getent hosts pypi.org >/dev/null 2>&1 && echo OPEN || echo BLOCKED",
+                ],
                 timeout=30,
                 check=False,
             )
-            blocked = "BLOCKED" in result.stdout
-            posture["egressBlocked"][service] = blocked
-            self.manifest.add_gate(f"egress-blocked:{service}", blocked, result.stdout.strip())
+            blocked_ok = "BLOCKED" in result.stdout
+            posture["egressBlocked"][service] = blocked_ok
+            detail = f"{detail}; egress probe {result.stdout.strip() or '<no output>'}"
+        self.manifest.add_gate(f"egress:{service}", attached_ok and blocked_ok, detail)
 
-        posture["exceptions"]["catalog-api"] = (
-            "joins the edge network because Docker cannot publish a host port from an "
-            "internal-only network; the image is distroless with no shell or package manager"
-        )
-        posture["exceptions"]["prometheus"] = (
-            "joins the edge network to publish its query port for the driver"
-        )
-
+    def _check_image_hermetic(self) -> bool:
         shell_absent = not docker(
             "run", "--rm", "--entrypoint", "sh", self.images["catalog-api"].reference, "-c", "exit 0",
             check=False,
             timeout=60,
         ).ok
-        posture["catalogApiImageHasNoShell"] = shell_absent
         self.manifest.add_gate("catalog-api-image-hermetic", shell_absent)
-        return posture
+        return shell_absent
+
+    # -- readiness ------------------------------------------------------------
+
+    def _readiness_probes(self) -> dict[str, Callable[[], tuple[bool, str]]]:
+        """One application-level readiness probe per service.
+
+        A service in the Compose file with no entry here fails reconciliation,
+        so the stack cannot grow a service whose readiness nobody checks.
+        Container health is not enough: these ask each service to do the work
+        the trial depends on.
+        """
+        return {
+            "mysql": self._ready_mysql,
+            "valkey": self._ready_valkey,
+            "catalog-api": self._ready_catalog_api,
+            "prometheus": self._ready_prometheus,
+        }
+
+    def _ready_mysql(self) -> tuple[bool, str]:
+        assert self.project is not None
+        ok = _wait_for(
+            lambda: self.project.exec(  # type: ignore[union-attr]
+                "mysql",
+                [
+                    "mysql",
+                    "-uroot",
+                    f"-p{self.mysql_root_password}",
+                    "-N",
+                    "-B",
+                    "-e",
+                    "SELECT 1",
+                ],
+                timeout=30,
+                check=False,
+            ).stdout.strip()
+            == "1",
+            attempts=60,
+        )
+        return ok, "server answers SELECT 1"
+
+    def _ready_valkey(self) -> tuple[bool, str]:
+        assert self.project is not None
+        ok = _wait_for(
+            lambda: "PONG"
+            in self.project.exec(  # type: ignore[union-attr]
+                "valkey", ["valkey-cli", "ping"], timeout=30, check=False
+            ).stdout.upper(),
+            attempts=40,
+        )
+        return ok, "server answers PING"
+
+    def _ready_catalog_api(self) -> tuple[bool, str]:
+        spec = self.spec
+
+        def products_seeded() -> bool:
+            status, body = _http_get(f"{self.api_base_url}/api/products?limit=50")
+            if status != 200:
+                return False
+            return json.loads(body).get("count") == spec.expected_seed_count
+
+        def metrics_exposed() -> bool:
+            status, body = _http_get(f"{self.api_base_url}/metrics")
+            return status == 200 and "catalog_http_requests_total" in body
+
+        steps = {
+            "healthz": lambda: _http_get(f"{self.api_base_url}/healthz")[0] == 200,
+            "readyz": lambda: _http_get(f"{self.api_base_url}/readyz")[0] == 200,
+            "products-seeded": products_seeded,
+            "metrics": metrics_exposed,
+        }
+        failed = [name for name, probe in steps.items() if not _wait_for(probe)]
+        return not failed, "all endpoints ready" if not failed else f"failed: {failed}"
+
+    def _ready_prometheus(self) -> tuple[bool, str]:
+        assert self.prometheus is not None
+        ready = self.prometheus.ready()
+        scraping = _wait_for(self.prometheus.scrape_target_up, attempts=40, interval=1.0)
+        return ready and scraping, f"ready={ready} scrapingTarget={scraping}"
+
+    def _verify_readiness(self) -> bool:
+        """Run every registered probe and record one gate per service."""
+        results: list[bool] = []
+        for service, probe in sorted(self._readiness_probes().items()):
+            ok, detail = probe()
+            results.append(ok)
+            self.manifest.add_gate(f"readiness:{service}", ok, detail)
+        return all(results)
 
     # -- incident -------------------------------------------------------------
 
