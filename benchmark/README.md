@@ -107,7 +107,7 @@ the install and pip is never allowed to resolve a version of its own.
 ```bash
 cd benchmark
 uv sync
-uv run pytest                 # 284 tests, no model calls
+uv run pytest                 # no model calls
 uv run radius-perf-smoke --model gpt-5.4 --output ../artifacts/smoke
 ```
 
@@ -785,14 +785,20 @@ cd /path/to/repo && python3.12 -m unittest discover -s benchmark/tests -t benchm
 
 ### What CI does and does not cover
 
-The `python` CI job collects and runs **all five** test modules — `test_driver`,
-`test_events`, `test_isolation`, `test_usage`, `test_versions` — for **284 tests**,
-of which `test_driver` contributes **150**.
+The `python` CI job discovers every test module under `benchmark/tests` from
+disk, rather than from a list. For each one it reports how many tests were
+collected and how many ran, and it fails if either is zero, if collection
+fails, or if the two numbers differ. Discovering no modules at all is also a
+hard failure. **The CI log carries the current per-module counts**; they are
+deliberately not repeated here, because a number in prose is not checked by
+anything and goes stale silently — this paragraph has claimed 120, then 254,
+then 284, each true when written.
 
-It previously ran only `test_driver` (120 tests). The other four import
-`github-copilot-sdk` and `inspect-ai`, which were reachable only through CFS, and CFS
-authorizes by **network context rather than by credential**: it resolves from a managed
-machine and returns 401 to a GitHub-hosted runner, so no token would have fixed it.
+It previously ran only `test_driver`, which at the time was 120 tests. The other
+modules import `github-copilot-sdk` and `inspect-ai`, which were reachable only
+through CFS, and CFS authorizes by **network context rather than by
+credential**: it resolves from a managed machine and returns 401 to a
+GitHub-hosted runner, so no token would have fixed it.
 
 CI now installs those packages from **public PyPI**, using hashes exported from the
 CFS-resolved `uv.lock` — see [CI installs from public PyPI, by hash](#ci-installs-from-public-pypi-by-hash).
