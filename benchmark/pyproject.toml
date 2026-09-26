@@ -15,6 +15,10 @@ radius-perf-eval-env = "radius_perf_eval.cli:main"
 [dependency-groups]
 dev = [
     "pytest==8.3.4",
+    # Used by CI to re-export requirements-ci.txt and prove it still matches
+    # uv.lock. Pinned here so CI installs it through the same hash-checked
+    # path as everything else, with no third-party action.
+    "uv==0.12.15",
 ]
 
 # Microsoft Central Feed Services (CFS) proxy.

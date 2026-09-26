@@ -11,12 +11,31 @@ permissions:
 jobs:
   go:
     runs-on: ubuntu-latest
+    env:
+      # Public module proxy, with the checksum database on. Every module the
+      # build downloads is checked against the committed go.sum, and
+      # -mod=readonly stops the build from editing go.mod or go.sum to make a
+      # mismatch go away. CI therefore consumes the pins it was given rather
+      # than resolving new ones.
+      GOPROXY: https://proxy.golang.org,direct
+      GOSUMDB: sum.golang.org
+      GOFLAGS: -mod=readonly
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: "1.23.x"
           cache: true
+
+      - name: Download modules and verify them against go.sum
+        # `go mod verify` recomputes the hash of every module in the cache and
+        # compares it with go.sum. The toolchain already refuses a mismatch at
+        # download time; naming it as a step makes the check visible in the log
+        # rather than implied by its absence.
+        run: |
+          go mod download
+          go mod verify
+
       - name: Verify formatting
         run: |
           test -z "$(gofmt -l $(find cmd internal -name '*.go' -type f))"
@@ -30,27 +49,181 @@ jobs:
     defaults:
       run:
         working-directory: benchmark
+    env:
+      # Install from public PyPI. The lock is resolved through the Microsoft
+      # CFS proxy, which a GitHub-hosted runner cannot reach: CFS authorises by
+      # network context rather than by credential and returns 401 here, so no
+      # token would help. That is workable because CFS serves byte-identical
+      # artifacts, so a hash minted against CFS validates against pythonhosted.
+      #
+      # That premise is checked rather than assumed. tools/verify_lock_hashes.py
+      # asserts every hash in requirements-ci.txt is a digest public PyPI
+      # publishes for that exact version; it passed for all 446 hashes across
+      # 88 packages when this file was written.
+      PIP_INDEX_URL: https://pypi.org/simple
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PIP_NO_INPUT: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
+      - name: Positive control -- pip rejects a file whose hash differs
+        # The install below claims hash checking is enforced. That claim is
+        # worth something only if a wrong hash actually fails, so prove it
+        # before relying on it.
+        #
+        # This runs entirely offline against a wheel built in place
+        # (--no-index, file:// path). A control that reached the network could
+        # "fail" because of a timeout and be misread as a hash rejection, which
+        # is the same passes-for-the-wrong-reason defect the Docker control
+        # below exists to prevent. Offline, the only thing that can fail is the
+        # hash.
+        run: |
+          set -o pipefail
+          work="$(mktemp -d)"
+          python - "$work" <<'PY'
+          import hashlib
+          import sys
+          import zipfile
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          wheel = root / "dummy_pkg-0.0.1-py3-none-any.whl"
+          with zipfile.ZipFile(wheel, "w") as archive:
+              archive.writestr("dummy_pkg.py", "VALUE = 1\n")
+              archive.writestr(
+                  "dummy_pkg-0.0.1.dist-info/METADATA",
+                  "Metadata-Version: 2.1\nName: dummy-pkg\nVersion: 0.0.1\n",
+              )
+              archive.writestr(
+                  "dummy_pkg-0.0.1.dist-info/WHEEL",
+                  "Wheel-Version: 1.0\nGenerator: ci\nRoot-Is-Purelib: true\n"
+                  "Tag: py3-none-any\n",
+              )
+              archive.writestr("dummy_pkg-0.0.1.dist-info/RECORD", "")
+          (root / "digest").write_text(hashlib.sha256(wheel.read_bytes()).hexdigest())
+          PY
+          wheel="${work}/dummy_pkg-0.0.1-py3-none-any.whl"
+          digest="$(cat "${work}/digest")"
+
+          # (a) The correct hash must install. Without this half, a mistyped
+          #     pip invocation would fail part (b) and be scored as a pass.
+          echo "dummy-pkg @ file://${wheel} --hash=sha256:${digest}" > "${work}/good.txt"
+          if ! python -m pip install --require-hashes --no-deps --no-index \
+              --target "${work}/site" -r "${work}/good.txt" > "${work}/good.log" 2>&1; then
+            echo "::error::hash-checked install of a correct hash failed; the control cannot distinguish anything"
+            sed -n '1,40p' "${work}/good.log"
+            exit 1
+          fi
+
+          # (b) A wrong hash must fail, and fail *because of the hash*.
+          echo "dummy-pkg @ file://${wheel} --hash=sha256:$(python -c 'print("0" * 64)')" > "${work}/bad.txt"
+          if python -m pip install --require-hashes --no-deps --no-index \
+              --target "${work}/site-bad" -r "${work}/bad.txt" > "${work}/bad.log" 2>&1; then
+            echo "::error::pip accepted a wheel whose hash did not match; --require-hashes is not enforcing"
+            exit 1
+          fi
+          if ! grep -qi "DO NOT MATCH THE HASHES" "${work}/bad.log"; then
+            echo "::error::the install failed, but not with a hash mismatch; the control proved nothing"
+            sed -n '1,40p' "${work}/bad.log"
+            exit 1
+          fi
+          echo "pip installs a matching hash and rejects a mismatching one with a hash error"
+
+      - name: Install test dependencies by hash from public PyPI
+        # --require-hashes: every requirement must carry a hash and match it.
+        # --no-deps:        install exactly what the file lists. With the ==
+        #                   pins this leaves pip no room to choose a version of
+        #                   its own.
+        # The project itself is not installed; the tests import
+        # radius_perf_eval from the working directory.
+        run: |
+          set -o pipefail
+          python -m pip install --require-hashes --no-deps -r requirements-ci.txt
+
+      - name: Positive control -- a tampered hash in requirements-ci.txt is rejected
+        # The control above proves pip enforces hashes for a synthetic file.
+        # This proves it for *this* file, by corrupting one real entry.
+        #
+        # `pip download` rather than `pip install --dry-run`: six is already
+        # installed by the previous step, and pip can satisfy a dry-run install
+        # from what is present without ever fetching the artifact -- which
+        # would skip the hash check entirely and let this control pass while
+        # testing nothing. `download` always fetches and always verifies.
+        run: |
+          set -o pipefail
+          work="$(mktemp -d)"
+          version="$(grep -oE '^six==[^ \\]+' requirements-ci.txt | head -1 | cut -d'=' -f3)"
+          if [ -z "${version}" ]; then
+            echo "::error::could not find the 'six' pin in requirements-ci.txt"
+            exit 1
+          fi
+          good_hash="$(grep -A2 '^six==' requirements-ci.txt | grep -oE 'sha256:[0-9a-f]{64}' | head -1 | cut -d: -f2)"
+
+          # (a) The real hash must fetch cleanly, so a network failure in (b)
+          #     cannot be mistaken for a hash rejection.
+          printf 'six==%s \\\n    --hash=sha256:%s\n' "${version}" "${good_hash}" > "${work}/good.txt"
+          if ! python -m pip download --require-hashes --no-deps \
+              -d "${work}/dl-good" -r "${work}/good.txt" > "${work}/good.log" 2>&1; then
+            echo "::error::could not download six with its real hash; the tampered check below would be untrustworthy"
+            sed -n '1,40p' "${work}/good.log"
+            exit 1
+          fi
+
+          # (b) The same pin with a corrupted hash must be refused.
+          printf 'six==%s \\\n    --hash=sha256:%s\n' "${version}" "$(python -c 'print("0" * 64)')" > "${work}/bad.txt"
+          if python -m pip download --require-hashes --no-deps \
+              -d "${work}/dl-bad" -r "${work}/bad.txt" > "${work}/bad.log" 2>&1; then
+            echo "::error::pip accepted a tampered hash for a pin from requirements-ci.txt"
+            exit 1
+          fi
+          if ! grep -qi "DO NOT MATCH THE HASHES" "${work}/bad.log"; then
+            echo "::error::the tampered fetch failed for a non-hash reason; the control proved nothing"
+            sed -n '1,40p' "${work}/bad.log"
+            exit 1
+          fi
+          echo "six==${version} downloads with its real hash and is refused with a corrupted one"
+
+      - name: requirements-ci.txt still matches uv.lock
+        # Regenerate with the documented command and let git decide. --frozen
+        # forbids re-resolution and --offline forbids reaching an index, so
+        # this compares the committed file against the lock and nothing else.
+        # uv is itself pinned in requirements-ci.txt and was installed above,
+        # so the regenerating tool is the version that generated the file.
+        run: |
+          set -o pipefail
+          # `git diff` reports nothing for a file git is not tracking, so a
+          # deleted requirements-ci.txt would be silently regenerated here and
+          # the step would pass having compared the file with itself. Confirm
+          # git is tracking it before treating an empty diff as agreement.
+          if ! git ls-files --error-unmatch requirements-ci.txt > /dev/null 2>&1; then
+            echo "::error::requirements-ci.txt is not tracked by git, so a diff against it would prove nothing"
+            exit 1
+          fi
+          # `uv export` writes the file *and* echoes it to stdout, so stdout is
+          # discarded here; that is shell redirection, not a change of
+          # arguments, and uv records only argv in the file header. The
+          # committed header therefore still matches the command in the README.
+          uv export --frozen --offline --format requirements.txt --all-groups --no-emit-project --output-file requirements-ci.txt > /dev/null
+          if ! git diff --exit-code -- requirements-ci.txt; then
+            echo "::error::requirements-ci.txt is out of date with uv.lock. Regenerate it with the command in benchmark/README.md and commit the result."
+            exit 1
+          fi
+          echo "requirements-ci.txt is identical to a fresh export of uv.lock"
+
       - name: Positive control -- confirm the Docker daemon is unreachable
-        # The step below claims to run without a daemon. GitHub-hosted Ubuntu
-        # runners have one running, so without this the claim is untested and
-        # a test that quietly starts calling Docker would pass here forever.
-        # That is the failure this control exists to prevent, one level up
-        # from the tests themselves: assert the mechanism is engaged rather
-        # than assume the setting worked.
+        # The test steps below claim to run without a daemon. GitHub-hosted
+        # Ubuntu runners have one running, so without this the claim is
+        # untested and a test that quietly started calling Docker would pass
+        # here forever. Assert the mechanism is engaged rather than assume the
+        # setting worked.
         env:
           DOCKER_HOST: unix:///nonexistent/docker.sock
         run: |
           set -o pipefail
           if ! command -v docker >/dev/null 2>&1; then
-            # Without this, `docker info` would fail because the binary is
-            # missing and the control would pass for the wrong reason, which
-            # is the exact failure it is here to rule out.
             echo "::error::docker CLI is absent, so an unreachable daemon cannot be demonstrated"
             exit 1
           fi
@@ -60,66 +233,95 @@ jobs:
           fi
           echo "docker is installed and docker info fails under DOCKER_HOST=${DOCKER_HOST}, as required"
 
-      - name: Compose trial driver tests
-        # Run with the stdlib only, deliberately. The driver package has zero
-        # runtime dependencies, so these tests need no package index and no
-        # Docker daemon, and therefore cannot be broken by a mirror outage.
-        #
-        # DOCKER_HOST is pointed at a socket that does not exist so that
-        # "needs no Docker daemon" is enforced rather than asserted. Nine of
-        # these tests once required a daemon without saying so; they passed
-        # for months because one happened to be running, and errored the
-        # first time it was not. The driver shells out to `docker`, which
-        # reads DOCKER_HOST ahead of any context, and docker_cli inherits
-        # os.environ, so setting it here reaches every call the tests make.
+      - name: Collect every test module
+        # Collection is checked per module, and separately from running,
+        # because the failure this guards against is a module that stops being
+        # collected at all. An import error makes pytest report nothing for
+        # that module while the run still exits green on the others, so a job
+        # that looked only at the final tally would keep passing with less and
+        # less behind it. Zero collected is a hard failure.
         env:
           DOCKER_HOST: unix:///nonexistent/docker.sock
         run: |
           set -o pipefail
-          python -m unittest tests.test_driver -v 2>&1 | tee driver-tests.log
-          echo "DRIVER_TESTS_RAN=$(grep -cE '^test_[A-Za-z0-9_]+ \(' driver-tests.log)" >> "$GITHUB_ENV"
+          scratch="${RUNNER_TEMP:-/tmp}"
+          : > "${scratch}/collected.tsv"
+          failed=0
+          for module in test_driver test_events test_isolation test_usage test_versions; do
+            if ! python -m pytest "tests/${module}.py" --collect-only -q > "${scratch}/${module}.collect" 2>&1; then
+              echo "::error::collection failed for tests.${module}"
+              tail -20 "${scratch}/${module}.collect"
+              printf '%s\t0\t**COLLECTION FAILED**\n' "${module}" >> "${scratch}/collected.tsv"
+              failed=1
+              continue
+            fi
+            count="$(grep -cE '^tests/.*::' "${scratch}/${module}.collect" || true)"
+            if [ "${count}" -eq 0 ]; then
+              echo "::error::tests.${module} collected 0 tests"
+              printf '%s\t0\t**ZERO COLLECTED**\n' "${module}" >> "${scratch}/collected.tsv"
+              failed=1
+              continue
+            fi
+            printf '%s\t%s\tcollected\n' "${module}" "${count}" >> "${scratch}/collected.tsv"
+            echo "tests.${module}: ${count} collected"
+          done
+          echo "COLLECTED_TOTAL=$(awk -F'\t' '{s+=$2} END {print s+0}' "${scratch}/collected.tsv")" >> "$GITHUB_ENV"
+          if [ "${failed}" -ne 0 ]; then
+            echo "::error::at least one test module did not collect; refusing to report a green run"
+            exit 1
+          fi
 
-      - name: Report what this job did not run
-        # This job is NOT "Python CI green". It runs one of five test modules.
-        # Saying so in the summary, with counts and names, is the point: a job
-        # that silently omits a test set reads as coverage it does not have,
-        # which is the same vacuity problem as a check that passes because the
-        # thing it checks never ran.
+      - name: Run every test module
+        env:
+          DOCKER_HOST: unix:///nonexistent/docker.sock
+        run: |
+          set -o pipefail
+          scratch="${RUNNER_TEMP:-/tmp}"
+          python -m pytest tests/ -v 2>&1 | tee "${scratch}/pytest.log"
+          ran="$(grep -cE '^tests/.*::.*(PASSED|FAILED|ERROR|SKIPPED)' "${scratch}/pytest.log" || true)"
+          echo "RAN_TOTAL=${ran}" >> "$GITHUB_ENV"
+          # The suite can only be as complete as what collection found. If the
+          # run executed fewer tests than were collected, something dropped out
+          # between the two steps and a green tick would be covering it.
+          if [ "${ran}" -lt "${COLLECTED_TOTAL}" ]; then
+            echo "::error::ran ${ran} tests but collected ${COLLECTED_TOTAL}; a module dropped out between collection and execution"
+            exit 1
+          fi
+
+      - name: Report what this job ran and did not run
         if: always()
         run: |
           set -o pipefail
-          skipped_total=0
-          rows=""
-          for module in test_events test_isolation test_usage test_versions; do
-            count=$(grep -cE '^[[:space:]]*def test_' "tests/${module}.py")
-            skipped_total=$(( skipped_total + count ))
-            rows="${rows}| \`tests.${module}\` | **NOT RUN** | ${count} |"$'\n'
-          done
+          scratch="${RUNNER_TEMP:-/tmp}"
           {
             echo "### Python job coverage"
             echo
             echo "| test module | status | tests |"
             echo "|---|---|---|"
-            echo "| \`tests.test_driver\` | run | ${DRIVER_TESTS_RAN:-0} |"
-            printf '%s' "${rows}"
+            if [ -f "${scratch}/collected.tsv" ]; then
+              while IFS=$'\t' read -r module count status; do
+                echo "| \`tests.${module}\` | ${status} | ${count} |"
+              done < "${scratch}/collected.tsv"
+            else
+              echo "| _collection step did not run_ | **NOT RUN** | 0 |"
+            fi
             echo
-            echo "**Ran ${DRIVER_TESTS_RAN:-0}. Did not run ${skipped_total}.**"
+            echo "**Collected ${COLLECTED_TOTAL:-0}. Ran ${RAN_TOTAL:-0}.**"
             echo
-            echo "The driver suite ran with the Docker daemon deliberately unreachable"
+            echo "All five modules are collected and run. The four instrumentation"
+            echo "modules import \`github-copilot-sdk\` and \`inspect-ai\`, installed from"
+            echo "public PyPI with \`--require-hashes\` against \`requirements-ci.txt\`,"
+            echo "which is exported from \`uv.lock\`. CFS is not reachable from a"
+            echo "GitHub-hosted runner and is not needed: it serves byte-identical"
+            echo "artifacts, so hashes minted against it validate against pythonhosted."
+            echo
+            echo "Counts are reported per module, and a module that collects zero fails"
+            echo "the job. A suite that silently stopped collecting a module would"
+            echo "otherwise keep reporting green with less and less behind it."
+            echo
+            echo "The driver suite runs with the Docker daemon deliberately unreachable"
             echo "(\`DOCKER_HOST\` pointed at a socket that does not exist, checked by a"
             echo "positive control first), so its independence from Docker is enforced"
             echo "here rather than assumed."
-            echo
-            echo "The four modules above are not skipped at runtime — they are never"
-            echo "collected. They import \`github-copilot-sdk\` and \`inspect-ai\`, which"
-            echo "come from the CFS proxy, and CFS access depends on network context"
-            echo "rather than on a credential: it resolves from a managed machine and"
-            echo "returns 401 to a GitHub-hosted runner. Adding a token will not fix it."
-            echo "The fix is a CFS-capable runner or a prebuilt test image, and that"
-            echo "decision belongs to the repository owner, not to this job."
-            echo
-            echo "Until it is made, a green tick here means the Compose trial driver"
-            echo "tests passed. It says nothing about the other ${skipped_total}."
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "ran=${DRIVER_TESTS_RAN:-0} not_run=${skipped_total}"
-
+          echo "collected=${COLLECTED_TOTAL:-0} ran=${RAN_TOTAL:-0}"
