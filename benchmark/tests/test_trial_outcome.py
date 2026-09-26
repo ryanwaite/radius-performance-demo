@@ -31,6 +31,30 @@ def _valid():
     }
 
 
+class _Payload:
+    def __init__(self, data):
+        self._data = data
+
+    def to_dict(self):
+        return self._data
+
+
+class _Event:
+    """The attributes ``SpikeSession._on_event`` reads off an SDK event."""
+
+    def __init__(self, event_type, data):
+        self.type = event_type
+        self.data = _Payload(data)
+        self.id = "e"
+        self.agent_id = None
+        self.parent_id = None
+        self.timestamp = None
+
+
+def _event(event_type, data):
+    return _Event(event_type, data)
+
+
 def _recorder(*payloads):
     recorder = SubmissionRecorder(component_map=MAP)
     for payload in payloads:
@@ -438,3 +462,197 @@ def test_an_unrecognised_screen_value_is_rejected_rather_than_assumed_safe():
             recorder=_recorder(_valid()),
             static_screen="OFF",
         )
+
+
+# --- a command that starts and never completes is not evidence of confinement -
+
+
+def _started_gate(*, static_screen="off", shell_enabled=True):
+    gate = SandboxGate(static_screen=static_screen, shell_enabled=shell_enabled)
+    gate.record_application(
+        SandboxApplication(
+            requested={}, succeeded=True, applied_before_first_prompt=True
+        )
+    )
+    return gate
+
+
+def _start(gate, call_id, name="bash"):
+    gate.observe_tool_execution_start({"toolCallId": call_id, "toolName": name})
+
+
+def _finish(gate, call_id, flag="true"):
+    properties = {} if flag is None else {"sandboxApplied": flag}
+    gate.observe_tool_execution(
+        {"toolCallId": call_id, "toolTelemetry": {"properties": properties}}
+    )
+
+
+def test_paired_starts_and_completions_still_pass():
+    """The positive control for the matching itself.
+
+    Without this, a gate that failed every trial -- or one that treated every
+    start as unfinished -- would satisfy the test below while proving nothing.
+    """
+    gate = _started_gate()
+    for call_id in ("t0", "t1", "t2"):
+        _start(gate, call_id)
+        _finish(gate, call_id)
+
+    result = gate.evaluate()
+    assert result.passed is True
+    assert result.tool_executions_observed == 3
+    assert result.tool_executions_confirmed == 3
+    assert all(r["completed"] for r in result.tool_executions)
+
+
+def test_a_start_with_no_completion_fails_the_permissive_configuration():
+    """The hole: the budget kills a command mid-flight and the gate never hears.
+
+    The unfinished start is placed between two confirmed, completed executions,
+    so a gate that reasons only over completions sees two of two confirmed and
+    passes. That command ran, and whether it was confined is unknown.
+    """
+    gate = _started_gate()
+    _start(gate, "t0")
+    _finish(gate, "t0")
+    _start(gate, "t1")  # killed mid-command: no completion ever arrives
+    _start(gate, "t2")
+    _finish(gate, "t2")
+
+    result = gate.evaluate()
+    assert result.passed is False
+    assert result.tool_executions_observed == 3
+    assert result.tool_executions_confirmed == 2
+    assert "never completed" in (result.reason or "")
+
+    unfinished = [r for r in result.tool_executions if not r["completed"]]
+    assert [r["toolCallId"] for r in unfinished] == ["t1"]
+    # "never finished" must stay distinct from "the runtime reported nothing":
+    # the first is a harness or budget event, the second is a runtime fault.
+    assert unfinished[0]["sandboxApplied"] is None
+    assert unfinished[0]["confirmed"] is False
+
+    outcome = score_trial(
+        terminal_class="budget_exhaustion",
+        recorder=_recorder(),
+        gate_result=result,
+        shell_enabled=True,
+        static_screen="off",
+    )
+    assert outcome.valid is False
+    assert outcome.terminal_class == "harness_failure"
+
+
+def test_an_unfinished_start_is_unconfirmed_in_every_configuration():
+    """Recorded the same way whether or not the screen was the boundary."""
+    gate = _started_gate(static_screen="on", shell_enabled=False)
+    _start(gate, "t0")
+    _finish(gate, "t0")
+    _start(gate, "t1")
+
+    result = gate.evaluate()
+    assert result.passed is False
+    assert result.tool_executions_confirmed == 1
+    assert [r["completed"] for r in result.tool_executions] == [True, False]
+
+
+def test_a_completion_with_no_start_is_recorded_rather_than_dropped():
+    """An orphan completion means the stream is not what we think it is.
+
+    It is not treated as a failure on its own -- the execution did report its
+    flag -- but it is marked, because silently normalising it would hide the
+    fact that we are missing events.
+    """
+    gate = _started_gate()
+    _finish(gate, "t0")
+
+    result = gate.evaluate()
+    assert result.tool_executions_observed == 1
+    assert result.tool_executions[0]["startObserved"] is False
+    assert result.tool_executions[0]["confirmed"] is True
+    assert result.passed is True
+
+
+def test_an_id_less_start_cannot_be_matched_and_so_is_unconfirmed():
+    """A start with no toolCallId can never pair with a completion.
+
+    Dropping it would be the same hole in a different shape: the execution ran
+    and the gate would have nothing to object to.
+    """
+    gate = _started_gate()
+    _start(gate, "t0")
+    _finish(gate, "t0")
+    gate.observe_tool_execution_start({"toolName": "bash"})
+
+    result = gate.evaluate()
+    assert result.passed is False
+    assert result.tool_executions_observed == 2
+    assert result.tool_executions_confirmed == 1
+
+
+def test_a_repeated_start_for_one_call_id_counts_once():
+    """A retried start must not inflate the execution count.
+
+    Attempts are the timeline's business. The gate asks a different question --
+    was every execution confined -- and double-counting one call would make the
+    confirmed-versus-observed ratio unreadable.
+    """
+    gate = _started_gate()
+    _start(gate, "t0")
+    _start(gate, "t0")
+    _finish(gate, "t0")
+
+    result = gate.evaluate()
+    assert result.passed is True
+    assert result.tool_executions_observed == 1
+
+
+def test_the_session_records_start_payloads_for_the_gate(tmp_path):
+    """The evidence has to reach the gate, not merely exist in the timeline.
+
+    The timeline already knew about unfinished calls; the gate could not see
+    them, because only completions were kept. This drives the real event
+    handler and then feeds what it captured into a real gate, so it fails if
+    the wiring is removed -- which a check on the timeline alone would not.
+    """
+    from radius_perf_eval.copilot import SpikeSession, TemporaryWorkspace
+    from radius_perf_eval.events import EventRecorder
+
+    workspace = TemporaryWorkspace()
+    recorder = EventRecorder(tmp_path / "events.jsonl")
+    try:
+        session = SpikeSession(
+            client=object(),
+            workspace=workspace,
+            recorder=recorder,
+            model="test-model",
+        )
+        session._on_event(_event("tool.execution_start", {"toolCallId": "t0"}))
+        session._on_event(
+            _event(
+                "tool.execution_complete",
+                {
+                    "toolCallId": "t0",
+                    "toolTelemetry": {"properties": {"sandboxApplied": "true"}},
+                },
+            )
+        )
+        # Starts and never completes: the case the gate must be able to see.
+        session._on_event(_event("tool.execution_start", {"toolCallId": "t1"}))
+    finally:
+        recorder.close()
+        workspace.destroy()
+
+    assert [p["toolCallId"] for p in session.tool_execution_starts] == ["t0", "t1"]
+
+    gate = _started_gate()
+    for payload in session.tool_execution_starts:
+        gate.observe_tool_execution_start(payload)
+    for payload in session.tool_executions:
+        gate.observe_tool_execution(payload)
+
+    result = gate.evaluate()
+    assert result.passed is False
+    assert result.tool_executions_observed == 2
+    assert result.tool_executions_confirmed == 1

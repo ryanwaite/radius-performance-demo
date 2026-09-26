@@ -248,6 +248,17 @@ class SandboxGate:
     the observed and confirmed counts and marks the no-evidence case
     ``vacuous``. A vacuous gate does not pass.
 
+    **Starts count, not only completions.** A command that starts and never
+    completes has still run, and may have run unconfined. Feeding the gate only
+    ``tool.execution_complete`` would make exactly that case invisible, so such
+    a trial could pass on "every execution confirmed" while the one execution
+    worth objecting to never reached the check. Starts are therefore recorded
+    too, and a start with no matching completion is unconfirmed. The three
+    states stay distinct in the record -- ``sandboxApplied: "false"`` (the
+    runtime said no), ``null`` with ``completed: true`` (it said nothing), and
+    ``null`` with ``completed: false`` (it never finished) -- because they are
+    different faults with different causes.
+
     **The screen-off condition.** The benchmark's static shell screen denies
     ordinary diagnosis commands -- ``/proc`` and cgroup reads among them -- and
     misses variable-assembled paths that the sandbox denies at the OS level, so
@@ -278,9 +289,9 @@ class SandboxGate:
         # The permissive configuration cannot waive its own evidence
         # requirement, so this is an `or`, not a parameter the caller wins.
         self._require_evidence = require_evidence or self.screen_off_with_shell
-        self._observed = 0
-        self._confirmed = 0
-        self._unconfirmed: list[dict[str, Any]] = []
+        self._starts: dict[str, str | None] = {}
+        self._anonymous_starts: list[dict[str, Any]] = []
+        self._completed_ids: set[str] = set()
         self._executions: list[dict[str, Any]] = []
         self._application: SandboxApplication | None = None
 
@@ -304,37 +315,102 @@ class SandboxGate:
     def application(self) -> SandboxApplication | None:
         return self._application
 
+    def observe_tool_execution_start(
+        self, payload: Mapping[str, Any], *, tool_name: str | None = None
+    ) -> None:
+        """Record one ``tool.execution_start`` payload.
+
+        Starts are tracked because a completion is the *only* thing the gate
+        would otherwise see, and a command that starts and never completes has
+        still run. The budget killing a trial mid-command, a session error, and
+        a dropped event all produce that shape, and in each case the command may
+        have run unconfined. Counting only completions lets such a trial pass on
+        "every execution confirmed" because the unconfirmed one never arrived.
+        """
+        call_id = payload.get("toolCallId")
+        name = tool_name or payload.get("toolName")
+        if call_id is None:
+            # An id-less start can never be matched to a completion, so it is
+            # its own unconfirmable execution rather than something to drop.
+            self._anonymous_starts.append(
+                {"toolCallId": None, "toolName": name}
+            )
+            return
+        self._starts.setdefault(call_id, name)
+
     def observe_tool_execution(
         self, payload: Mapping[str, Any], *, tool_name: str | None = None
     ) -> None:
         """Record one ``tool.execution_complete`` payload."""
-        self._observed += 1
+        call_id = payload.get("toolCallId")
         flag = sandbox_applied_flag(payload)
-        record = {
-            "toolCallId": payload.get("toolCallId"),
-            "toolName": tool_name,
-            # Distinguish "reported not applied" from "reported nothing".
-            "sandboxApplied": flag,
-            "confirmed": flag == "true",
-        }
-        self._executions.append(record)
-        if flag == "true":
-            self._confirmed += 1
-            return
-        self._unconfirmed.append(record)
+        self._executions.append(
+            {
+                "toolCallId": call_id,
+                "toolName": tool_name or self._starts.get(call_id),
+                # Distinguish "reported not applied" from "reported nothing".
+                "sandboxApplied": flag,
+                "completed": True,
+                # A completion with no matching start is not a failure by
+                # itself, but it means the stream is not what we think, so it
+                # is recorded rather than quietly normalised.
+                "startObserved": call_id in self._starts,
+                "confirmed": flag == "true",
+            }
+        )
+        if call_id is not None:
+            self._completed_ids.add(call_id)
+
+    def _all_executions(self) -> list[dict[str, Any]]:
+        """Every execution the gate knows of, completed or not.
+
+        Unfinished starts are appended at evaluation time rather than tracked
+        incrementally, because a start only becomes evidence of an unconfirmable
+        execution once the trial is over and no completion has arrived.
+        """
+        records = list(self._executions)
+        for call_id, name in self._starts.items():
+            if call_id in self._completed_ids:
+                continue
+            records.append(
+                {
+                    "toolCallId": call_id,
+                    "toolName": name,
+                    # Never finished, so the runtime never reported a flag.
+                    # Kept distinct from "reported nothing" on a completion.
+                    "sandboxApplied": None,
+                    "completed": False,
+                    "startObserved": True,
+                    "confirmed": False,
+                }
+            )
+        for record in self._anonymous_starts:
+            records.append(
+                {
+                    **record,
+                    "sandboxApplied": None,
+                    "completed": False,
+                    "startObserved": True,
+                    "confirmed": False,
+                }
+            )
+        return records
 
     def _result(self, passed: bool, reason: str | None) -> SandboxGateResult:
         """Build a result carrying the configuration and all observations."""
+        records = self._all_executions()
+        confirmed = [r for r in records if r["confirmed"]]
+        unconfirmed = [r for r in records if not r["confirmed"]]
         return SandboxGateResult(
             passed=passed,
             reason=reason,
-            tool_executions_observed=self._observed,
-            tool_executions_confirmed=self._confirmed,
-            unconfirmed=list(self._unconfirmed),
-            vacuous=self._observed == 0,
+            tool_executions_observed=len(records),
+            tool_executions_confirmed=len(confirmed),
+            unconfirmed=unconfirmed,
+            vacuous=not records,
             static_screen=self._static_screen,
             shell_enabled=self._shell_enabled,
-            tool_executions=list(self._executions),
+            tool_executions=records,
         )
 
     def evaluate(self) -> SandboxGateResult:
@@ -356,22 +432,35 @@ class SandboxGate:
                 "sandbox was applied after the first prompt, so tools may "
                 "have run unconfined",
             )
-        if self._unconfirmed:
-            first = self._unconfirmed[0]
+        records = self._all_executions()
+        unconfirmed = [r for r in records if not r["confirmed"]]
+        if unconfirmed:
+            first = unconfirmed[0]
             screen_note = (
                 " and the static screen was off, so these commands had no "
                 "boundary at all"
                 if self.screen_off_with_shell
                 else ""
             )
+            unfinished = [r for r in unconfirmed if not r["completed"]]
+            # Name the unfinished case explicitly: "did not report
+            # sandboxApplied=true" reads as a runtime that answered, when in
+            # fact the command never finished and may still have run.
+            detail = (
+                f"{len(unfinished)} of them started and never completed, so "
+                f"whether they were confined is unknown; "
+                if unfinished
+                else ""
+            )
             return self._result(
                 False,
-                f"{len(self._unconfirmed)} of {self._observed} tool executions "
-                f"did not report sandboxApplied=true (first: "
-                f"toolCallId={first['toolCallId']!r}, "
-                f"sandboxApplied={first['sandboxApplied']!r}){screen_note}",
+                f"{len(unconfirmed)} of {len(records)} tool executions were not "
+                f"confirmed as sandboxed; {detail}"
+                f"first: toolCallId={first['toolCallId']!r}, "
+                f"sandboxApplied={first['sandboxApplied']!r}, "
+                f"completed={first['completed']}{screen_note}",
             )
-        if self._observed == 0 and self._require_evidence:
+        if not records and self._require_evidence:
             return self._result(
                 False,
                 "no tool execution was observed, so the sandbox was never "

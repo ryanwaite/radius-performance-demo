@@ -379,6 +379,25 @@ inherited, and `require_evidence=False` cannot buy a vacuous pass in it.
 into the trial record, so which boundary was in force is readable from the data
 rather than from the config that produced it.
 
+The gate is fed `tool.execution_start` as well as `tool.execution_complete`. A
+command that starts and never completes has still run, and may have run
+unconfined — the budget killing a trial mid-command, a session error, and a
+dropped event all produce that shape. Feeding the gate only completions would
+make exactly that execution invisible, so the trial could pass on "every
+execution confirmed" while the one execution worth objecting to never reached
+the check. A start with no matching completion is therefore unconfirmed, and
+three states stay distinct in the record, because they have different causes:
+
+| `sandboxApplied` | `completed` | meaning |
+|---|---|---|
+| `"false"` | `true` | the runtime said the sandbox was not applied |
+| `null` | `true` | the execution finished and reported no flag |
+| `null` | `false` | the execution never finished; confinement unknown |
+
+Completions with no matching start are recorded with `startObserved: false`
+rather than normalised away, since they are also a sign the event stream is not
+what we think it is.
+
 Two caveats:
 
 * **The sandbox result is one model on macOS.** Linux hosts are unverified, and

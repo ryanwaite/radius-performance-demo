@@ -681,6 +681,10 @@ class SpikeSession:
         self.prompts_sent = 0
         self.context_events: list[dict[str, Any]] = []
         self.tool_executions: list[dict[str, Any]] = []
+        # Starts are kept alongside completions because the sandbox gate has to
+        # see a command that began and never finished. Keeping only completions
+        # would hide exactly the execution the gate exists to object to.
+        self.tool_execution_starts: list[dict[str, Any]] = []
         self.policy = IsolationPolicy(
             workspace_root=workspace.root,
             allow_writes=allow_writes,
@@ -781,6 +785,9 @@ class SpikeSession:
                 at_ms=elapsed_ms,
                 agent_id=getattr(event, "agent_id", None),
             )
+            # Verbatim, for the same reason completions are: the gate reads the
+            # runtime's own payloads rather than a harness re-derivation.
+            self.tool_execution_starts.append(payload)
             self._check_budget()
         elif event_type == "tool.execution_complete":
             # `tool.execution_complete` carries no toolName; the timeline
