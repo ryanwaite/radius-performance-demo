@@ -1054,3 +1054,63 @@ A pipeline that would be left with no exporters at all is a hard error rather
 than something written out, since the collector rejects an empty exporter list
 at startup and the symptom would be an `up --wait` timeout well away from the
 cause.
+
+### The independent variable is measured, not assumed
+
+Every tolerance in this suite describes how the stack behaves *under a stated
+load*. That load is an assumption until someone measures it. If the load
+generator itself is starved, it offers fewer requests, the stack answers them
+comfortably, and the cycle records low, stable latencies. That cycle does not
+merely pass. It looks like the best result in the set, and it is the one a
+careless reader would hold up as the target. The failure is silent and it
+flatters itself, which is the combination worth engineering against.
+
+So each cycle records the generator's achieved request rate and is scored only
+if that rate falls inside a frozen band. Four details each change the number:
+
+  - **Attempts, not successes.** A fault that breaks responses must not void
+    the measurement built to observe it. Counting successes would make a
+    working incident indistinguishable from a broken measurement.
+  - **Read inside the container.** The counter is fetched by `exec`, so no port
+    has to be published. The stack runs on an internal network where Docker
+    publishes nothing, and a measurement that needed a published port would
+    have to punch a hole for itself.
+  - **The container's own clock, in the same call.** Timing the `docker exec`
+    round trip from the host would fold process startup, tens of milliseconds
+    and varying with host load, into the elapsed time and so into the rate.
+  - **Fitted on the median.** One bad cycle during fitting cannot widen the
+    band far enough to admit its own kind.
+
+The verdict is tri-state, not a boolean. Out of band is not a failed trial, it
+is a **failed measurement**: it yields no verdict and is counted rather than
+scored. Collapsing that into pass/fail is precisely what lets a bad measurement
+be read as a good result.
+
+The control was run live against the 28-service shop, one stack, one variable
+changed. The quota was applied with `docker update` rather than by editing the
+Compose file, because recreating the container would restart Locust and reset
+the counter the gate differences.
+
+    healthy                1.189 rps   scored
+    generator at 0.1 core  0.698 rps   no verdict   (41.3% drop)
+    band                   0.951 to 1.427 rps
+
+The starved arm was caught on rate alone. User count stayed at 5 and state
+stayed `running` in both arms, so no side channel did the work. Had it tripped
+on `state` instead, the band would still be untested and the control would have
+proved nothing about the thing it was built to check.
+
+Two limits are worth stating plainly, because neither is a property of the code
+and neither can be fixed by tightening a constant.
+
+**Counting noise sets a floor on the band.** At 1.189 rps over 300 s a cycle
+sees about 357 requests, so Poisson counting alone contributes about 5.3%
+relative noise. The band is ±20%, roughly 3.8 sigma, which is sound. But it
+cannot be tightened much further without longer windows or heavier load.
+
+**Locust is closed-loop, so offered load is not fully independent of health.**
+Each of the fixed five users waits for a response before issuing the next
+request, so a slow stack lowers the offered rate by construction. The band
+therefore describes the **healthy baseline only**. Applied to an incident
+phase it would refuse a verdict exactly when an incident worked. Incident
+phases need their own expectation, and this gate is not it.
