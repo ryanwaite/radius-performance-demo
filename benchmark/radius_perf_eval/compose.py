@@ -122,6 +122,15 @@ class ComposeProject:
         """Fully interpolated Compose configuration, used for config hashing."""
         return self._run("config", files=files, timeout=120).stdout
 
+    def config_json(self, files: Sequence[Path] | None = None) -> str:
+        """The same configuration as JSON, used to generate the check plan.
+
+        Compose resolves interpolation, merges overlays, and normalises units
+        here, so this describes what will actually run rather than what the
+        template appears to say.
+        """
+        return self._run("config", "--format", "json", files=files, timeout=120).stdout
+
     def up(
         self,
         *,
@@ -302,3 +311,14 @@ def container_resource_limits(container: str) -> dict[str, int]:
         "memoryBytes": int(host_config.get("Memory") or 0),
         "pidsLimit": int(host_config.get("PidsLimit") or 0),
     }
+
+
+def container_networks(container: str) -> tuple[str, ...]:
+    """Network names the daemon reports for a container.
+
+    Read from the daemon rather than from the Compose file, so that the check
+    compares an observation against a declaration instead of restating one.
+    """
+    details = inspect_container(container)
+    settings = details.get("NetworkSettings") or {}
+    return tuple(sorted(str(name) for name in (settings.get("Networks") or {})))

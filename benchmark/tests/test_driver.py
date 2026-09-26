@@ -16,19 +16,44 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from radius_perf_eval.compose import (  # noqa: E402
+    COMPOSE_DIR,
     ComposeError,
     ComposeProject,
     ResidualResources,
     parse_port_mapping,
     parse_resource_lines,
 )
-from radius_perf_eval.environment import EnvironmentSpec, ServiceResources  # noqa: E402
+from radius_perf_eval import environment as environment_module  # noqa: E402
+from radius_perf_eval.environment import (  # noqa: E402
+    EGRESS_EXCEPTIONS,
+    EnvironmentSpec,
+    ServiceResources,
+    TrialEnvironment,
+)
+from radius_perf_eval.checks import (  # noqa: E402
+    REDACTED,
+    REQUIRED_CHECK_KINDS,
+    CheckPlan,
+    CheckPlanError,
+    ComposeModel,
+    NetworkModel,
+    ServiceCheck,
+    ServiceModel,
+    generate_check_plan,
+    parse_compose_config,
+    parse_memory,
+    parse_nano_cpus,
+    reconcile,
+    redact_env,
+    summarise_problems,
+)
 from radius_perf_eval.images import PinnedImage, is_digest  # noqa: E402
 from radius_perf_eval.incidents import (  # noqa: E402
     MYSQL_POOL_DELAY_V1,
@@ -44,8 +69,9 @@ from radius_perf_eval.load import (  # noqa: E402
     stall_events,
 )
 from radius_perf_eval.manifest import (  # noqa: E402
+    CATALOG_APPLICATION_GATES,
     FIXTURE_PATHS,
-    REQUIRED_GATES,
+    LIFECYCLE_GATES,
     EnvironmentManifest,
     canonical_json,
     fixture_files,
@@ -189,9 +215,81 @@ class ComposeProjectTests(unittest.TestCase):
             ComposeProject(project="radius-eval-x", env={}, files=[Path("/nope/missing.yml")])
 
 
+CATALOG_SERVICES = ("catalog-api", "mysql", "prometheus", "valkey")
+
+
+def catalog_model(extra: dict[str, ServiceModel] | None = None) -> ComposeModel:
+    """The catalog stack as `docker compose config --format json` describes it.
+
+    Hand-built so the generation tests need no Docker daemon. A separate test
+    asserts these service names still match `compose/base.yml`, so the fixture
+    cannot quietly drift away from the file it stands in for.
+    """
+    services = {
+        "mysql": ServiceModel(
+            name="mysql",
+            image="mysql@sha256:" + "a" * 64,
+            environment={"MYSQL_DATABASE": "catalog", "MYSQL_ROOT_PASSWORD": "rootpw"},
+            networks=("data",),
+            nano_cpus=1_000_000_000,
+            memory_bytes=1024**3,
+        ),
+        "valkey": ServiceModel(
+            name="valkey",
+            image="valkey@sha256:" + "b" * 64,
+            networks=("data",),
+            nano_cpus=500_000_000,
+            memory_bytes=256 * 1024**2,
+        ),
+        "catalog-api": ServiceModel(
+            name="catalog-api",
+            image="sha256:" + "c" * 64,
+            environment={"CACHE_ENABLED": "false", "MYSQL_DSN": "catalog:pw@tcp(mysql:3306)/x"},
+            networks=("data", "edge"),
+            nano_cpus=1_000_000_000,
+            memory_bytes=512 * 1024**2,
+            published_ports=(8080,),
+        ),
+        "prometheus": ServiceModel(
+            name="prometheus",
+            image="prom@sha256:" + "d" * 64,
+            networks=("data", "edge"),
+            nano_cpus=500_000_000,
+            memory_bytes=512 * 1024**2,
+            published_ports=(9090,),
+        ),
+    }
+    services.update(extra or {})
+    return ComposeModel(
+        services=services,
+        networks={
+            "data": NetworkModel(name="data", internal=True, full_name="proj_data"),
+            "edge": NetworkModel(name="edge", internal=False, full_name="proj_edge"),
+        },
+        volumes=("mysql-data", "prometheus-data"),
+    )
+
+
+def catalog_plan(model: ComposeModel | None = None) -> CheckPlan:
+    model = model or catalog_model()
+    return generate_check_plan(
+        model,
+        readiness_probes=set(model.service_names),
+        egress_exceptions=EGRESS_EXCEPTIONS,
+    )
+
+
+def required_gates(plan: CheckPlan | None = None) -> frozenset[str]:
+    """What the driver requires once it has generated a plan."""
+    plan = plan or catalog_plan()
+    return LIFECYCLE_GATES | CATALOG_APPLICATION_GATES | plan.gate_names
+
+
 class ManifestTests(unittest.TestCase):
     def _manifest(self) -> EnvironmentManifest:
-        return EnvironmentManifest(run_id="run-1", compose_project="radius-eval-run-1")
+        manifest = EnvironmentManifest(run_id="run-1", compose_project="radius-eval-run-1")
+        manifest.require_gates(catalog_plan().gate_names | CATALOG_APPLICATION_GATES)
+        return manifest
 
     def test_manifest_exposes_required_schema_keys(self) -> None:
         manifest = self._manifest()
@@ -215,7 +313,7 @@ class ManifestTests(unittest.TestCase):
     def _complete(self) -> EnvironmentManifest:
         """A manifest with every required gate recorded and passing."""
         manifest = self._manifest()
-        for name in sorted(REQUIRED_GATES):
+        for name in sorted(required_gates()):
             manifest.add_gate(name, True)
         return manifest
 
@@ -248,19 +346,35 @@ class ManifestTests(unittest.TestCase):
         )
         self.assertNotIn("cleanup-verified", manifest.missing_gates)
         self.assertIn("application-readiness", manifest.missing_gates)
-        self.assertEqual(len(manifest.missing_gates), len(REQUIRED_GATES) - 1)
+        self.assertEqual(len(manifest.missing_gates), len(required_gates()) - 1)
 
     def test_every_required_gate_is_individually_load_bearing(self) -> None:
         """Positive control: drop exactly one gate at a time and confirm each
-        one alone is enough to withhold sign-off. Without this, REQUIRED_GATES
-        could name a gate the driver never emits and nobody would notice."""
-        for omitted in sorted(REQUIRED_GATES):
+        one alone is enough to withhold sign-off. Without this, the required
+        set could name a gate the driver never emits and nobody would notice."""
+        for omitted in sorted(required_gates()):
             with self.subTest(omitted=omitted):
                 manifest = self._manifest()
-                for name in sorted(REQUIRED_GATES - {omitted}):
+                for name in sorted(required_gates() - {omitted}):
                     manifest.add_gate(name, True)
                 self.assertFalse(manifest.signed_off)
                 self.assertEqual(manifest.missing_gates, [omitted])
+
+    def test_a_manifest_with_no_plan_still_requires_the_lifecycle_gates(self) -> None:
+        """The floor before a plan exists.
+
+        If `require_gates` is never called, the requirement is the lifecycle
+        set, which includes `check-plan-generated`. A run that died before
+        generating a plan therefore cannot sign off on whatever it managed to
+        record, which is the failure mode the derived requirement could
+        otherwise reintroduce: no plan, no required per-service gates, nothing
+        missing.
+        """
+        manifest = EnvironmentManifest(run_id="r", compose_project="radius-eval-r")
+        self.assertEqual(manifest.required_gates, LIFECYCLE_GATES)
+        manifest.add_gate("cleanup-verified", True)
+        self.assertFalse(manifest.signed_off)
+        self.assertIn("check-plan-generated", manifest.missing_gates)
 
     def test_extra_gates_do_not_block_sign_off(self) -> None:
         """`trial --revert` adds incident-inactive-verified. Required is a
@@ -277,10 +391,16 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("application-readiness", payload["missingGates"])
 
     def test_required_gates_match_what_the_driver_emits(self) -> None:
-        """REQUIRED_GATES is a hand-written list, so it can drift away from the
-        gates the driver actually records. Pin it against the gate set of a
-        real signed-off manifest from a completed cycle."""
+        """Pin the derived requirement against the gates a real cycle records.
+
+        The per-service half is now generated, so this no longer guards against
+        a hand-written list drifting. It guards against the generator changing
+        a gate name, which would leave the driver recording gates nothing
+        requires and requiring gates nothing records.
+        """
         observed = {
+            "check-plan-generated",
+            "check-plan-covers-compose-services",
             "image-pinned:mysql",
             "image-pinned:valkey",
             "image-pinned:catalog-api",
@@ -289,17 +409,26 @@ class ManifestTests(unittest.TestCase):
             "resource-limits:valkey",
             "resource-limits:catalog-api",
             "resource-limits:prometheus",
+            "environment-variables:mysql",
+            "environment-variables:valkey",
             "environment-variables:catalog-api",
+            "environment-variables:prometheus",
+            "egress:mysql",
+            "egress:valkey",
+            "egress:catalog-api",
+            "egress:prometheus",
+            "readiness:mysql",
+            "readiness:valkey",
+            "readiness:catalog-api",
+            "readiness:prometheus",
             "application-readiness",
             "mysql-seed-rows",
             "valkey-empty",
-            "egress-blocked:mysql",
-            "egress-blocked:valkey",
             "catalog-api-image-hermetic",
             "incident-active-verified",
             "cleanup-verified",
         }
-        self.assertEqual(set(REQUIRED_GATES), observed)
+        self.assertEqual(set(required_gates()), observed)
 
     def test_digest_changes_when_body_changes(self) -> None:
         manifest = self._manifest()
@@ -1268,3 +1397,422 @@ class DaemonVersionCaptureTests(unittest.TestCase):
             trials_module.daemon_info = original
         self.assertTrue(report["exitCriterionMet"])
         self.assertEqual(report["dockerVersions"], {"error": "down"})
+
+
+class ComposeModelParsingTests(unittest.TestCase):
+    """Turning `docker compose config --format json` into a model."""
+
+    SAMPLE = json.dumps(
+        {
+            "name": "proj",
+            "networks": {
+                "data": {"name": "proj_data", "internal": True},
+                "edge": {"name": "proj_edge"},
+            },
+            "volumes": {"mysql-data": {"name": "proj_mysql-data"}},
+            "services": {
+                "mysql": {
+                    "image": "mysql@sha256:" + "a" * 64,
+                    "networks": {"data": None},
+                    "environment": {"MYSQL_ROOT_PASSWORD": "rootpw"},
+                    "deploy": {"resources": {"limits": {"cpus": 1, "memory": "1073741824"}}},
+                },
+                "api": {
+                    "image": "sha256:" + "c" * 64,
+                    "networks": {"data": None, "edge": None},
+                    "ports": [{"mode": "ingress", "host_ip": "127.0.0.1", "target": 8080}],
+                    "deploy": {"resources": {"limits": {"cpus": 0.5, "memory": "536870912"}}},
+                },
+            },
+        }
+    )
+
+    def test_parses_services_networks_and_volumes(self) -> None:
+        model = parse_compose_config(self.SAMPLE)
+        self.assertEqual(model.service_names, ("api", "mysql"))
+        self.assertEqual(model.volumes, ("mysql-data",))
+        self.assertTrue(model.networks["data"].internal)
+        self.assertFalse(model.networks["edge"].internal)
+
+    def test_normalises_limits_to_nanocpus_and_bytes(self) -> None:
+        model = parse_compose_config(self.SAMPLE)
+        self.assertEqual(model.services["mysql"].nano_cpus, 1_000_000_000)
+        self.assertEqual(model.services["mysql"].memory_bytes, 1024**3)
+        self.assertEqual(model.services["api"].nano_cpus, 500_000_000)
+
+    def test_published_ports_are_container_targets(self) -> None:
+        model = parse_compose_config(self.SAMPLE)
+        self.assertEqual(model.services["api"].published_ports, (8080,))
+        self.assertEqual(model.services["mysql"].published_ports, ())
+
+    def test_internal_only_service_is_not_egress_reachable(self) -> None:
+        model = parse_compose_config(self.SAMPLE)
+        self.assertFalse(model.egress_reachable("mysql"))
+        self.assertTrue(model.egress_reachable("api"))
+
+    def test_a_service_with_no_network_is_treated_as_reachable(self) -> None:
+        """Compose puts an unattached service on the default bridge, which
+        routes. Assuming the opposite would report egress blocked for the one
+        service most likely to have it."""
+        payload = json.loads(self.SAMPLE)
+        payload["services"]["stray"] = {"image": "x@sha256:" + "e" * 64}
+        model = parse_compose_config(json.dumps(payload))
+        self.assertTrue(model.egress_reachable("stray"))
+
+    def test_observed_network_names_use_the_project_prefixed_names(self) -> None:
+        model = parse_compose_config(self.SAMPLE)
+        self.assertEqual(model.observed_network_names("api"), ("proj_data", "proj_edge"))
+
+    def test_missing_limits_are_none_not_zero(self) -> None:
+        """Zero would compare equal to an unlimited container's reported limit,
+        so an undeclared limit must be distinguishable from a declared one."""
+        payload = json.loads(self.SAMPLE)
+        payload["services"]["mysql"]["deploy"] = {"placement": {}}
+        model = parse_compose_config(json.dumps(payload))
+        self.assertIsNone(model.services["mysql"].nano_cpus)
+        self.assertFalse(model.services["mysql"].limits_declared)
+
+    def test_rejects_non_json_and_empty_stacks(self) -> None:
+        with self.assertRaises(CheckPlanError):
+            parse_compose_config("services:\n  mysql: {}")
+        with self.assertRaises(CheckPlanError):
+            parse_compose_config(json.dumps({"services": {}}))
+
+    def test_memory_accepts_byte_strings_and_suffixes(self) -> None:
+        self.assertEqual(parse_memory("536870912"), 536870912)
+        self.assertEqual(parse_memory(536870912), 536870912)
+        self.assertEqual(parse_memory("512m"), 512 * 1024**2)
+        self.assertEqual(parse_memory("1g"), 1024**3)
+        self.assertEqual(parse_memory("1gib"), 1024**3)
+        with self.assertRaises(CheckPlanError):
+            parse_memory("lots")
+        with self.assertRaises(CheckPlanError):
+            parse_memory(True)
+
+    def test_nano_cpus_accepts_numbers_and_strings(self) -> None:
+        self.assertEqual(parse_nano_cpus(1), 1_000_000_000)
+        self.assertEqual(parse_nano_cpus("0.5"), 500_000_000)
+        with self.assertRaises(CheckPlanError):
+            parse_nano_cpus("half")
+
+
+class CheckPlanGenerationTests(unittest.TestCase):
+    def test_every_service_gets_every_required_kind(self) -> None:
+        plan = catalog_plan()
+        for service in CATALOG_SERVICES:
+            for kind in REQUIRED_CHECK_KINDS:
+                self.assertIn(f"{kind}:{service}", plan.gate_names)
+        self.assertEqual(
+            len(plan.checks), len(CATALOG_SERVICES) * len(REQUIRED_CHECK_KINDS)
+        )
+
+    def test_the_catalog_stack_generates_a_complete_plan(self) -> None:
+        plan = catalog_plan()
+        self.assertTrue(plan.complete, plan.problems)
+
+    def test_adding_a_service_grows_the_check_set(self) -> None:
+        """Positive control for the whole point of this module.
+
+        The hand-written version of these checks could not fail this way: a
+        fifth service simply acquired no gates and the manifest signed off on
+        the four it knew about.
+        """
+        before = catalog_plan()
+        model = catalog_model(
+            extra={
+                "worker": ServiceModel(
+                    name="worker",
+                    image="worker@sha256:" + "f" * 64,
+                    networks=("data",),
+                    nano_cpus=250_000_000,
+                    memory_bytes=128 * 1024**2,
+                )
+            }
+        )
+        after = generate_check_plan(
+            model,
+            readiness_probes=set(model.service_names),
+            egress_exceptions=EGRESS_EXCEPTIONS,
+        )
+        self.assertEqual(
+            len(after.checks) - len(before.checks),
+            len(REQUIRED_CHECK_KINDS),
+            "a new service must add one check of every required kind",
+        )
+        for kind in REQUIRED_CHECK_KINDS:
+            self.assertNotIn(f"{kind}:worker", before.gate_names)
+            self.assertIn(f"{kind}:worker", after.gate_names)
+        self.assertTrue(after.complete, after.problems)
+
+    def test_a_new_service_without_a_readiness_probe_fails_the_plan(self) -> None:
+        model = catalog_model(
+            extra={
+                "worker": ServiceModel(
+                    name="worker",
+                    image="worker@sha256:" + "f" * 64,
+                    networks=("data",),
+                    nano_cpus=250_000_000,
+                    memory_bytes=128 * 1024**2,
+                )
+            }
+        )
+        plan = generate_check_plan(
+            model,
+            readiness_probes=set(CATALOG_SERVICES),
+            egress_exceptions=EGRESS_EXCEPTIONS,
+        )
+        self.assertFalse(plan.complete)
+        self.assertTrue(
+            any("readiness probe" in p and "worker" in p for p in plan.problems), plan.problems
+        )
+
+    def test_a_new_reachable_service_must_declare_an_egress_exception(self) -> None:
+        model = catalog_model(
+            extra={
+                "worker": ServiceModel(
+                    name="worker",
+                    image="worker@sha256:" + "f" * 64,
+                    networks=("edge",),
+                    nano_cpus=250_000_000,
+                    memory_bytes=128 * 1024**2,
+                )
+            }
+        )
+        plan = generate_check_plan(
+            model,
+            readiness_probes=set(model.service_names),
+            egress_exceptions=EGRESS_EXCEPTIONS,
+        )
+        self.assertFalse(plan.complete)
+        self.assertTrue(
+            any("egress exception" in p and "worker" in p for p in plan.problems), plan.problems
+        )
+
+    def test_a_service_without_limits_fails_the_plan(self) -> None:
+        model = catalog_model(
+            extra={
+                "worker": ServiceModel(
+                    name="worker", image="worker@sha256:" + "f" * 64, networks=("data",)
+                )
+            }
+        )
+        plan = generate_check_plan(
+            model,
+            readiness_probes=set(model.service_names),
+            egress_exceptions=EGRESS_EXCEPTIONS,
+        )
+        self.assertFalse(plan.complete)
+        self.assertTrue(
+            any("no cpu and memory limits" in p for p in plan.problems), plan.problems
+        )
+
+    def test_an_unpinned_image_fails_the_plan(self) -> None:
+        model = catalog_model(
+            extra={
+                "worker": ServiceModel(
+                    name="worker",
+                    image="worker:latest",
+                    networks=("data",),
+                    nano_cpus=250_000_000,
+                    memory_bytes=128 * 1024**2,
+                )
+            }
+        )
+        plan = generate_check_plan(
+            model,
+            readiness_probes=set(model.service_names),
+            egress_exceptions=EGRESS_EXCEPTIONS,
+        )
+        self.assertFalse(plan.complete)
+        self.assertTrue(any("unpinned image" in p for p in plan.problems), plan.problems)
+
+    def test_a_check_naming_an_absent_service_fails_reconciliation(self) -> None:
+        """The mirror of a missing check. Left unchecked it would sit in the
+        required set forever, never be recorded, and read as an unrelated bug."""
+        model = catalog_model()
+        checks = list(catalog_plan(model).checks)
+        checks += [ServiceCheck(kind=kind, service="ghost") for kind in REQUIRED_CHECK_KINDS]
+        problems = reconcile(
+            checks,
+            model,
+            readiness_probes=set(model.service_names),
+            egress_exceptions=EGRESS_EXCEPTIONS,
+        )
+        self.assertTrue(
+            any("not in the compose file" in p and "ghost" in p for p in problems), problems
+        )
+
+    def test_egress_exceptions_are_filtered_to_services_in_the_file(self) -> None:
+        plan = generate_check_plan(
+            catalog_model(),
+            readiness_probes=set(CATALOG_SERVICES),
+            egress_exceptions={**EGRESS_EXCEPTIONS, "gone": "stale entry"},
+        )
+        self.assertNotIn("gone", plan.egress_exceptions)
+
+    def test_the_fixture_matches_the_compose_file_service_list(self) -> None:
+        """Anti-drift: this fixture stands in for `compose/base.yml` in every
+        test above, so it has to keep naming the same services the file does.
+        Parsed with a narrow reader rather than a YAML dependency, because the
+        only thing needed is the set of top-level keys under `services:`."""
+        text = (COMPOSE_DIR / "base.yml").read_text(encoding="utf-8")
+        in_services = False
+        found: list[str] = []
+        for line in text.splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            if not line.startswith(" "):
+                in_services = line.rstrip().startswith("services:")
+                continue
+            if in_services and line.startswith("  ") and not line.startswith("   "):
+                found.append(line.strip().rstrip(":"))
+        self.assertEqual(sorted(found), sorted(CATALOG_SERVICES))
+
+
+class SuppressedServiceControlTests(unittest.TestCase):
+    """Positive control: a plan that drops a service must not sign off.
+
+    This is the failure the derived requirement could otherwise create. The
+    required gate set comes from the plan, so suppressing a service's checks
+    also removes its gates from the requirement, and `missing_gates` sees
+    nothing wrong. Only reconciliation against the Compose file notices, which
+    makes `check-plan-covers-compose-services` the gate holding this closed.
+    """
+
+    def _manifest_from(self, plan: CheckPlan) -> EnvironmentManifest:
+        manifest = EnvironmentManifest(run_id="r", compose_project="radius-eval-r")
+        manifest.require_gates(plan.gate_names | CATALOG_APPLICATION_GATES)
+        for name in sorted(manifest.required_gates):
+            if name == "check-plan-covers-compose-services":
+                manifest.add_gate(name, plan.complete, summarise_problems(plan.problems))
+            else:
+                manifest.add_gate(name, True)
+        return manifest
+
+    def test_the_complete_plan_signs_off(self) -> None:
+        """Without this the suppression result below would prove nothing: a
+        manifest that never signs off cannot show that suppression is what
+        stopped it."""
+        manifest = self._manifest_from(catalog_plan())
+        self.assertTrue(manifest.signed_off, manifest.failed_gates)
+
+    def test_suppressing_a_service_withholds_sign_off(self) -> None:
+        model = catalog_model()
+        suppressed = catalog_plan(model).without_service("valkey")
+        suppressed = CheckPlan(
+            checks=suppressed.checks,
+            services=suppressed.services,
+            egress_exceptions=suppressed.egress_exceptions,
+            problems=reconcile(
+                suppressed.checks,
+                model,
+                readiness_probes=set(model.service_names),
+                egress_exceptions=EGRESS_EXCEPTIONS,
+            ),
+        )
+        manifest = self._manifest_from(suppressed)
+
+        self.assertEqual(
+            manifest.missing_gates,
+            [],
+            "the derived requirement shrank with the plan, which is exactly why "
+            "missing_gates cannot be what catches this",
+        )
+        self.assertFalse(manifest.signed_off)
+        self.assertEqual(
+            [g.name for g in manifest.failed_gates], ["check-plan-covers-compose-services"]
+        )
+
+    def test_suppression_names_every_missing_kind(self) -> None:
+        model = catalog_model()
+        problems = reconcile(
+            catalog_plan(model).without_service("valkey").checks,
+            model,
+            readiness_probes=set(model.service_names),
+            egress_exceptions=EGRESS_EXCEPTIONS,
+        )
+        for kind in REQUIRED_CHECK_KINDS:
+            self.assertTrue(
+                any(f"no {kind} check" in p and "valkey" in p for p in problems),
+                f"{kind} not reported: {problems}",
+            )
+
+
+class EnvironmentRedactionTests(unittest.TestCase):
+    def test_secret_shaped_keys_are_redacted(self) -> None:
+        redacted = redact_env(
+            {
+                "MYSQL_ROOT_PASSWORD": "s0mesecret",
+                "MYSQL_DSN": "catalog:pw@tcp(mysql:3306)/catalog",
+                "CACHE_ENABLED": "false",
+                "API_TOKEN": "t",
+            }
+        )
+        self.assertEqual(redacted["MYSQL_ROOT_PASSWORD"], REDACTED)
+        self.assertEqual(redacted["MYSQL_DSN"], REDACTED)
+        self.assertEqual(redacted["API_TOKEN"], REDACTED)
+        self.assertEqual(redacted["CACHE_ENABLED"], "false")
+
+    def test_no_per_run_credential_reaches_the_manifest(self) -> None:
+        """Manifests are written to artifact directories that outlive the
+        trial, and the generated environment check now reads every service's
+        environment rather than catalog-api's seven declared variables."""
+        secret = "s" + "f" * 32
+        model = catalog_model()
+        env = dict(model.services["mysql"].environment)
+        env["MYSQL_ROOT_PASSWORD"] = secret
+        payload = json.dumps(redact_env(env))
+        self.assertNotIn(secret, payload)
+
+    def test_redaction_is_by_key_not_by_value(self) -> None:
+        """A value-matching redactor would miss a credential it had not been
+        told about. Matching on key shape catches the whole class."""
+        self.assertEqual(redact_env({"SOME_SECRET": "x"})["SOME_SECRET"], REDACTED)
+        self.assertEqual(redact_env({"DSN": "x"})["DSN"], REDACTED)
+
+
+class EnvironmentCheckCoverageTests(unittest.TestCase):
+    """`environment-variables:<svc>` passes vacuously for a service that
+    declares nothing. That is the correct result, but a bare pass would read
+    as a verification that happened, so the check has to say how much it
+    examined. These tests exercise the check itself with the daemon read
+    stubbed out, so they run with Docker unreachable.
+    """
+
+    def _run_check(self, declared: dict[str, str], observed: dict[str, str]):
+        model = catalog_model()
+        model.services["valkey"].environment.clear()
+        model.services["valkey"].environment.update(declared)
+        manifest = EnvironmentManifest(run_id="r", compose_project="p")
+        holder = types.SimpleNamespace(manifest=manifest)
+        original = environment_module.container_env
+        environment_module.container_env = lambda _container: dict(observed)
+        try:
+            payload = TrialEnvironment._check_environment(
+                holder, "valkey", "container", model
+            )
+        finally:
+            environment_module.container_env = original
+        gate = next(g for g in manifest.gates if g.name == "environment-variables:valkey")
+        return gate, payload
+
+    def test_a_service_declaring_nothing_records_explicit_zero_coverage(self) -> None:
+        gate, payload = self._run_check({}, {"UNRELATED": "x"})
+        self.assertTrue(gate.passed)
+        self.assertEqual(payload["declaredCount"], 0)
+        self.assertIn("coverage 0", gate.detail)
+
+    def test_a_service_declaring_variables_records_how_many_it_checked(self) -> None:
+        gate, payload = self._run_check({"A": "1", "B": "2"}, {"A": "1", "B": "2"})
+        self.assertTrue(gate.passed)
+        self.assertEqual(payload["declaredCount"], 2)
+        self.assertNotIn("coverage 0", gate.detail)
+        self.assertIn("2 declared", gate.detail)
+
+    def test_a_mismatched_value_fails_the_gate(self) -> None:
+        """Positive control for the two above: the check is capable of
+        failing, so a pass with zero declared variables is a statement about
+        the service and not about the check being inert."""
+        gate, payload = self._run_check({"A": "1"}, {"A": "2"})
+        self.assertFalse(gate.passed)
+        self.assertEqual(payload["mismatched"], ["A"])

@@ -107,7 +107,7 @@ the install and pip is never allowed to resolve a version of its own.
 ```bash
 cd benchmark
 uv sync
-uv run pytest                 # 254 tests, no model calls
+uv run pytest                 # 284 tests, no model calls
 uv run radius-perf-smoke --model gpt-5.4 --output ../artifacts/smoke
 ```
 
@@ -553,7 +553,7 @@ pin images -> create -> verify start state -> measure (healthy)
 ```
 
 Each stage appends gates to an environment manifest. The manifest is signed off
-(`"signedOff": true`) only if every gate in `REQUIRED_GATES` was **recorded** and
+(`"signedOff": true`) only if every **required** gate was **recorded** and
 **passed**. A failed gate does not degrade the run to a warning — it un-signs the
 manifest, and `trials.py` refuses to count that cycle.
 
@@ -566,22 +566,71 @@ images at all. That is the same vacuity as a negative test that passes because i
 setup was a no-op — the check reported success because almost nothing it checks had
 run. Absence is now failure, and `missingGates` names what was never recorded.
 
+### The required gates are generated, not listed
+
+The per-service half of the requirement is derived from the Compose file by
+`checks.py`, not written down in a tuple. The earlier version enumerated four
+services by hand in three places, which was correct for this stack and was a
+latent complete-inventory failure: a fifth service acquired no checks, and the
+manifest still signed off with every gate it knew about passing. The check meant
+to prove the environment matched its declaration could not see the part of the
+declaration nobody had told it about.
+
+`docker compose config --format json` is the authority. It resolves
+interpolation, merges overlays, and normalises units, so the model describes
+what will actually run rather than what the template appears to say. Each
+service gets one check of each of five kinds — `image-pinned`,
+`resource-limits`, `environment-variables`, `egress`, `readiness` — and
+reconciliation fails in both directions: a service in the file with no check,
+and a check naming a service not in the file.
+
+Two gates hold this closed, and both are needed:
+
+- `check-plan-generated` — without it, a run that died before generating a plan
+  would have an empty derived requirement and could sign off having verified
+  nothing.
+- `check-plan-covers-compose-services` — without it, a plan that omitted a
+  service would omit that service's gates from the requirement too, so the
+  omission would erase its own evidence. This gate is the only thing that
+  notices.
+
+Measured on the real file: adding a fifth service to `compose/base.yml` takes
+the plan from 20 checks to 25 and fails sign-off three separate ways — the
+coverage gate names the problems, `resource-limits:sidecar` fails because the
+service declares none, and `readiness:sidecar` is required but never recorded.
+Undeclared limits parse to `None` rather than `0` precisely so that case fails:
+an unlimited container reports `NanoCpus: 0`, so a `0` default would have
+compared equal and passed.
+
 ### Verified properties
 
-Gates recorded per run, all checked against the live system rather than assumed:
+Gates recorded per run, all checked against the live system rather than assumed.
+The first five kinds are generated once per service in the Compose file:
 
 - `image-pinned:<service>` — the container's running image ID equals the pinned digest.
 - `resource-limits:<service>` — `HostConfig.NanoCpus` / `HostConfig.Memory` match the
-  declared spec. The incident depends on constrained resources, so unconstrained
-  containers would silently invalidate the scenario.
-- `environment-variables:catalog-api` — read back from the daemon, not from the app.
-- `application-readiness` — HTTP readiness against the app and Prometheus, plus
-  `up{job="catalog-api"}`. `up --wait` only proves containers are healthy; it does not
-  prove the app can serve or that Prometheus is scraping it.
+  limits the Compose file declares. The incident depends on constrained resources, so
+  unconstrained containers would silently invalidate the scenario.
+- `environment-variables:<service>` — every variable the Compose file declares is
+  present in the container with the same value, read back from the daemon rather than
+  from the app. Values are compared in full and recorded redacted, because generating
+  this check over every service brought the per-run MySQL credentials into scope and
+  manifests outlive the trial. A service that declares no environment records
+  `coverage 0` rather than an unqualified pass.
+- `egress:<service>` — the networks the daemon reports match the networks the file
+  declares; for services on `internal: true` networks only, outbound DNS must also
+  fail. A service that can reach the network must declare why in `EGRESS_EXCEPTIONS`,
+  so a new service cannot quietly acquire egress.
+- `readiness:<service>` — one application-level probe per service: MySQL answers
+  `SELECT 1`, Valkey answers `PING`, catalog-api serves `/healthz`, `/readyz`, seeded
+  products and metrics, Prometheus is ready and scraping. A service with no registered
+  probe fails reconciliation. `up --wait` only proves containers are healthy.
+
+The rest are declared per application or per lifecycle stage:
+
+- `application-readiness` — every per-service probe passed.
 - `mysql-seed-rows` — exact row count queried from MySQL.
 - `valkey-empty` — `DBSIZE` is 0.
-- `egress-blocked:mysql`, `egress-blocked:valkey` — negative test; outbound DNS from
-  the data tier must fail.
 - `catalog-api-image-hermetic` — no shell and no package manager in the runtime image.
 - `incident-active-verified` / `incident-inactive-verified` — see below.
 - `cleanup-verified` — see below.
@@ -737,7 +786,8 @@ cd /path/to/repo && python3.12 -m unittest discover -s benchmark/tests -t benchm
 ### What CI does and does not cover
 
 The `python` CI job collects and runs **all five** test modules — `test_driver`,
-`test_events`, `test_isolation`, `test_usage`, `test_versions` — for **254 tests**.
+`test_events`, `test_isolation`, `test_usage`, `test_versions` — for **284 tests**,
+of which `test_driver` contributes **150**.
 
 It previously ran only `test_driver` (120 tests). The other four import
 `github-copilot-sdk` and `inspect-ai`, which were reachable only through CFS, and CFS
