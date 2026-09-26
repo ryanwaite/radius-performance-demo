@@ -50,3 +50,6 @@ benchmark/results/*
 benchmark/results/*/environment-manifest.json
 benchmark/results/*/measurements.json
 !benchmark/results/*/determinism-report.json
+
+# Tooling virtualenv for benchmark/tools (PyYAML); not a driver dependency.
+.tools-venv/

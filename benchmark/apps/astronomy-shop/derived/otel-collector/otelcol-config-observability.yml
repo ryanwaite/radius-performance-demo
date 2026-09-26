@@ -20,10 +20,6 @@ exporters:
         insecure: true
     sending_queue:
       batch: null
-  otlp_grpc/firepit:
-    endpoint: firepit:4317
-    tls:
-      insecure: true
 extensions:
   opamp:
     server:
@@ -61,4 +57,3 @@ service:
     profiles:
       exporters:
       - debug
-      - otlp_grpc/firepit

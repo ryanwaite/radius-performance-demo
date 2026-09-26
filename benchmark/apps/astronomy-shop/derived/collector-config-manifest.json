@@ -5,6 +5,9 @@
     "docker_stats": "remove-docker-socket",
     "host_metrics": "remove-host-filesystem"
   },
+  "removedExporters": {
+    "otlp_grpc/firepit": "remove-unresolvable-firepit-exporter"
+  },
   "files": {
     "otelcol-config-extras.yml": {
       "removed": [],
@@ -18,8 +21,11 @@
       "sha256": "85d605f6b237d8215c020d4729265c637fdb60b69a57d61a2f8d27c075d970ee"
     },
     "otelcol-config-observability.yml": {
-      "removed": [],
-      "sha256": "3dd756a121d2fc09bda8e0271972af5297ef644235774419a52b72e0c7db931e"
+      "removed": [
+        "exporters::otlp_grpc/firepit",
+        "service::pipelines::profiles::otlp_grpc/firepit"
+      ],
+      "sha256": "7bd6945ca1ee59fa66f16d7d6c6008a44525d11b78acce5ece2f132445f2a177"
     },
     "otelcol-config.yml": {
       "removed": [
@@ -31,5 +37,5 @@
       "sha256": "8120fb549c40e1ff5b5c081a53ac4fc6cb84ee8c46592e374157461bf5c369e1"
     }
   },
-  "manifestHash": "sha256:617b29737494195c161228577ecf25dc274acdffc17bd85ee14cb81a1f050165"
+  "manifestHash": "sha256:77a6f8352d799b33e2497e420468feaeec1401eee3152b0f9c3027227bf78d6a"
 }

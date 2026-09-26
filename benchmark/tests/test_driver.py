@@ -2600,6 +2600,109 @@ class AstronomyShopCollectorConfigTests(unittest.TestCase):
         self.assertIn("receivers::host_metrics", removed)
 
 
+class CollectorExporterStripTests(unittest.TestCase):
+    """`firepit` is stripped, and nothing else is.
+
+    The exporter removed here is `otlp_grpc/firepit`. Its type, `otlp_grpc`,
+    is shared with `otlp_grpc/jaeger`, which carries every trace the agent
+    under test would diagnose from. Matching on the type instead of the full
+    name would delete both and still produce a config that starts cleanly, so
+    the over-deletion case is tested as carefully as the removal itself.
+    """
+
+    @staticmethod
+    def _tool():
+        import importlib.util
+
+        path = _repo_root() / "benchmark/tools/derive_collector_config.py"
+        spec = importlib.util.spec_from_file_location("_derive_cc", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    @staticmethod
+    def _document():
+        return {
+            "exporters": {
+                "otlp_grpc/jaeger": {"endpoint": "jaeger:4317"},
+                "otlp_grpc/firepit": {"endpoint": "firepit:4317"},
+                "debug": {},
+            },
+            "service": {
+                "pipelines": {
+                    "traces": {"exporters": ["debug", "otlp_grpc/jaeger"]},
+                    "profiles": {"exporters": ["debug", "otlp_grpc/firepit"]},
+                }
+            },
+        }
+
+    def test_the_firepit_exporter_and_its_pipeline_entry_are_removed(self):
+        tool = self._tool()
+        document, removed = tool.strip_exporters(self._document())
+        self.assertNotIn("otlp_grpc/firepit", document["exporters"])
+        self.assertEqual(
+            document["service"]["pipelines"]["profiles"]["exporters"], ["debug"]
+        )
+        self.assertIn("exporters::otlp_grpc/firepit", removed)
+        self.assertIn(
+            "service::pipelines::profiles::otlp_grpc/firepit", removed
+        )
+
+    def test_the_jaeger_exporter_sharing_the_type_survives(self):
+        """Positive control for the test above. If matching ever moves to the
+        part before the slash, this is the test that fails."""
+        tool = self._tool()
+        document, _ = tool.strip_exporters(self._document())
+        self.assertIn("otlp_grpc/jaeger", document["exporters"])
+        self.assertEqual(
+            document["service"]["pipelines"]["traces"]["exporters"],
+            ["debug", "otlp_grpc/jaeger"],
+        )
+
+    def test_a_pipeline_left_with_no_exporters_is_a_hard_error(self):
+        """The collector rejects an empty exporter list at startup, so writing
+        one out would convert a config change into an `up --wait` timeout."""
+        tool = self._tool()
+        document = self._document()
+        document["service"]["pipelines"]["profiles"]["exporters"] = [
+            "otlp_grpc/firepit"
+        ]
+        with self.assertRaises(SystemExit):
+            tool.strip_exporters(document)
+
+    def test_the_committed_derived_configs_name_firepit_nowhere(self):
+        derived = _repo_root() / "benchmark/apps/astronomy-shop/derived/otel-collector"
+        found = [
+            path.name
+            for path in sorted(derived.glob("otelcol-config*.yml"))
+            if "firepit" in path.read_text()
+        ]
+        self.assertEqual(found, [])
+
+    def test_the_committed_derived_config_still_exports_traces_to_jaeger(self):
+        """Guards the test above against passing because the strip took the
+        whole exporters block with it."""
+        text = (
+            _repo_root()
+            / "benchmark/apps/astronomy-shop/derived/otel-collector"
+            / "otelcol-config-observability.yml"
+        ).read_text()
+        self.assertIn("otlp_grpc/jaeger", text)
+        self.assertIn("otlp_http/prometheus", text)
+        self.assertIn("opensearch", text)
+
+    def test_the_manifest_records_the_removed_exporter(self):
+        manifest = json.loads(
+            (
+                _repo_root()
+                / "benchmark/apps/astronomy-shop/derived/collector-config-manifest.json"
+            ).read_text()
+        )
+        self.assertIn("otlp_grpc/firepit", manifest["removedExporters"])
+        removed = manifest["files"]["otelcol-config-observability.yml"]["removed"]
+        self.assertIn("exporters::otlp_grpc/firepit", removed)
+
+
 class AstronomyShopFlagTests(unittest.TestCase):
     """The flags AIOpsLab drives are present, and the baseline is off."""
 

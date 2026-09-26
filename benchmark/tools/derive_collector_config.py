@@ -39,12 +39,11 @@ from pathlib import Path
 try:
     import yaml
 except ModuleNotFoundError:  # pragma: no cover - tooling-only path
-    sys.exit(
-        "PyYAML is required. This is a tooling dependency, not a driver "
-        "dependency:\n"
-        "    python3.12 -m venv .tools-venv\n"
-        '    .tools-venv/bin/pip install "PyYAML==6.0.2"'
-    )
+    # Deferred rather than fatal here. The strip functions below are pure
+    # dictionary transforms with no YAML involved, and they carry the rules
+    # worth testing. Exiting at import time would make them unreachable from
+    # the driver's test suite, which runs on the standard library alone.
+    yaml = None
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -59,6 +58,31 @@ REMOVED_RECEIVERS: dict[str, str] = {
     "docker_stats": "remove-docker-socket",
     "host_metrics": "remove-host-filesystem",
 }
+
+# Exporters removed, keyed by their *full* name.
+#
+# Receivers above are matched on the part before the slash, because a
+# receiver's base name identifies its type and every instance of that type is
+# going. Exporters must not be matched that way. `otlp_grpc` is the type of
+# both `otlp_grpc/firepit` and `otlp_grpc/jaeger`, so a base-name match would
+# delete trace export to Jaeger along with the intended target, and the
+# resulting config would still be valid YAML and still start. The asymmetry is
+# deliberate and the reason is that a type is the right granularity for one
+# and the wrong granularity for the other.
+#
+# `firepit` is a profiling backend that the Compose deployment never declares.
+# It is not one of the 28 services, so the endpoint does not resolve, and the
+# exporter retries against a host that does not exist for the whole life of
+# every trial. That burns CPU and fills the collector's logs during the exact
+# window we are measuring.
+REMOVED_EXPORTERS: dict[str, str] = {
+    "otlp_grpc/firepit": "remove-unresolvable-firepit-exporter",
+}
+
+# Any occurrence of these substrings in a derived file means the strip missed
+# something. Checked against the rendered text, so a reference hiding in a
+# structure this script does not walk is still caught.
+FORBIDDEN_SUBSTRINGS: tuple[str, ...] = ("firepit",)
 
 DERIVED_DIR = "derived/otel-collector"
 
@@ -105,7 +129,61 @@ def strip_receivers(document: dict) -> tuple[dict, list[str]]:
     return document, removed
 
 
+def strip_exporters(document: dict) -> tuple[dict, list[str]]:
+    """Remove the exporters in `REMOVED_EXPORTERS` and their pipeline entries.
+
+    Matching is on the full name rather than the type, for the reason given
+    where `REMOVED_EXPORTERS` is defined.
+
+    A pipeline whose exporter list would end up empty is a fatal error rather
+    than something to write out. The collector refuses to start on an empty
+    exporter list, so emitting one would turn a config change into a crash
+    loop discovered at `up --wait` timeout, which is the failure mode this
+    whole script exists to prevent.
+    """
+    removed: list[str] = []
+
+    exporters = document.get("exporters")
+    if isinstance(exporters, dict):
+        for name in list(exporters):
+            if str(name) in REMOVED_EXPORTERS:
+                exporters.pop(name)
+                removed.append(f"exporters::{name}")
+
+    pipelines = ((document.get("service") or {}).get("pipelines") or {})
+    if isinstance(pipelines, dict):
+        for pipeline_name, pipeline in pipelines.items():
+            if not isinstance(pipeline, dict):
+                continue
+            listed = pipeline.get("exporters")
+            if not isinstance(listed, list):
+                continue
+            kept = [entry for entry in listed if str(entry) not in REMOVED_EXPORTERS]
+            if len(kept) == len(listed):
+                continue
+            if not kept:
+                raise SystemExit(
+                    f"service::pipelines::{pipeline_name} would be left with no "
+                    "exporters, which the collector rejects at startup"
+                )
+            dropped = sorted(set(listed) - set(kept))
+            pipeline["exporters"] = kept
+            removed.extend(
+                f"service::pipelines::{pipeline_name}::{entry}"
+                for entry in dropped
+            )
+
+    return document, removed
+
+
 def main() -> int:
+    if yaml is None:
+        sys.exit(
+            "PyYAML is required to run this tool. It is a tooling dependency, "
+            "not a driver dependency:\n"
+            "    python3.12 -m venv .tools-venv\n"
+            '    .tools-venv/bin/pip install "PyYAML==6.0.2"'
+        )
     repo_root = Path(__file__).resolve().parents[2]
     upstream = shop.upstream_dir(repo_root)
     out_dir = repo_root / "benchmark/apps/astronomy-shop" / DERIVED_DIR
@@ -121,12 +199,17 @@ def main() -> int:
             # otelcol-config-extras.yml ships empty on purpose.
             document = {}
         document, removed = strip_receivers(document)
+        document, removed_exporters = strip_exporters(document)
+        removed = removed + removed_exporters
         rendered = yaml.safe_dump(document, sort_keys=False, width=1000)
         target = out_dir / source.name
         target.write_text(rendered)
 
         leftover = sorted(
             name for name in REMOVED_RECEIVERS if name in rendered
+        )
+        leftover += sorted(
+            token for token in FORBIDDEN_SUBSTRINGS if token in rendered
         )
         if leftover:
             raise SystemExit(
@@ -145,6 +228,7 @@ def main() -> int:
         "upstreamTag": shop.UPSTREAM_TAG,
         "upstreamCommit": shop.UPSTREAM_COMMIT,
         "removedReceivers": REMOVED_RECEIVERS,
+        "removedExporters": REMOVED_EXPORTERS,
         "files": results,
     }
     digest = hashlib.sha256(

@@ -892,12 +892,41 @@ three worst-throttled services were exactly the three most understated.
 The failure of that fit's positive control mattered more than the fit. A
 service deliberately starved to a quarter of its measured peak throttled
 *zero* times. The quota had reached the daemon and the service was being
-measured, so the instrument was working. The load generator had itself been
-throttled, so it offered less load, so downstream services saw lighter traffic
-and looked healthy. **A binding CPU limit does not merely add noise to a
-measurement; it suppresses the load that would have revealed the noise.** That
-is why the load generator must never be throttled, and why limits are now set
-where nothing binds.
+measured, so the instrument was working.
+
+The first published explanation for that was wrong, and the correction is more
+useful than the original claim. It said the load generator had been throttled,
+so it offered less load, so downstream services saw lighter traffic. The load
+generator was throttled, but only for 2.3% of its periods, and that cannot take
+`product-catalog` from a 1.49-core peak to under 0.25 cores in every one of 906
+periods. A container capped at 0.25 cores cannot reach 1.49, so the only
+question is whether the demand existed and was suppressed, which shows as
+throttling, or never arrived, which does not. Zero throttled periods means it
+never arrived.
+
+What actually suppressed it was **`frontend`**, the direct caller of
+`product-catalog`, capped at 0.26 cores against a 0.52-core measured peak and
+throttled 9% of its periods. The mechanism is not a few percent of lost
+throughput, it is burst smoothing. During a burst `frontend` wants 0.52 cores
+and can have 0.26, so the burst is served at half rate over twice the time.
+`product-catalog` then sees a flattened arrival stream. It has a 35x
+peak-to-mean ratio, 1.49 cores against 0.042, and a service shaped like that is
+taken under quota by flattening alone while its total work barely moves.
+
+Two consequences follow, and both are larger than the corrected sentence.
+**A binding CPU limit does not merely add noise to a measurement; it suppresses
+the load that would have revealed the noise**, and it does so anywhere in the
+request path rather than only at the load generator. And because `frontend` was
+throttled in both arms of that experiment, the whole of the first fit's
+verification measured a stack that was already degraded. "This service is fine
+at its fitted quota" was true only of suppressed load. That is the real reason
+the first fit was discarded, and it is a stronger argument for a uniform floor
+than the original one: the only configuration that can be trusted is one where
+nothing binds anywhere in the path.
+
+The request path is load-generator, then `frontend-proxy`, then `frontend`,
+then the rest, so the zero-throttle check has to hold on every service in that
+chain on every cycle, not only at fit time. It covers all 28.
 
 Refitting from kernel counters at a 1.0 floor cleared the steady-state window
 but not the kernel's lifetime counters: kafka had spent 131 throttled periods
@@ -936,12 +965,17 @@ omission.
 
 Two limits of this approach are worth stating plainly. A quota of 8.0 cores on
 a ten-core host does not meaningfully constrain a single container, and the
-limits sum to 224 cores, so they are ceilings rather than reservations. They
-do not protect against several services bursting at once and saturating the
-host; the only thing that does is the plan's rule of one trial at a time per
-machine. And the floor is fitted for this host class. A VM with fewer cores
-needs its own fit, and the loader will reject the committed file there rather
-than apply a number nobody measured on it.
+limits sum to 224 cores on a ten-core machine. That sum is not a statement of
+demand and should never be read as one. A CPU limit is a ceiling, not a
+reservation, so nothing is set aside and the total is free to exceed the host.
+Actual demand is the measured column in the fit, and it totals well under one
+core at the mean. The limits do not protect against several services bursting
+at once and saturating the host; what covers that is the plan's rule of one
+trial at a time per machine, together with the offered-load gate, which
+refuses a verdict on any cycle whose achieved request rate left the frozen
+band whatever the cause. And the floor is fitted for this host class. A VM with
+fewer cores needs its own fit, and the loader will reject the committed file
+there rather than apply a number nobody measured on it.
 
 ### Egress: `internal: true` works, and costs all port publishing
 
@@ -991,9 +1025,32 @@ byte-identical environment premise on the routed network we use today, not only
 on an internal one, and the digest manifest does not cover it because the plugin
 arrives after the image.
 
-### A dangling exporter
+### A dangling exporter, now stripped
 
 The collector's observability config exports to `firepit:4317`. No Compose file
 in our set declares `firepit` and it is not among the 28, so the exporter
 retries against a host that will never exist for the whole of every measurement
-window.
+window. That burns CPU and fills the collector's logs during the exact window we
+are measuring, which is the reason it had to go rather than be tolerated.
+
+`derive_collector_config.py` now removes the exporter definition and its one
+pipeline entry, alongside the two receivers it already removed. The derived
+files are committed and hashed into the run record, so the removal is a recorded
+fixture change rather than a silent difference in what the collector was told to
+do.
+
+One asymmetry in that tool is worth knowing about, because getting it wrong
+would have been quiet and expensive. Receivers are matched on the part of the
+name before the slash, because that part names the receiver's type and every
+instance of the type is going. Exporters are matched on the **full** name. The
+exporter being removed is `otlp_grpc/firepit`, and `otlp_grpc` is also the type
+of `otlp_grpc/jaeger`, which carries every trace an agent under test would
+diagnose from. A type-level match would have deleted both, and the result would
+still have been valid YAML that started cleanly, so nothing would have failed
+until someone noticed the traces were missing. There is a test for the removal
+and a separate test asserting Jaeger survives it.
+
+A pipeline that would be left with no exporters at all is a hard error rather
+than something written out, since the collector rejects an empty exporter list
+at startup and the symptom would be an `up --wait` timeout well away from the
+cause.
