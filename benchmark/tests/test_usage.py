@@ -12,6 +12,7 @@ from radius_perf_eval.usage import (
     NANO_AIU_PER_AI_CREDIT,
     TokenOverlapPolicy,
     build_normalized_record,
+    collect_compaction,
     normalize_from_metrics,
     normalize_from_usage_events,
     reconcile,
@@ -572,3 +573,206 @@ def test_premium_reconciles_with_metrics_when_initiator_is_honoured():
 def test_absent_initiator_preserves_legacy_summing():
     result = normalize_from_usage_events([usage_event(cost=1.0), usage_event(cost=1.0)])
     assert result.premium_requests_charged == 2.0
+
+
+# ---------------------------------------------------------------------------
+# Context window, compaction, and truncation (increment 3)
+# ---------------------------------------------------------------------------
+
+
+def _usage_event(**overrides):
+    payload = {
+        "model": "gpt-5.4",
+        "inputTokens": 1000,
+        "outputTokens": 100,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 0,
+        "maxPromptTokens": 272000,
+        "toolTokenCount": 2569,
+        "initiator": "user",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_max_prompt_tokens_is_normalized():
+    result = normalize_from_usage_events([_usage_event()])
+    assert result.context.max_prompt_tokens == 272000
+
+
+def test_peak_prompt_tokens_is_the_largest_single_call():
+    result = normalize_from_usage_events(
+        [
+            _usage_event(inputTokens=1000),
+            _usage_event(inputTokens=9000),
+            _usage_event(inputTokens=4000),
+        ]
+    )
+    # Peak, not sum: prompts replace each other, they do not accumulate.
+    assert result.context.peak_prompt_tokens == 9000
+
+
+def test_headroom_ratio_is_reported_both_ways_under_overlap_ambiguity():
+    """Whether `inputTokens` includes cache reads changes the real prompt size.
+
+    Under the UNKNOWN overlap policy the harness reports both the runtime's own
+    figure and the upper bound, rather than guessing one.
+    """
+    result = normalize_from_usage_events(
+        [_usage_event(inputTokens=8110, cacheReadTokens=7680)]
+    )
+    context = result.context
+    assert context.peak_prompt_tokens == 8110
+    assert context.peak_prompt_tokens_cache_excluded == 15790
+    assert context.peak_prompt_token_ratio == pytest.approx(8110 / 272000)
+    assert context.peak_prompt_token_ratio_upper_bound == pytest.approx(15790 / 272000)
+    assert context.min_headroom_ratio == pytest.approx(1 - 8110 / 272000)
+
+
+def test_tool_token_count_is_recorded():
+    result = normalize_from_usage_events([_usage_event(toolTokenCount=2569)])
+    assert result.context.peak_tool_token_count == 2569
+
+
+def test_a_varying_context_limit_is_reported_at_its_tightest():
+    """A mid-run switch to a narrower window must not be reported flatteringly."""
+    result = normalize_from_usage_events(
+        [_usage_event(maxPromptTokens=272000), _usage_event(maxPromptTokens=200000)]
+    )
+    assert result.context.max_prompt_tokens == 200000
+    assert any("varied across calls" in a for a in result.ambiguities)
+
+
+def test_missing_max_prompt_tokens_is_an_ambiguity_not_a_zero():
+    event = _usage_event()
+    del event["maxPromptTokens"]
+    result = normalize_from_usage_events([event])
+    assert result.context.max_prompt_tokens is None
+    assert result.context.peak_prompt_token_ratio is None
+    assert any("maxPromptTokens" in a for a in result.ambiguities)
+
+
+def test_context_is_absent_when_no_events_were_seen():
+    assert normalize_from_usage_events([]).context is None
+
+
+# --- compaction --------------------------------------------------------------
+
+
+def test_no_compaction_events_is_not_evidence_of_no_compaction():
+    record = collect_compaction([])
+    payload = record.to_json_dict()
+    assert payload["compacted"] is False
+    # The flag that stops a zero count being read as a measurement.
+    assert payload["emissionVerified"] is False
+
+
+def test_compaction_events_are_counted():
+    record = collect_compaction(
+        [
+            {"type": "session.compaction_start", "data": {"trigger": "manual"}},
+            {
+                "type": "session.compaction_complete",
+                "data": {
+                    "success": True,
+                    "trigger": "manual",
+                    "preCompactionTokens": 190000,
+                    "postCompactionTokens": 42000,
+                },
+            },
+        ]
+    )
+    assert record.compacted is True
+    assert record.compaction_starts == 1
+    assert record.compaction_completes == 1
+    assert record.manual_compactions == 1
+    assert record.pre_compaction_tokens == [190000]
+    assert record.post_compaction_tokens == [42000]
+
+
+def test_a_manual_compaction_is_distinguishable_from_an_organic_one():
+    """The forced-compaction control must be separable from real compaction.
+
+    The SDK persists an organically triggered compaction without trigger
+    attribution, so an absent trigger is the signal for "not harness-induced".
+    """
+    record = collect_compaction(
+        [
+            {"type": "session.compaction_start", "data": {"trigger": "manual"}},
+            {"type": "session.compaction_start", "data": {}},
+        ]
+    )
+    assert record.manual_compactions == 1
+    assert record.unattributed_compactions == 1
+
+
+def test_a_failed_compaction_is_counted_as_a_failure():
+    record = collect_compaction(
+        [{"type": "session.compaction_complete", "data": {"success": False}}]
+    )
+    assert record.compaction_failures == 1
+
+
+def test_a_missing_success_field_is_a_failure_not_a_success():
+    """`success` is required on the wire type, so its absence is malformed."""
+    record = collect_compaction(
+        [{"type": "session.compaction_complete", "data": {}}]
+    )
+    assert record.compaction_failures == 1
+
+
+def test_compaction_tokens_are_their_own_line_and_are_not_folded_in():
+    """Whether the compaction call also emits `assistant.usage` is unknown.
+
+    Folding it into the trial totals would double count if it does; ignoring it
+    would undercount if it does not. Reporting it separately does neither.
+    """
+    record = collect_compaction(
+        [
+            {
+                "type": "session.compaction_complete",
+                "data": {
+                    "success": True,
+                    "compactionTokensUsed": {
+                        "inputTokens": 185000,
+                        "outputTokens": 3000,
+                        "cacheReadTokens": 0,
+                    },
+                },
+            }
+        ]
+    )
+    payload = record.to_json_dict()
+    assert payload["compactionTokensUsed"]["inputUncachedTokens"] == 185000
+    assert payload["compactionTokensUsed"]["outputVisibleTokens"] == 3000
+    assert payload["compactionTokensCountedInTrialTotals"] is False
+
+
+def test_compaction_without_reported_tokens_is_flagged_as_unaccounted():
+    record = collect_compaction(
+        [{"type": "session.compaction_complete", "data": {"success": True}}]
+    )
+    assert any("unaccounted" in note for note in record.notes)
+
+
+def test_truncation_is_counted_separately_from_compaction():
+    record = collect_compaction(
+        [
+            {
+                "type": "session.truncation",
+                "data": {"tokensRemovedDuringTruncation": 1200},
+            }
+        ]
+    )
+    assert record.truncated is True
+    assert record.compacted is False
+    assert record.tokens_removed_by_truncation == 1200
+
+
+def test_unrelated_events_are_ignored():
+    record = collect_compaction(
+        [{"type": "assistant.usage", "data": {"inputTokens": 1}}]
+    )
+    assert record.compacted is False
+    assert record.truncations == 0

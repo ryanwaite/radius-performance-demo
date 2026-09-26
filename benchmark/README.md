@@ -107,7 +107,7 @@ the install and pip is never allowed to resolve a version of its own.
 ```bash
 cd benchmark
 uv sync
-uv run pytest                 # 284 tests, no model calls
+uv run pytest                 # no model calls
 uv run radius-perf-smoke --model gpt-5.4 --output ../artifacts/smoke
 ```
 
@@ -243,6 +243,273 @@ What a passing gate establishes is narrow and worth stating exactly: the
 handler was wired, it saw real attempts, and it denied them. That is a
 **wiring check**. It is not evidence of confinement, and `isolation-gate.json`
 says so in `permissionHandlerBasis`.
+
+---
+
+## Sandbox, budgets, and the submit tool (Increment 3)
+
+### The runtime sandbox is applied, and the trial fails if it is not
+
+`create_session` takes no `sandbox_config` parameter, so the configuration is
+applied through the experimental `session.rpc.options.update` immediately after
+the session exists and **before the first prompt**. That ordering is recorded
+as an observation — `apply_sandbox` is handed the harness's own `prompts_sent`
+counter rather than asserting the ordering it hopes for.
+
+The window between create and update is real and is not closed by this design.
+Nothing is prompted into the session during it, but the session does exist
+unconfined for that moment. Closing it needs a `sandbox_config` parameter on
+session creation, which the pinned SDK does not expose.
+
+The [plan's five conditions](../docs/specs/copilot-radius-experiment-plan.md)
+are enforced as follows.
+
+| Condition | Where |
+| --- | --- |
+| Applied before the first prompt | `SpikeSession.start`, recorded with `appliedBeforeFirstPrompt` |
+| Every tool execution carries `sandboxApplied` | `SandboxGate.observe_tool_execution` |
+| Write confinement claimed, read confinement not | `SandboxSettings` docstring; `/etc/hosts` stayed readable in the spike |
+| Probes the model cannot decline | `run_escape_probes` drives `session.rpc.tools.execute` directly |
+| Toolchain paths declared | `SandboxSettings.readonly_paths` |
+
+Three properties of the gate are worth stating, because each one is a way the
+check could have quietly stopped testing anything:
+
+* **`sandboxApplied` arrives as a string.** `"false"` is truthy in Python, so a
+  direct truth test would have confirmed every unconfined execution. The gate
+  compares against `"true"` and treats anything else as unconfirmed.
+* **Absent is not false.** A payload that reports nothing is recorded as `null`,
+  not as a denial, because "the runtime said no" and "the runtime said nothing"
+  are different findings.
+* **A gate with no executions does not pass.** "No execution was unconfined" is
+  vacuously true when nothing ran, so the result carries the observed and
+  confirmed counts and marks the no-evidence case `vacuous`.
+
+Escape probes run through the tool pipeline rather than through the model. This
+matters because the model declines probes after a denial, which would make the
+check decay to nothing. It is close to free but not free: the probes themselves
+consume no model calls, though one turn is needed first to register the tool
+surface, because the runtime reports no tools until a turn has run. Ground truth is the filesystem — whether the file appeared, or whether
+the canary token reached the transcript — never the exit status. A `perl` write
+exited 0 during the spike while writing nothing.
+
+The probe set spans two classes, and the distinction is narrower than it looks.
+The `write-outside-variable` probe assembles the full path at runtime, so the
+complete target never appears as one token, but **the parent directory is still
+spelled out literally**. Only the base64 probes contain no path substring at
+all. `conceals_path` records which is which, and a test pins it so a partially
+literal probe cannot be relabelled as a concealed one.
+
+### What the live run established, and the false pass it caught first
+
+Run against SDK 1.0.14 / CLI 1.0.87 on `gpt-5.6-sol`. Evidence is outside the
+repo, in `radius-perf-eval-artifacts/sandbox-wiring-check/`.
+
+The sandbox **is applied and is enforced**. `options.update` returned
+`{"success": true}` before the first prompt, every escape probe failed with
+`Operation not permitted` — an OS-level EPERM, not a harness message — and the
+outside directory was still empty afterwards. Every probe reported
+`sandboxApplied=true`, and the in-workspace control write succeeded, so the
+denials are the sandbox refusing rather than the harness failing to run. Both
+base64 probes were denied too, which closes the concealed-path class the
+earlier spike could not test because the model declined to run it.
+
+**The first run reported five clean denials while nothing reached the sandbox.**
+The static screen rejects any absolute path, and a harness probe must name its
+target absolutely, so the screen denied all five probes *and* the in-workspace
+control. A harness denial and a sandbox denial both leave the file absent, so
+ground truth agreed every time and the result was indistinguishable from perfect
+confinement. The positive control is the only reason this was visible: it failed
+in exactly the same way, and a control that cannot write inside its own
+workspace is obviously broken. `ProbeOutcome.SCREENED` now records that class
+separately, it is excluded from the evidence that supports a confinement claim,
+and `screen_shell_paths=False` puts the sandbox in the position of being the
+only thing that can deny. Scored runs leave the screen on.
+
+A denial is also not counted unless that execution reported
+`sandboxApplied=true`. If the sandbox was not in force, something else refused
+the command, and that something else is not the control being claimed.
+
+Three findings changed the code:
+
+* **`tools.execute` returns `{textResultForLlm, resultType, sessionLog, error,
+  toolTelemetry}`.** There is no `exitCode`, `stdout`, or `stderr`. The first
+  implementation read those three, got `None` and two empty strings every time,
+  and reported the silence as denials.
+* **Harness-driven executions emit no `tool.execution_complete` event.** Six ran
+  and one event was recorded — the model-issued one. A gate fed only from the
+  event stream would never see a probe, so the flag is read from the result
+  object instead.
+* **Tools register lazily.** Before the first turn the runtime reports
+  `{"tools": []}` and `tools.execute` answers `Tool 'bash' does not exist.`
+  Probes therefore cost one turn to register the tool surface, which is not the
+  zero-model-call claim made earlier in this document's history.
+
+Read confinement also held — the parent canary was unreadable — but the plan's
+claim stays limited to **write** confinement, since one model on one OS is not
+the basis for a broader one.
+
+### The static screen is off in shell trials, and the sandbox is the only boundary
+
+The benchmark's static screen matches command *text*. Tested against 38
+realistic diagnosis commands with no model calls, it denied 11. Five of those
+were `/proc` and cgroup reads such as `cpu.max` — the most direct evidence for
+the CPU, memory, and garbage-collection faults we inject — and it also denied
+`df -h /`, on the bare `/` argument. Meanwhile it allowed three of five
+escape-shaped commands, including `cat $HOME/.ssh/config` and a path assembled
+from a shell variable, which the sandbox denies at the OS level. Its error
+profile is close to inverted.
+
+It also biases the comparison. The screen is identical in every arm, but the
+arms do not depend on it equally: the Radius and document arms can learn some
+resource facts from the graph or the document, while the native arm's route to
+them is mostly the files the screen blocks. Removing the native arm's substitute
+would inflate the measured Radius advantage.
+
+So shell trials run with the screen **off**, and the trial is valid only if
+every tool execution reports `sandboxApplied: "true"`. A trial that cannot
+confirm that is recorded as `harness_failure` — excluded from scoring and
+counted as such, never charged to the agent. There is no allowlist: each entry
+would be an unexamined decision about what the agent may look at. The screen
+stays **on by default** (`SandboxGate().static_screen == "on"`) everywhere the
+sandbox is not confirmed, so the permissive setting has to be chosen rather than
+inherited, and `require_evidence=False` cannot buy a vacuous pass in it.
+
+`staticScreen`, `shellEnabled`, and the per-execution confirmations are written
+into the trial record, so which boundary was in force is readable from the data
+rather than from the config that produced it.
+
+The gate is fed `tool.execution_start` as well as `tool.execution_complete`. A
+command that starts and never completes has still run, and may have run
+unconfined — the budget killing a trial mid-command, a session error, and a
+dropped event all produce that shape. Feeding the gate only completions would
+make exactly that execution invisible, so the trial could pass on "every
+execution confirmed" while the one execution worth objecting to never reached
+the check. A start with no matching completion is therefore unconfirmed, and
+three states stay distinct in the record, because they have different causes:
+
+| `sandboxApplied` | `completed` | meaning |
+|---|---|---|
+| `"false"` | `true` | the runtime said the sandbox was not applied |
+| `null` | `true` | the execution finished and reported no flag |
+| `null` | `false` | the execution never finished; confinement unknown |
+
+Completions with no matching start are recorded with `startObserved: false`
+rather than normalised away, since they are also a sign the event stream is not
+what we think it is.
+
+Two caveats:
+
+* **The sandbox result is one model on macOS.** Linux hosts are unverified, and
+  so are other model pins. The per-execution `sandboxApplied` requirement is
+  what keeps this a per-trial claim rather than a general one; re-verify
+  whenever the SDK, CLI, or model pin changes.
+* **The setting is fixed before the pilot and does not change during it.** It
+  changes what an agent can reach, so pilot and scored runs must not straddle
+  the change.
+
+### Budgets
+
+30 minutes of wall clock or 100 tool calls, whichever comes first, at high
+reasoning effort, identical in every arm (`SessionBudget.plan_default`).
+Exhaustion terminates the trial and scores as a failure.
+
+`plan_default` deliberately leaves the model-request cap unset. The plan caps
+tool calls, not model calls, and an undeclared third cap would let trials end
+for a reason no arm agreed to — which would appear in the results as a
+between-arm difference in exhaustion rate caused by the harness rather than by
+the treatment.
+
+### The submit tool
+
+Fixed fields: `faultPresent`, `causalCategory`, `component`, `evidence`,
+`confidence`, `remediation`. The tool is **terminal on success**, so an accepted
+submission ends the trial on the agent's own answer. A rejected submission
+returns a failure, which leaves the loop running so the model can correct it.
+
+`causalCategory` is a closed list of ten, each with a one-line definition
+carried in the tool description and **identical in every arm**. The definitions
+are the point: without them a slow database satisfies both `dependency_latency`
+and `slow_database`, and a database lock satisfies both `slow_database` and
+`lock_contention`, so an arm could be marked wrong for choosing the other true
+label and part of the measured difference between arms would be a difference in
+guessing the scorer's taste. Each definition carves on **where the delay or
+failure originates**, and two tie-breaks are stated to the agent verbatim. The
+tuple is derived from the definitions mapping, so a category cannot be added
+without one.
+
+`component` is defined as **the component whose behaviour must change to fix
+the fault**, and is deliberately unconstrained. The canonical names are the
+application's service inventory, which is part of what the Radius graph and the
+architecture document supply to *their* arms; listing them in the schema would
+supply the inventory to the native arm too, shrinking the difference the
+experiment exists to measure. An arm answers in its own vocabulary — service
+name, container name, or Radius resource ID — and **a table the fixture
+supplies** resolves it afterwards. The harness carries no built-in mapping, and
+a test scans the module namespace to prove it.
+
+The rejection for an unknown component says only `unknown component; name a
+service from the application`. It names no valid component and does not vary
+with the guess, so a throwaway guess cannot buy the inventory and the map cannot
+be probed by bisection. `submit_tool_schema()` takes **no fixture argument at
+all**, which makes the leak unreachable rather than merely absent; a test pins
+the signature. The detector used by the no-leak tests is itself given a positive
+control, because an absence passes just as happily when the detector has stopped
+working.
+
+Two decisions the brief did not specify:
+
+* **A no-fault submission must omit `causalCategory`, `component`, and
+  `remediation`.** A control trial that reports no fault cannot also name its
+  cause.
+* **Rejected attempts are retained and counted.** "Could not diagnose" and
+  "could not express" are different findings, and an arm that failed entirely on
+  rejected submissions would be a harness artefact rather than a weak treatment.
+
+A sandbox-gate failure marks the trial **invalid** rather than scoring it as a
+wrong answer, so a broken harness cannot masquerade as a weak arm.
+
+### Context window and compaction
+
+`maxPromptTokens` is normalized into `usage-normalized.json`, along with peak
+prompt tokens, `toolTokenCount`, and the headroom ratio.
+
+The ratio is reported twice. Under the `UNKNOWN` overlap policy it is not
+established whether `inputTokens` already includes `cacheReadTokens`, and that
+changes the real prompt size, so the harness records the runtime's own figure
+and the upper bound instead of guessing one. If a run reports several context
+limits, the smallest is used: a mid-run switch to a narrower window should not
+be reported at its most flattering.
+
+Compaction and truncation are captured as flags from `session.compaction_start`,
+`session.compaction_complete`, and `session.truncation`, with **emission
+unverified**. No trial has yet filled a 272k context window, so a zero count
+here says nothing about the SDK — it says our prompts were small. This is the
+opposite of the `requestSandboxBypass` case, where the harness created the
+condition and the field still stayed silent.
+
+`compaction_tokens_used` is recorded as **its own usage line** and is not folded
+into the trial totals. The SDK describes it as "aligned with assistant.usage
+format", meaning the compaction summary is itself a model call; whether that
+call *also* appears as an `assistant.usage` event is unknown. Folding it in
+would double count if it does, and ignoring it would undercount if it does not.
+
+#### The forced-compaction control (designed, not run)
+
+Before any report states compaction rates, one compaction must be forced on
+each scored model pin, so that a zero is a measurement rather than a silence.
+
+`session.rpc.history.compact` triggers compaction directly, which makes the
+control far cheaper than filling a context window to 200k tokens. Its `Trigger`
+enum carries `MANUAL`, and the SDK persists an organically triggered compaction
+**without trigger attribution**, so a control-induced compaction is
+distinguishable from a real one by `trigger == "manual"` against an absent
+trigger. `collect_compaction` counts the two separately.
+
+The limit of this control must be stated with its result: it proves the harness
+**captures** compaction events. It does not prove that organic compaction fires
+at any particular threshold. Establishing that still needs a filled context
+window, which is why the live run waits on the user.
 
 ---
 
@@ -518,14 +785,20 @@ cd /path/to/repo && python3.12 -m unittest discover -s benchmark/tests -t benchm
 
 ### What CI does and does not cover
 
-The `python` CI job collects and runs **all five** test modules — `test_driver`,
-`test_events`, `test_isolation`, `test_usage`, `test_versions` — for **284 tests**,
-of which `test_driver` contributes **150**.
+The `python` CI job discovers every test module under `benchmark/tests` from
+disk, rather than from a list. For each one it reports how many tests were
+collected and how many ran, and it fails if either is zero, if collection
+fails, or if the two numbers differ. Discovering no modules at all is also a
+hard failure. **The CI log carries the current per-module counts**; they are
+deliberately not repeated here, because a number in prose is not checked by
+anything and goes stale silently — this paragraph has claimed 120, then 254,
+then 284, each true when written.
 
-It previously ran only `test_driver` (120 tests). The other four import
-`github-copilot-sdk` and `inspect-ai`, which were reachable only through CFS, and CFS
-authorizes by **network context rather than by credential**: it resolves from a managed
-machine and returns 401 to a GitHub-hosted runner, so no token would have fixed it.
+It previously ran only `test_driver`, which at the time was 120 tests. The other
+modules import `github-copilot-sdk` and `inspect-ai`, which were reachable only
+through CFS, and CFS authorizes by **network context rather than by
+credential**: it resolves from a managed machine and returns 401 to a
+GitHub-hosted runner, so no token would have fixed it.
 
 CI now installs those packages from **public PyPI**, using hashes exported from the
 CFS-resolved `uv.lock` — see [CI installs from public PyPI, by hash](#ci-installs-from-public-pypi-by-hash).

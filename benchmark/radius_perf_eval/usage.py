@@ -34,12 +34,16 @@ from typing import Any
 
 __all__ = [
     "NANO_AIU_PER_AI_CREDIT",
+    "CONTEXT_EVENT_TYPES",
+    "CompactionRecord",
+    "ContextWindowStats",
     "FieldReconciliation",
     "NormalizedUsage",
     "Reconciliation",
     "TokenOverlapPolicy",
     "UsageTotals",
     "build_normalized_record",
+    "collect_compaction",
     "normalize_from_metrics",
     "normalize_from_usage_events",
     "reconcile",
@@ -134,6 +138,43 @@ class UsageTotals:
 
 
 @dataclass
+class ContextWindowStats:
+    """How close a trial came to filling the model's context window.
+
+    Motivation: a context limit that differs between arms is a confound, and
+    compaction is where a limit actually bites. These fields let a report say
+    whether an arm ever approached its window, and flag trials that did.
+
+    ``peak_prompt_tokens`` is the largest ``inputTokens`` any single call
+    reported. Under :data:`TokenOverlapPolicy.UNKNOWN` it is not known whether
+    ``inputTokens`` already includes ``cacheReadTokens``; if it does not, the
+    real prompt was larger, so ``peak_prompt_tokens_cache_excluded`` carries
+    that upper bound and both ratios are reported rather than one guessed one.
+    """
+
+    max_prompt_tokens: int | None = None
+    peak_prompt_tokens: int | None = None
+    peak_prompt_tokens_cache_excluded: int | None = None
+    peak_prompt_token_ratio: float | None = None
+    peak_prompt_token_ratio_upper_bound: float | None = None
+    min_headroom_ratio: float | None = None
+    peak_tool_token_count: int | None = None
+    limits_seen: list[int] = field(default_factory=list)
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return {
+            "maxPromptTokens": self.max_prompt_tokens,
+            "peakPromptTokens": self.peak_prompt_tokens,
+            "peakPromptTokensCacheExcluded": self.peak_prompt_tokens_cache_excluded,
+            "peakPromptTokenRatio": self.peak_prompt_token_ratio,
+            "peakPromptTokenRatioUpperBound": self.peak_prompt_token_ratio_upper_bound,
+            "minHeadroomRatio": self.min_headroom_ratio,
+            "toolTokenCount": self.peak_tool_token_count,
+            "limitsSeen": list(self.limits_seen),
+        }
+
+
+@dataclass
 class NormalizedUsage:
     """Normalized usage derived from exactly one source.
 
@@ -153,6 +194,7 @@ class NormalizedUsage:
     ambiguities: list[str] = field(default_factory=list)
     raw_input_tokens: int | None = None
     raw_output_tokens: int | None = None
+    context: ContextWindowStats | None = None
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -167,6 +209,7 @@ class NormalizedUsage:
             "ambiguities": list(self.ambiguities),
             "providerReportedInputTokens": self.raw_input_tokens,
             "providerReportedOutputTokens": self.raw_output_tokens,
+            "context": self.context.to_json_dict() if self.context is not None else None,
         }
 
 
@@ -264,6 +307,7 @@ def normalize_from_usage_events(
     models: list[str] = []
     count = 0
     used_token_details = False
+    context = ContextWindowStats()
 
     for data in events:
         count += 1
@@ -276,6 +320,23 @@ def normalize_from_usage_events(
         cache_read = _as_int(data.get("cacheReadTokens"))
         cache_write = _as_int(data.get("cacheWriteTokens"))
         reasoning = _as_int(data.get("reasoningTokens"))
+
+        limit = _as_int(data.get("maxPromptTokens"))
+        if limit is not None and limit not in context.limits_seen:
+            context.limits_seen.append(limit)
+        if input_tokens is not None:
+            context.peak_prompt_tokens = max(
+                context.peak_prompt_tokens or 0, input_tokens
+            )
+            context.peak_prompt_tokens_cache_excluded = max(
+                context.peak_prompt_tokens_cache_excluded or 0,
+                input_tokens + (cache_read or 0),
+            )
+        tool_tokens = _as_int(data.get("toolTokenCount"))
+        if tool_tokens is not None:
+            context.peak_tool_token_count = max(
+                context.peak_tool_token_count or 0, tool_tokens
+            )
 
         raw_input = _add(raw_input, input_tokens)
         raw_output = _add(raw_output, output_tokens)
@@ -338,6 +399,29 @@ def normalize_from_usage_events(
             "provider grand total, and deriving one would sum overlapping fields"
         )
 
+    # Use the smallest limit seen, so a mid-run model switch to a narrower
+    # window is reported at its tightest rather than its most flattering.
+    if context.limits_seen:
+        context.max_prompt_tokens = min(context.limits_seen)
+        if len(context.limits_seen) > 1:
+            ambiguities.append(
+                "maxPromptTokens varied across calls "
+                f"({sorted(context.limits_seen)}); reporting the smallest"
+            )
+    if context.max_prompt_tokens and context.peak_prompt_tokens is not None:
+        limit = context.max_prompt_tokens
+        context.peak_prompt_token_ratio = context.peak_prompt_tokens / limit
+        context.min_headroom_ratio = 1.0 - context.peak_prompt_token_ratio
+        if context.peak_prompt_tokens_cache_excluded is not None:
+            context.peak_prompt_token_ratio_upper_bound = (
+                context.peak_prompt_tokens_cache_excluded / limit
+            )
+    elif count > 0 and context.max_prompt_tokens is None:
+        ambiguities.append(
+            "no assistant.usage event reported maxPromptTokens, so context "
+            "headroom is unknown"
+        )
+
     return NormalizedUsage(
         source="assistant.usage-events",
         totals=totals,
@@ -350,6 +434,7 @@ def normalize_from_usage_events(
         ambiguities=_dedupe(ambiguities),
         raw_input_tokens=raw_input,
         raw_output_tokens=raw_output,
+        context=context if count > 0 else None,
     )
 
 
@@ -565,6 +650,7 @@ def build_normalized_record(
     reconciliation: Reconciliation,
     premium_request_multiplier: float | None = None,
     pricing_version: str | None = None,
+    compaction: CompactionRecord | None = None,
     runtime: str = "github-copilot-sdk",
 ) -> dict[str, Any]:
     """Build the run record's normalized usage block.
@@ -604,6 +690,14 @@ def build_normalized_record(
         "usageSource": primary.source,
         "premiumRequestsCharged": primary.premium_requests_charged,
         "modelApiDurationMs": primary.api_duration_ms,
+        "context": (
+            primary.context.to_json_dict() if primary.context is not None else None
+        ),
+        "compaction": (
+            compaction.to_json_dict()
+            if compaction is not None
+            else CompactionRecord().to_json_dict()
+        ),
         "ambiguities": primary.ambiguities,
         "sources": {
             "assistantUsageEvents": from_events.to_json_dict(),
@@ -613,3 +707,168 @@ def build_normalized_record(
         },
         "reconciliation": reconciliation.to_json_dict(),
     }
+
+
+# --- Context compaction and truncation ---------------------------------------
+#
+# EMISSION UNVERIFIED. The three event types below are declared by the pinned
+# SDK, but this harness has never observed one. No trial has filled a 272k
+# context window, so a silent log here says nothing about the SDK -- it says our
+# prompts were small. That is the opposite of the `requestSandboxBypass` case,
+# where the harness created the condition and the field still stayed silent.
+#
+# Until the forced-compaction control below is run, `emissionVerified` is false
+# and a zero count must be read as "no evidence either way", never as "no
+# compaction occurred".
+
+COMPACTION_START_EVENT = "session.compaction_start"
+COMPACTION_COMPLETE_EVENT = "session.compaction_complete"
+TRUNCATION_EVENT = "session.truncation"
+
+CONTEXT_EVENT_TYPES = (
+    COMPACTION_START_EVENT,
+    COMPACTION_COMPLETE_EVENT,
+    TRUNCATION_EVENT,
+)
+
+
+@dataclass
+class CompactionRecord:
+    """Compaction and truncation activity observed in one trial.
+
+    ``compaction_tokens_used`` is its own accounting line. The SDK describes it
+    as "aligned with assistant.usage format", meaning the compaction summary is
+    itself a model call. Whether that call *also* appears as an
+    ``assistant.usage`` event is unknown and unresolvable without running a
+    compaction, so it is reported separately and never folded into the trial
+    totals. Folding it in would double count if the SDK emits both; ignoring it
+    would undercount if the SDK emits neither.
+    """
+
+    compaction_starts: int = 0
+    compaction_completes: int = 0
+    compaction_failures: int = 0
+    truncations: int = 0
+    manual_compactions: int = 0
+    unattributed_compactions: int = 0
+    pre_compaction_tokens: list[int] = field(default_factory=list)
+    post_compaction_tokens: list[int] = field(default_factory=list)
+    tokens_removed_by_truncation: int | None = None
+    compaction_tokens_used: UsageTotals = field(default_factory=UsageTotals)
+    compaction_tokens_reported: bool = False
+    notes: list[str] = field(default_factory=list)
+
+    @property
+    def compacted(self) -> bool:
+        return self.compaction_starts > 0 or self.compaction_completes > 0
+
+    @property
+    def truncated(self) -> bool:
+        return self.truncations > 0
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return {
+            "emissionVerified": False,
+            "compacted": self.compacted,
+            "truncated": self.truncated,
+            "compactionStarts": self.compaction_starts,
+            "compactionCompletes": self.compaction_completes,
+            "compactionFailures": self.compaction_failures,
+            "truncations": self.truncations,
+            "manualCompactions": self.manual_compactions,
+            "unattributedCompactions": self.unattributed_compactions,
+            "preCompactionTokens": list(self.pre_compaction_tokens),
+            "postCompactionTokens": list(self.post_compaction_tokens),
+            "tokensRemovedByTruncation": self.tokens_removed_by_truncation,
+            "compactionTokensUsed": (
+                self.compaction_tokens_used.to_json_dict()
+                if self.compaction_tokens_reported
+                else None
+            ),
+            "compactionTokensCountedInTrialTotals": False,
+            "notes": list(self.notes),
+        }
+
+
+def collect_compaction(events: Iterable[Mapping[str, Any]]) -> CompactionRecord:
+    """Summarize compaction and truncation events from a captured event log.
+
+    Accepts the full event records (``{"type": ..., "payload"/"data": {...}}``)
+    rather than payloads alone, because the three event types have different
+    shapes and must be told apart.
+    """
+    record = CompactionRecord()
+
+    for event in events:
+        event_type = event.get("type")
+        if event_type not in CONTEXT_EVENT_TYPES:
+            continue
+        data = event.get("data")
+        if not isinstance(data, Mapping):
+            payload = event.get("payload")
+            data = payload if isinstance(payload, Mapping) else {}
+
+        if event_type == COMPACTION_START_EVENT:
+            record.compaction_starts += 1
+            _count_trigger(record, data)
+        elif event_type == COMPACTION_COMPLETE_EVENT:
+            record.compaction_completes += 1
+            # `success` is required on the wire type, so a missing key is a
+            # malformed event rather than a success.
+            if data.get("success") is not True:
+                record.compaction_failures += 1
+            if record.compaction_starts == 0:
+                _count_trigger(record, data)
+            pre = _as_int(data.get("preCompactionTokens"))
+            post = _as_int(data.get("postCompactionTokens"))
+            if pre is not None:
+                record.pre_compaction_tokens.append(pre)
+            if post is not None:
+                record.post_compaction_tokens.append(post)
+            used = data.get("compactionTokensUsed")
+            if isinstance(used, Mapping):
+                record.compaction_tokens_reported = True
+                _accumulate_compaction_tokens(record.compaction_tokens_used, used)
+        elif event_type == TRUNCATION_EVENT:
+            record.truncations += 1
+            removed = _as_int(data.get("tokensRemovedDuringTruncation"))
+            if removed is not None:
+                record.tokens_removed_by_truncation = (
+                    record.tokens_removed_by_truncation or 0
+                ) + removed
+
+    if record.compacted and not record.compaction_tokens_reported:
+        record.notes.append(
+            "compaction occurred but no compactionTokensUsed was reported; the "
+            "tokens the compaction call itself spent are unaccounted"
+        )
+    if record.compaction_completes and record.compaction_starts == 0:
+        record.notes.append(
+            "compaction completed with no matching start event"
+        )
+    return record
+
+
+def _count_trigger(record: CompactionRecord, data: Mapping[str, Any]) -> None:
+    trigger = data.get("trigger")
+    if trigger == "manual":
+        record.manual_compactions += 1
+    elif trigger is None:
+        # The SDK persists an organically triggered compaction without trigger
+        # attribution, so absence is the signal for "not harness-induced".
+        record.unattributed_compactions += 1
+    else:
+        record.notes.append(f"unrecognized compaction trigger: {trigger!r}")
+
+
+def _accumulate_compaction_tokens(
+    totals: UsageTotals, used: Mapping[str, Any]
+) -> None:
+    input_tokens = _as_int(used.get("inputTokens"))
+    cache_read = _as_int(used.get("cacheReadTokens"))
+    cache_write = _as_int(used.get("cacheWriteTokens"))
+    output_tokens = _as_int(used.get("outputTokens"))
+    totals.input_uncached_tokens = _add(totals.input_uncached_tokens, input_tokens)
+    totals.input_cached_read_tokens = _add(totals.input_cached_read_tokens, cache_read)
+    totals.input_cache_write_tokens = _add(totals.input_cache_write_tokens, cache_write)
+    totals.output_visible_tokens = _add(totals.output_visible_tokens, output_tokens)
