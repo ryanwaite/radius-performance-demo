@@ -35,6 +35,7 @@ from radius_perf_eval.compose import (  # noqa: E402
 from radius_perf_eval import astronomy_shop  # noqa: E402
 import pathlib
 from radius_perf_eval import cpu_limits  # noqa: E402
+from radius_perf_eval import offered_load  # noqa: E402
 import inspect
 from radius_perf_eval import checks  # noqa: E402
 from radius_perf_eval import shop_readiness  # noqa: E402
@@ -2598,6 +2599,313 @@ class AstronomyShopCollectorConfigTests(unittest.TestCase):
         removed = manifest["files"]["otelcol-config.yml"]["removed"]
         self.assertIn("receivers::docker_stats", removed)
         self.assertIn("receivers::host_metrics", removed)
+
+
+class OfferedLoadProbeTests(unittest.TestCase):
+    """Reading the generator's own counter, and refusing to guess.
+
+    Every failure path here raises rather than defaulting. A missing counter
+    defaulting to zero would read as a stopped generator, and a stopped
+    generator is the exact condition the gate exists to catch, so it must
+    never be manufactured by a parsing accident.
+    """
+
+    @staticmethod
+    def _payload(requests=1000, failures=0, users=5, state="running", clock=100.0):
+        return json.dumps(
+            {
+                "clock": clock,
+                "stats": {
+                    "state": state,
+                    "user_count": users,
+                    "stats": [
+                        {"name": "/api/products", "num_requests": 400, "num_failures": 0},
+                        {
+                            "name": "Aggregated",
+                            "num_requests": requests,
+                            "num_failures": failures,
+                        },
+                    ],
+                },
+            }
+        )
+
+    def test_a_reading_comes_from_the_aggregate_row(self):
+        reading = offered_load.parse_reading(self._payload(requests=1234, failures=7))
+        self.assertEqual(reading.requests, 1234)
+        self.assertEqual(reading.failures, 7)
+        self.assertEqual(reading.users, 5)
+        self.assertEqual(reading.state, "running")
+
+    def test_log_lines_before_the_payload_are_ignored(self):
+        noisy = "WARNING: something\nINFO: else\n" + self._payload()
+        self.assertEqual(offered_load.parse_reading(noisy).requests, 1000)
+
+    def test_a_missing_aggregate_row_is_an_error_not_zero_requests(self):
+        document = json.loads(self._payload())
+        document["stats"]["stats"] = [
+            {"name": "/api/products", "num_requests": 400, "num_failures": 0}
+        ]
+        with self.assertRaises(offered_load.OfferedLoadError):
+            offered_load.parse_reading(json.dumps(document))
+
+    def test_empty_output_is_an_error(self):
+        with self.assertRaises(offered_load.OfferedLoadError):
+            offered_load.parse_reading("   ")
+
+    def test_non_json_output_is_an_error(self):
+        with self.assertRaises(offered_load.OfferedLoadError):
+            offered_load.parse_reading("Traceback (most recent call last):")
+
+    def test_a_missing_clock_is_an_error(self):
+        document = json.loads(self._payload())
+        del document["clock"]
+        with self.assertRaises(offered_load.OfferedLoadError):
+            offered_load.parse_reading(json.dumps(document))
+
+    def test_the_probe_runs_inside_the_container_and_needs_no_published_port(self):
+        """The stack moves to an internal network, where Docker publishes
+        nothing. A probe that needed a published port would have to punch a
+        hole for itself."""
+        seen = {}
+
+        def runner(argv, **kwargs):
+            seen["argv"] = argv
+            return subprocess.CompletedProcess(argv, 0, stdout=self._payload(), stderr="")
+
+        offered_load.read_offered_load("proj", "compose.yml", runner=runner)
+        self.assertIn("exec", seen["argv"])
+        self.assertIn("load-generator", seen["argv"])
+        self.assertIn("127.0.0.1", " ".join(seen["argv"]))
+
+    def test_a_failed_probe_is_an_error(self):
+        def runner(argv, **kwargs):
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="no such service")
+
+        with self.assertRaises(offered_load.OfferedLoadError):
+            offered_load.read_offered_load("proj", "compose.yml", runner=runner)
+
+
+class AchievedLoadTests(unittest.TestCase):
+    """Differencing two readings into a rate."""
+
+    @staticmethod
+    def _reading(clock, requests, failures=0, users=5, state="running"):
+        return offered_load.LoadReading(
+            clock=clock, requests=requests, failures=failures, users=users, state=state
+        )
+
+    def test_the_rate_is_the_counter_delta_over_the_elapsed_time(self):
+        achieved = offered_load.achieved_between(
+            self._reading(100.0, 1000), self._reading(400.0, 4000)
+        )
+        self.assertEqual(achieved.requests, 3000)
+        self.assertAlmostEqual(achieved.elapsed_seconds, 300.0)
+        self.assertAlmostEqual(achieved.requests_per_second, 10.0)
+
+    def test_the_failure_ratio_is_over_the_window_not_the_run(self):
+        achieved = offered_load.achieved_between(
+            self._reading(100.0, 1000, failures=500),
+            self._reading(200.0, 2000, failures=510),
+        )
+        self.assertEqual(achieved.failures, 10)
+        self.assertAlmostEqual(achieved.failure_ratio, 0.01)
+
+    def test_a_non_positive_interval_is_an_error(self):
+        with self.assertRaises(offered_load.OfferedLoadError):
+            offered_load.achieved_between(
+                self._reading(100.0, 1000), self._reading(100.0, 2000)
+            )
+
+    def test_a_counter_going_backwards_is_an_error_not_a_zero_rate(self):
+        """The generator restarted, so the readings describe different runs.
+        Clamping to zero would report a stalled generator as a slow one."""
+        with self.assertRaises(offered_load.OfferedLoadError):
+            offered_load.achieved_between(
+                self._reading(100.0, 5000), self._reading(200.0, 10)
+            )
+
+
+class OfferedLoadGateTests(unittest.TestCase):
+    """A cycle outside the band yields no verdict, which is not a failure."""
+
+    BAND = offered_load.LoadBand(
+        host_class="test-class", target_rps=10.0, fraction=0.20, expected_users=5
+    )
+
+    @staticmethod
+    def _achieved(rps=10.0, elapsed=300.0, users=5, state="running", failures=0):
+        requests = int(rps * elapsed)
+        return offered_load.AchievedLoad(
+            requests=requests,
+            failures=failures,
+            elapsed_seconds=elapsed,
+            requests_per_second=rps,
+            failure_ratio=(failures / requests) if requests else 0.0,
+            users=users,
+            state=state,
+        )
+
+    def test_a_cycle_inside_the_band_is_scored(self):
+        """Positive control for every rejection below. If this fails, the gate
+        rejects everything and the other tests prove nothing."""
+        verdict = offered_load.evaluate_offered_load(self._achieved(), self.BAND)
+        self.assertTrue(verdict.scored)
+        self.assertTrue(verdict.in_band)
+        self.assertEqual(verdict.reasons, ())
+        self.assertEqual(verdict.to_dict()["verdict"], "scored")
+
+    def test_the_band_edges_are_inclusive_and_sit_where_the_fraction_says(self):
+        self.assertAlmostEqual(self.BAND.low_rps, 8.0)
+        self.assertAlmostEqual(self.BAND.high_rps, 12.0)
+        for edge in (8.0, 12.0):
+            self.assertTrue(
+                offered_load.evaluate_offered_load(
+                    self._achieved(rps=edge), self.BAND
+                ).scored
+            )
+
+    def test_a_rate_below_the_band_gives_no_verdict(self):
+        verdict = offered_load.evaluate_offered_load(
+            self._achieved(rps=6.0), self.BAND
+        )
+        self.assertFalse(verdict.scored)
+        self.assertFalse(verdict.in_band)
+        self.assertEqual(verdict.to_dict()["verdict"], "no-verdict")
+
+    def test_a_rate_above_the_band_gives_no_verdict(self):
+        verdict = offered_load.evaluate_offered_load(
+            self._achieved(rps=14.0), self.BAND
+        )
+        self.assertFalse(verdict.scored)
+
+    def test_a_generator_that_is_not_running_gives_no_verdict(self):
+        verdict = offered_load.evaluate_offered_load(
+            self._achieved(state="stopped"), self.BAND
+        )
+        self.assertFalse(verdict.scored)
+        self.assertTrue(any("stopped" in reason for reason in verdict.reasons))
+
+    def test_a_different_user_count_gives_no_verdict(self):
+        """The band was fitted at one concurrency. At another it describes
+        nothing, even if the rate happens to land inside it."""
+        verdict = offered_load.evaluate_offered_load(
+            self._achieved(users=9), self.BAND
+        )
+        self.assertFalse(verdict.scored)
+
+    def test_a_window_too_short_to_average_gives_no_verdict(self):
+        verdict = offered_load.evaluate_offered_load(
+            self._achieved(elapsed=5.0), self.BAND
+        )
+        self.assertFalse(verdict.scored)
+
+    def test_zero_requests_gives_no_verdict(self):
+        verdict = offered_load.evaluate_offered_load(
+            self._achieved(rps=0.0), self.BAND
+        )
+        self.assertFalse(verdict.scored)
+        self.assertTrue(any("no requests" in reason for reason in verdict.reasons))
+
+
+class OfferedLoadBandFitTests(unittest.TestCase):
+    """Fitting and freezing the band."""
+
+    def test_the_target_is_the_median_not_the_mean(self):
+        """One stalled cycle drags a mean to a rate no cycle produced."""
+        samples = [10.0, 10.0, 10.0, 10.0, 1.0]
+        band = offered_load.fit_band(
+            samples, host_class="c", expected_users=5
+        )
+        self.assertAlmostEqual(band.target_rps, 10.0)
+
+    def test_too_few_cycles_cannot_be_fitted(self):
+        with self.assertRaises(offered_load.OfferedLoadError):
+            offered_load.fit_band([10.0, 10.0], host_class="c", expected_users=5)
+
+    def test_a_non_positive_sample_cannot_be_fitted(self):
+        with self.assertRaises(offered_load.OfferedLoadError):
+            offered_load.fit_band(
+                [10.0, 10.0, 10.0, 10.0, 0.0], host_class="c", expected_users=5
+            )
+
+    def test_band_covers_reports_the_fitting_cycles_its_own_band_rejects(self):
+        samples = [10.0, 10.0, 10.0, 10.0, 10.0, 20.0]
+        band = offered_load.fit_band(samples, host_class="c", expected_users=5)
+        self.assertEqual(offered_load.band_covers(band, samples), [20.0])
+
+    def test_band_covers_is_empty_for_a_band_that_holds_its_inputs(self):
+        """Positive control for the test above."""
+        samples = [10.0, 10.1, 9.9, 10.2, 9.8]
+        band = offered_load.fit_band(samples, host_class="c", expected_users=5)
+        self.assertEqual(offered_load.band_covers(band, samples), [])
+
+
+class OfferedLoadFrozenFileTests(unittest.TestCase):
+    """The committed band cannot be borrowed, widened or edited."""
+
+    def _write(self, directory, **overrides):
+        payload = {
+            "hostClass": "test-class",
+            "targetRps": 10.0,
+            "fraction": offered_load.BAND_FRACTION,
+            "expectedUsers": 5,
+            "samples": [10.0, 10.1, 9.9],
+        }
+        payload.update(overrides)
+        payload["manifestHash"] = overrides.get(
+            "manifestHash", offered_load.band_hash(payload)
+        )
+        path = pathlib.Path(directory) / "benchmark/apps/astronomy-shop"
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "offered-load.json").write_text(json.dumps(payload))
+        return pathlib.Path(directory)
+
+    def test_a_well_formed_band_loads(self):
+        """Positive control for the four refusals below."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._write(directory)
+            band = offered_load.load_band(root, "test-class")
+            self.assertAlmostEqual(band.target_rps, 10.0)
+
+    def test_a_missing_file_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(offered_load.OfferedLoadError):
+                offered_load.load_band(pathlib.Path(directory), "test-class")
+
+    def test_a_band_fitted_on_another_host_class_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._write(directory)
+            with self.assertRaises(offered_load.OfferedLoadError):
+                offered_load.load_band(root, "some-linux-vm")
+
+    def test_a_file_that_widens_its_own_band_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._write(directory, fraction=0.95)
+            with self.assertRaises(offered_load.OfferedLoadError):
+                offered_load.load_band(root, "test-class")
+
+    def test_an_edited_file_is_refused_by_the_hash(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._write(directory, manifestHash="sha256:" + "0" * 64)
+            with self.assertRaises(offered_load.OfferedLoadError):
+                offered_load.load_band(root, "test-class")
+
+    def test_the_hash_covers_the_target_and_ignores_the_samples(self):
+        """Re-measuring the fitting cycles moves the samples without moving
+        the band, and that must not read as a fixture change."""
+        base = {
+            "hostClass": "c", "targetRps": 10.0,
+            "fraction": 0.2, "expectedUsers": 5, "samples": [1, 2, 3],
+        }
+        moved_samples = dict(base, samples=[9, 9, 9])
+        moved_target = dict(base, targetRps=11.0)
+        self.assertEqual(
+            offered_load.band_hash(base), offered_load.band_hash(moved_samples)
+        )
+        self.assertNotEqual(
+            offered_load.band_hash(base), offered_load.band_hash(moved_target)
+        )
 
 
 class CollectorExporterStripTests(unittest.TestCase):
