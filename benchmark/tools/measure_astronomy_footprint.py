@@ -191,94 +191,104 @@ def main() -> int:
     if up.returncode != 0:
         print("UP FAILED:", (up.stderr or "")[-4000:], file=sys.stderr, flush=True)
 
-    peaks: dict[str, dict[str, float]] = {}
-    series: list[dict] = []
-    deadline = time.monotonic() + options.minutes * 60
-    while time.monotonic() < deadline:
-        taken = sample_stats(options.project)
-        if taken:
-            series.append({"t": round(time.monotonic(), 1), "samples": taken})
-            for name, values in taken.items():
-                slot = peaks.setdefault(name, dict(values))
-                for key, value in values.items():
-                    slot[key] = max(slot[key], value)
-        time.sleep(options.interval)
+    try:
+        peaks: dict[str, dict[str, float]] = {}
+        series: list[dict] = []
+        deadline = time.monotonic() + options.minutes * 60
+        while time.monotonic() < deadline:
+            taken = sample_stats(options.project)
+            if taken:
+                series.append({"t": round(time.monotonic(), 1), "samples": taken})
+                for name, values in taken.items():
+                    slot = peaks.setdefault(name, dict(values))
+                    for key, value in values.items():
+                        slot[key] = max(slot[key], value)
+            time.sleep(options.interval)
 
-    # Positive control on the sampler itself. A measurement that silently
-    # collected nothing, or collected only some services, must not be
-    # reported as a footprint. The first attempt at this run sampled zero
-    # containers because the name filter could not match, and the only
-    # signal was an empty result that still looked like a successful run.
-    expected = set(rendered["services"])
-    observed = set(peaks)
-    sampling = {
-        "expectedServices": len(expected),
-        "sampledServices": len(observed),
-        "neverSampled": sorted(expected - observed),
-        "unexpected": sorted(observed - expected),
-        "samples": len(series),
-    }
-    sampling["trustworthy"] = (
-        len(series) > 0 and not sampling["neverSampled"] and not sampling["unexpected"]
-    )
+        # Positive control on the sampler itself. A measurement that silently
+        # collected nothing, or collected only some services, must not be
+        # reported as a footprint. The first attempt at this run sampled zero
+        # containers because the name filter could not match, and the only
+        # signal was an empty result that still looked like a successful run.
+        expected = set(rendered["services"])
+        observed = set(peaks)
+        sampling = {
+            "expectedServices": len(expected),
+            "sampledServices": len(observed),
+            "neverSampled": sorted(expected - observed),
+            "unexpected": sorted(observed - expected),
+            "samples": len(series),
+        }
+        sampling["trustworthy"] = (
+            len(series) > 0 and not sampling["neverSampled"] and not sampling["unexpected"]
+        )
 
-    states = subprocess.run(
-        compose + ["ps", "-a", "--format",
-                   "{{.Service}}\t{{.State}}\t{{.ExitCode}}\t{{.Status}}"],
-        capture_output=True, text=True,
-    ).stdout
-    oom_killed = []
-    for line in states.strip().splitlines():
-        parts = line.split("\t")
-        if len(parts) >= 3 and parts[2].strip() == "137":
-            oom_killed.append(parts[0])
-    for service in sorted(expected):
-        inspected = subprocess.run(
-            ["docker", "inspect", "--format", "{{.State.OOMKilled}}",
-             f"{options.project}-{service}-1"],
+        states = subprocess.run(
+            compose + ["ps", "-a", "--format",
+                       "{{.Service}}\t{{.State}}\t{{.ExitCode}}\t{{.Status}}"],
+            capture_output=True, text=True,
+        ).stdout
+        oom_killed = []
+        for line in states.strip().splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 3 and parts[2].strip() == "137":
+                oom_killed.append(parts[0])
+        for service in sorted(expected):
+            inspected = subprocess.run(
+                ["docker", "inspect", "--format", "{{.State.OOMKilled}}",
+                 f"{options.project}-{service}-1"],
+                capture_output=True, text=True,
+            )
+            if inspected.stdout.strip() == "true" and service not in oom_killed:
+                oom_killed.append(service)
+
+        total_peak = sum(v["memoryBytes"] for v in peaks.values())
+        result = {
+            "sampling": sampling,
+            "oomKilled": sorted(oom_killed),
+            "dockerMemoryCeilingBytes": ceiling,
+            "dockerMemoryCeilingGib": gibibytes(ceiling),
+            "peakTotalMemoryBytes": total_peak,
+            "peakTotalMemoryGib": round(total_peak / 1024 ** 3, 3),
+            "percentOfCeiling": round(100 * total_peak / ceiling, 1) if ceiling else None,
+            "perService": {
+                name: {
+                    "peakCpuPercent": round(values["cpuPercent"], 1),
+                    "peakMemoryBytes": int(values["memoryBytes"]),
+                    "peakMemoryMib": round(values["memoryBytes"] / 1024 ** 2, 1),
+                    "peakBlockReadBytes": int(values["blockReadBytes"]),
+                }
+                for name, values in sorted(peaks.items())
+            },
+            "containerStates": states,
+            "upSucceeded": up.returncode == 0,
+        }
+        (run_dir / "footprint.json").write_text(json.dumps(result, indent=2) + "\n")
+        (run_dir / "series.json").write_text(json.dumps(series, indent=2) + "\n")
+
+        print(f"\npeak total memory {result['peakTotalMemoryGib']} GiB "
+              f"of {result['dockerMemoryCeilingGib']} GiB ceiling "
+              f"({result['percentOfCeiling']}%)", flush=True)
+        print(f"sampling trustworthy: {sampling['trustworthy']} "
+              f"({sampling['sampledServices']}/{sampling['expectedServices']} services, "
+              f"{sampling['samples']} samples)", flush=True)
+        if sampling["neverSampled"]:
+            print(f"NEVER SAMPLED: {sampling['neverSampled']}", flush=True)
+        if oom_killed:
+            print(f"OOM KILLED: {sorted(oom_killed)}", flush=True)
+        print(f"artifacts: {run_dir}", flush=True)
+
+    finally:
+        # Teardown belongs in a finally rather than at the end of the happy
+        # path. Between `up` and here the tool samples for as long as the
+        # caller asked, and a Ctrl-C during that window, or any exception
+        # from the sampler, used to leave all 28 containers and their
+        # networks running. The next run would then measure a host with a
+        # whole shop already on it and report the result as a footprint.
+        subprocess.run(
+            compose + ["down", "--volumes", "--remove-orphans", "--timeout", "60"],
             capture_output=True, text=True,
         )
-        if inspected.stdout.strip() == "true" and service not in oom_killed:
-            oom_killed.append(service)
-
-    total_peak = sum(v["memoryBytes"] for v in peaks.values())
-    result = {
-        "sampling": sampling,
-        "oomKilled": sorted(oom_killed),
-        "dockerMemoryCeilingBytes": ceiling,
-        "dockerMemoryCeilingGib": gibibytes(ceiling),
-        "peakTotalMemoryBytes": total_peak,
-        "peakTotalMemoryGib": round(total_peak / 1024 ** 3, 3),
-        "percentOfCeiling": round(100 * total_peak / ceiling, 1) if ceiling else None,
-        "perService": {
-            name: {
-                "peakCpuPercent": round(values["cpuPercent"], 1),
-                "peakMemoryBytes": int(values["memoryBytes"]),
-                "peakMemoryMib": round(values["memoryBytes"] / 1024 ** 2, 1),
-                "peakBlockReadBytes": int(values["blockReadBytes"]),
-            }
-            for name, values in sorted(peaks.items())
-        },
-        "containerStates": states,
-        "upSucceeded": up.returncode == 0,
-    }
-    (run_dir / "footprint.json").write_text(json.dumps(result, indent=2) + "\n")
-    (run_dir / "series.json").write_text(json.dumps(series, indent=2) + "\n")
-
-    print(f"\npeak total memory {result['peakTotalMemoryGib']} GiB "
-          f"of {result['dockerMemoryCeilingGib']} GiB ceiling "
-          f"({result['percentOfCeiling']}%)", flush=True)
-    print(f"sampling trustworthy: {sampling['trustworthy']} "
-          f"({sampling['sampledServices']}/{sampling['expectedServices']} services, "
-          f"{sampling['samples']} samples)", flush=True)
-    if sampling["neverSampled"]:
-        print(f"NEVER SAMPLED: {sampling['neverSampled']}", flush=True)
-    if oom_killed:
-        print(f"OOM KILLED: {sorted(oom_killed)}", flush=True)
-    print(f"artifacts: {run_dir}", flush=True)
-
-    subprocess.run(compose + ["down", "--volumes", "--remove-orphans", "--timeout", "60"],
-                   capture_output=True, text=True)
     return 0
 
 

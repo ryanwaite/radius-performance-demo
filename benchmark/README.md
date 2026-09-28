@@ -1076,6 +1076,9 @@ in a chat log.
 
 **Built and verified on this laptop**
 
+Read this list with the next paragraph, which says which of these the trial
+driver actually calls. Several are libraries with tests and no caller yet.
+
   - Host class derived from observed facts, with tolerances frozen per class,
     and a refusal to give a verdict on an unknown class.
   - Fingerprint recorded beside the qualification fingerprint, with a drift
@@ -1090,6 +1093,8 @@ in a chat log.
   - The three upstream isolation defects fixed by transform, and a static check
     on the rendered config for `container_name`, named networks, fixed host
     ports, and socket or `/hostfs` mounts.
+  - A per-render private copy of the flag directory, so a flag toggled during a
+    trial cannot rewrite the vendored file or persist into the next trial.
   - Application-level readiness per service, including Kafka and the databases,
     with ports rediscovered after every container recreation.
   - Flag services unpublished, and a gate that reads every flag's resolved
@@ -1102,8 +1107,29 @@ in a chat log.
     generator's own counter, scored only inside a frozen band.
   - The `firepit` exporter stripped from the derived collector config.
 
+**Which of those the trial driver calls: none of the shop-specific ones.**
+`trials.py` contains no reference to the Astronomy Shop. It still drives the
+catalog app. Everything above that is shop-specific is reached from the tools
+under `tools/` and from the test suite, and nowhere else. Concretely,
+`evaluate_all`, `evaluate_flag_gate`, `read_throttling`, `verdict_from_readings`
+and `evaluate_offered_load` have no call site outside `tests/`, and no
+`offered-load.json` exists for `load_band` to read, so the frozen band it
+compares against has never been written. These gates are implemented, tested,
+and in three cases demonstrated live against a running stack with a positive
+control; they are **not** wired into a trial. Treat the list above as "the
+mechanism exists and does what it claims when called", not as "a trial enforces
+this". Wiring them is on the not-built list below. The one exception is the
+fingerprint drift gate, which `trials.py` does call, because it guards the
+catalog app's scored start as well.
+
 **Not built**
 
+  - **Wiring the shop gates into a trial driver.** There is no shop equivalent
+    of `trials.py`. The gates listed above have to be called in cycle order,
+    their results recorded in the run record, and their refusals made to stop a
+    trial rather than return a value nobody reads. This includes writing the
+    `offered-load.json` band file that `load_band` expects; until it exists the
+    offered-load gate cannot run outside a test or the ad-hoc harness.
   - **Grafana plugin vendoring.** Grafana is part of the agent's surface: the
     agent may query it, and the plugin must be pinned in the repository rather
     than downloaded at startup. Required: download
@@ -1151,6 +1177,20 @@ in a chat log.
     Linux VM host class has no frozen tolerances, and by the rule above the
     suite will refuse to give a verdict there until it is qualified on that
     class. Nothing measured on this laptop transfers.
+  - **A cgroup path that only holds under the cgroupfs driver — a blocker for
+    VM qualification.** `cpu_limits.py` builds the throttling path by assuming
+    containers sit directly under the cgroup root, as they do inside Docker
+    Desktop's VM. On Linux with the **systemd** cgroup driver, which is the
+    default on most distributions and so the likely VM case, they sit under
+    `system.slice/docker-<id>.scope` instead. Every read then misses, and
+    because the check treats an unreadable counter as a refusal rather than a
+    pass, CPU-limit verification can never succeed there. It fails closed, so
+    it is safe to leave: the consequence is a host that cannot be qualified,
+    not a host that is qualified wrongly. It must be fixed before the VM host
+    class is fitted. The suggested fix is to stop constructing the path and
+    read it instead: resolve each container's cgroup from `/proc/<pid>/cgroup`,
+    which is correct under either driver. The two sites are the per-container
+    path construction and the verification read.
 
 ### It is 28 services, not 17
 
