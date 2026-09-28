@@ -50,6 +50,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .usage import CONTEXT_EVENT_TYPES
 from .events import EventRecorder, ToolCallTimeline
 
 __all__ = [
@@ -83,6 +84,13 @@ SUBAGENT_TOOLS: tuple[str, ...] = (
 #: the trial cap.
 RUNTIME_MIN_AI_CREDITS = 30.0
 
+#: The plan's scored-trial budget (plan defaults table): 30 minutes wall clock
+#: and 100 tool calls, whichever comes first, at high reasoning effort,
+#: identical across arms. Exhaustion scores as a failure.
+PLAN_WALL_CLOCK_MS = 30 * 60 * 1000.0
+PLAN_MAX_TOOL_CALLS = 100
+PLAN_REASONING_EFFORT = "high"
+
 #: Built-in agent types the runtime can spawn.
 #:
 #: The runtime rejects a ``"*"`` wildcard in ``excludedBuiltinAgents`` and SDK
@@ -109,6 +117,15 @@ class IsolationViolation(RuntimeError):
 
 class BudgetExceeded(RuntimeError):
     """Raised when a declared budget terminated the session."""
+
+
+class SandboxNotAppliedError(RuntimeError):
+    """Raised when the runtime sandbox could not be applied to a session.
+
+    Fails the trial rather than degrading to an unconfined run. A session that
+    silently continues without the sandbox produces evidence indistinguishable
+    from a confined run, which is the failure the plan's gate exists to catch.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -236,17 +253,35 @@ class IsolationPolicy:
     ``full_command_text`` for escape-shaped tokens. That is **best effort
     only**: command substitution, encoding, or an interpreter can defeat any
     static screen, so it is defence in depth and must never be described as
-    confinement. Confinement would require an OS boundary around the agent
-    process. Compose containers bound the application under test, not the
-    agent, and so supply no confinement here; the runtime sandbox that could
-    supply it is reachable only after session creation and is not enabled by
-    this harness.
+    confinement.
+
+    Confinement comes from the runtime sandbox, which this harness now applies
+    through ``session.rpc.options.update`` before the first prompt. Verified
+    live on SDK 1.0.14 / CLI 1.0.87 with ``gpt-5.6-sol``: writes and reads
+    outside the workspace fail with ``Operation not permitted`` while an
+    in-workspace control write succeeds, and every execution reports
+    ``sandboxApplied=true``. Compose containers bound the application under
+    test, not the agent, and supply no confinement here.
+
+    One consequence of this screen is worth stating, because it produced a false
+    result. ``_shell_escape_token`` rejects **any** absolute path, including one
+    inside the workspace. A harness-driven probe must name its target
+    absolutely, so with the screen on, every probe -- and the in-workspace
+    control -- is denied here and never reaches the sandbox. Both denials leave
+    the file absent, so the run reads as perfect confinement while testing
+    nothing. ``screen_shell_paths=False`` exists for that case and must never be
+    set for a scored run.
     """
 
     workspace_root: Path
     allow_writes: bool = True
     allow_network: bool = False
     allow_shell: bool = False
+    #: Sandbox-probe mode. When False the static path screen is bypassed so the
+    #: runtime sandbox is the only thing that can deny a command. Scored runs
+    #: must leave this True; it exists so confinement evidence is about the
+    #: sandbox rather than about our own filter.
+    screen_shell_paths: bool = True
     violations: list[dict[str, Any]] = field(default_factory=list)
     decisions: list[dict[str, Any]] = field(default_factory=list)
 
@@ -315,6 +350,21 @@ class IsolationPolicy:
         # it appears tokenized and structured. Do not switch to it.
         escape = _shell_escape_token(command)
         if escape is not None:
+            if not self.screen_shell_paths:
+                # Sandbox-probe mode only. The screen and the sandbox both deny
+                # by leaving the file absent, so while the screen is answering
+                # no probe can say anything about the sandbox. Turning it off is
+                # what makes the sandbox the only thing that can deny. Never set
+                # this for a scored run.
+                self.decisions.append(
+                    {
+                        "kind": kind,
+                        "approved": True,
+                        "reason": "static screen disabled for sandbox probing",
+                        "command": command,
+                    }
+                )
+                return True, "static screen disabled for sandbox probing"
             return self._deny(
                 kind, f"command references a path outside the workspace: {escape!r}", detail
             )
@@ -394,6 +444,7 @@ def isolated_session_kwargs(
     model: str,
     reasoning_effort: str | None = None,
     max_ai_credits: float | None = None,
+    tools: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Session options that disable memory, subagents, and auto routing.
 
@@ -468,6 +519,8 @@ def isolated_session_kwargs(
         kwargs["session_limits"] = {
             "max_ai_credits": max(max_ai_credits, RUNTIME_MIN_AI_CREDITS)
         }
+    if tools:
+        kwargs["tools"] = list(tools)
     return kwargs
 
 
@@ -489,6 +542,21 @@ class SessionBudget:
     max_model_requests: int | None = None
     max_tool_calls: int | None = None
     max_ai_credits: float | None = None
+
+    @classmethod
+    def plan_default(cls) -> "SessionBudget":
+        """The plan's scored-trial budget: 30 minutes or 100 tool calls.
+
+        Deliberately leaves ``max_model_requests`` unset. The plan caps tool
+        calls, not model calls, and adding an undeclared third cap would let a
+        trial terminate for a reason no arm agreed to -- which would show up as
+        a between-arm difference in exhaustion rate that reflects the harness
+        rather than the treatment.
+        """
+        return cls(
+            wall_clock_ms=PLAN_WALL_CLOCK_MS,
+            max_tool_calls=PLAN_MAX_TOOL_CALLS,
+        )
 
     def check(
         self,
@@ -597,6 +665,9 @@ class SpikeSession:
         reasoning_effort: str | None = None,
         allow_writes: bool = True,
         allow_shell: bool = False,
+        screen_shell_paths: bool = True,
+        tools: list[Any] | None = None,
+        sandbox_settings: Any = None,
     ) -> None:
         self._client = client
         self._workspace = workspace
@@ -604,10 +675,21 @@ class SpikeSession:
         self._model = model
         self._budget = budget or SessionBudget()
         self._reasoning_effort = reasoning_effort
+        self._tools = list(tools or [])
+        self._sandbox_settings = sandbox_settings
+        self.sandbox_application: Any = None
+        self.prompts_sent = 0
+        self.context_events: list[dict[str, Any]] = []
+        self.tool_executions: list[dict[str, Any]] = []
+        # Starts are kept alongside completions because the sandbox gate has to
+        # see a command that began and never finished. Keeping only completions
+        # would hide exactly the execution the gate exists to object to.
+        self.tool_execution_starts: list[dict[str, Any]] = []
         self.policy = IsolationPolicy(
             workspace_root=workspace.root,
             allow_writes=allow_writes,
             allow_shell=allow_shell,
+            screen_shell_paths=screen_shell_paths,
         )
         self.timeline = ToolCallTimeline()
         self.assistant_usage: list[dict[str, Any]] = []
@@ -703,6 +785,9 @@ class SpikeSession:
                 at_ms=elapsed_ms,
                 agent_id=getattr(event, "agent_id", None),
             )
+            # Verbatim, for the same reason completions are: the gate reads the
+            # runtime's own payloads rather than a harness re-derivation.
+            self.tool_execution_starts.append(payload)
             self._check_budget()
         elif event_type == "tool.execution_complete":
             # `tool.execution_complete` carries no toolName; the timeline
@@ -713,7 +798,14 @@ class SpikeSession:
                 success=payload.get("success"),
                 agent_id=getattr(event, "agent_id", None),
             )
+            # Kept verbatim so the sandbox gate reads the runtime's own
+            # `sandboxApplied` telemetry rather than a harness re-derivation.
+            self.tool_executions.append(payload)
             self._check_budget()
+        elif event_type in CONTEXT_EVENT_TYPES:
+            # Emission unverified: no trial has yet filled a context window, so
+            # an empty list here is not evidence that compaction did not occur.
+            self.context_events.append({"type": event_type, "data": payload})
         elif event_type.startswith("subagent."):
             self.subagent_events += 1
             self._recorder.record(
@@ -735,6 +827,7 @@ class SpikeSession:
             model=self._model,
             reasoning_effort=self._reasoning_effort,
             max_ai_credits=self._budget.max_ai_credits,
+            tools=self._tools,
         )
         self._recorder.record("harness", "session.create.request", _redact(kwargs))
         self._session = await self._client.create_session(
@@ -747,12 +840,32 @@ class SpikeSession:
             "session.create.result",
             {"sessionId": self._session.session_id},
         )
+        if self._sandbox_settings is not None:
+            # Applied here, between create and the first prompt, because
+            # `create_session` exposes no `sandbox_config` parameter. The
+            # session exists unconfined for this window; nothing is prompted
+            # into it before the update lands, and `prompts_sent` is passed so
+            # the ordering is recorded as an observation rather than a claim.
+            from .sandbox import apply_sandbox
+
+            self.sandbox_application = await apply_sandbox(
+                self._session,
+                self._sandbox_settings,
+                recorder=self._recorder,
+                prompts_sent=self.prompts_sent,
+            )
+            if not self.sandbox_application.succeeded:
+                raise SandboxNotAppliedError(
+                    "sandbox configuration was not applied: "
+                    f"{self.sandbox_application.error}"
+                )
         return self._session
 
     async def run_prompt(self, prompt: str, *, timeout_s: float) -> SessionOutcome:
         """Send one prompt and wait for idle, budget stop, or timeout."""
         assert self._session is not None, "start() must be called first"
         started_ns = self._recorder.clock.elapsed_ns()
+        self.prompts_sent += 1
         self._recorder.record("harness", "agent.prompt", {"prompt": prompt})
 
         terminal_class = "validated_success"

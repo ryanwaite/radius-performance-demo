@@ -240,6 +240,12 @@ jobs:
         # that module while the run still exits green on the others, so a job
         # that looked only at the final tally would keep passing with less and
         # less behind it. Zero collected is a hard failure.
+        #
+        # The module list is discovered from disk rather than hard-coded. A
+        # hard-coded list guards against a module disappearing but silently
+        # omits a module that is added later, which is the same blind spot
+        # pointing the other way: the new tests would never run and CI would
+        # stay green. Discovery finding nothing is itself a hard failure.
         env:
           DOCKER_HOST: unix:///nonexistent/docker.sock
         run: |
@@ -247,7 +253,16 @@ jobs:
           scratch="${RUNNER_TEMP:-/tmp}"
           : > "${scratch}/collected.tsv"
           failed=0
-          for module in test_driver test_events test_isolation test_usage test_versions; do
+          modules="$(find tests -maxdepth 1 -name 'test_*.py' -exec basename {} .py \; | sort)"
+          if [ -z "${modules}" ]; then
+            echo "::error::no test modules were discovered under tests/"
+            exit 1
+          fi
+          module_count="$(printf '%s\n' "${modules}" | wc -l | tr -d ' ')"
+          echo "discovered ${module_count} test module(s):"
+          printf '  %s\n' ${modules}
+          echo "MODULE_COUNT=${module_count}" >> "$GITHUB_ENV"
+          for module in ${modules}; do
             if ! python -m pytest "tests/${module}.py" --collect-only -q > "${scratch}/${module}.collect" 2>&1; then
               echo "::error::collection failed for tests.${module}"
               tail -20 "${scratch}/${module}.collect"
@@ -308,8 +323,9 @@ jobs:
             echo
             echo "**Collected ${COLLECTED_TOTAL:-0}. Ran ${RAN_TOTAL:-0}.**"
             echo
-            echo "All five modules are collected and run. The four instrumentation"
-            echo "modules import \`github-copilot-sdk\` and \`inspect-ai\`, installed from"
+            echo "All ${MODULE_COUNT:-?} discovered modules are collected and run. The"
+            echo "instrumentation modules import \`github-copilot-sdk\` and \`inspect-ai\`,"
+            echo "installed from"
             echo "public PyPI with \`--require-hashes\` against \`requirements-ci.txt\`,"
             echo "which is exported from \`uv.lock\`. CFS is not reachable from a"
             echo "GitHub-hosted runner and is not needed: it serves byte-identical"
