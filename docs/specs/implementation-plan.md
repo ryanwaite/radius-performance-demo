@@ -1,5 +1,8 @@
 # Implementation Plan
 
+> [!IMPORTANT]
+> Superseded in part. The [experiment plan](copilot-radius-experiment-plan.md) now scores on the OpenTelemetry Astronomy Shop with three arms (native, architecture document, Radius), budgets of 30 minutes and 100 tool calls, and the submit-tool answer contract. Where this document disagrees with the plan, the plan wins. Its current state and next steps are in [Current state and next steps](copilot-radius-experiment-plan.md#current-state-and-next-steps).
+
 The canonical experiment design, treatment definitions, Copilot harness, measures, and research roadmap are in the [Copilot + Radius experiment plan](copilot-radius-experiment-plan.md). This document tracks repository implementation surfaces.
 
 ## Phase 1: Runnable performance lab

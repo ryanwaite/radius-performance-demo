@@ -11,7 +11,35 @@ This document is the decision-ready plan for evaluating GitHub Copilot on the Ra
 - [Demo specification](demo-spec.md): interactive Radius Canvas presentation.
 - [Implementation plan](implementation-plan.md): repository delivery phases.
 
-The Go catalogue application, MySQL and Valkey paths, Prometheus metrics, Docker Compose stack, k6 load, and Kubernetes manifests are implemented. Inspect AI orchestration, Copilot SDK integration, Radius repository fixtures, benchmark reset, hidden validators, and benchmark result capture are planned.
+Where this plan and the two focused specifications disagree, this plan wins. The agent evaluation spec and the implementation plan predate the decision to score on the Astronomy Shop with three arms, and their budgets, arm counts, and scoring weights are superseded where they conflict.
+
+Operating rules for anyone working in this repository, human or agent, are in [`AGENTS.md`](../../AGENTS.md).
+
+## Current state and next steps
+
+This section is the handoff point. Update it in the same pull request as the work it describes.
+
+**Implemented on `main`:**
+
+- The Go catalogue application with MySQL and Valkey paths, Prometheus metrics, a Compose stack, k6 load, and Kubernetes manifests. It is the harness development fixture, not the scored application.
+- The Copilot SDK harness: fresh sessions, one pinned model, event capture, usage accounting, and budget enforcement on wall clock and tool calls (PRs #1 and #3).
+- The Compose trial driver, with unique project names, verified cleanup, and a determinism suite that passed its holdout on the catalogue application (PR #4). Its per-service checks are generated from the Compose file (PR #8).
+- CI that installs Python dependencies by hash from PyPI, checks the export against `uv.lock`, discovers every test module from disk, and runs the whole suite with the Docker daemon unreachable (PR #7).
+- The runtime sandbox, applied before the first prompt and verified on every tool execution including unfinished ones; the static screen off inside the sandbox; trial budgets; the submit tool with ten defined causal categories; and trial outcome records (PR #9).
+- Host qualification by observed class and fingerprint; the Astronomy Shop 3.1.0 vendored with its isolation defects removed; uniform CPU limits verified by zero lifetime throttling; per-service readiness; the flag-off gate; and the offered-load gate on healthy cycles (PR #11). The readiness, flag, throttling, and offered-load gates are implemented and tested, but the trial driver does not call them yet.
+
+**Next, in order.** Each step lists its exit criterion. Steps 1 and 2 are independent and can run in parallel.
+
+1. **Finish the Astronomy Shop environment.** Mount a derived load-generator script without the `ask_agent` task; vendor Grafana's OpenSearch plugin; split the network so only the ingress container is routed and the other 27 services are internal; add the incident-phase load gate; and wire the readiness, flag, throttling, and offered-load gates into the trial driver. The requirements are in `benchmark/README.md`. *Exit:* a healthy stack on the internal network has no failing endpoint, makes no outbound request, and passes every generated check.
+2. **Finish the answer contract.** Add the `connection` field to the submit tool, align the code's terminal classes with [Trial outcomes and retries](#trial-outcomes-and-retries), and implement the retry policy. *Exit:* planted wrong answers for the component and the connection each fail, and a correct answer passes.
+3. **Fit and hold out the determinism suite on the laptop.** It takes about three hours and needs the user's approval before it starts. *Exit:* the holdout passes with tolerances frozen before it ran.
+4. **Build the three Astronomy Shop fixtures** under Phase 0: fault-flag code removed from the agent-visible source, a neutral README, a validated `app.bicep`, the arm C document, two difference manifests, and a leakage scan that covers Grafana dashboards and provisioning. *Exit:* the Phase 0 exit criteria.
+5. **Run one incident end to end.** Inspect AI task integration, standalone workspace creation, one ported AIOpsLab incident with its hidden validator, and randomized sets of all three arms. *Exit:* the Phase 2 exit criteria, on the Astronomy Shop.
+6. **Re-verify the sandbox** on the locked SDK and CLI pair and on each pilot model, and run the forced-compaction control. This needs a premium-request allowance from the user. *Exit:* every escape probe is denied with `sandboxApplied: "true"`, and the in-workspace control succeeds.
+7. **Build the incident set:** at least 20 incidents with validators, planted wrong answers, and no-fault controls. *Exit:* Phase 3 stage 1 incident criteria.
+8. **Pilot, calibrate, and pre-register.** This needs the user's approval for its cost. *Exit:* the analysis plan and sample size are committed.
+9. **Provision and qualify the Azure VMs.** This needs the user's approval. First, make the throttling reader resolve each container's cgroup path instead of assuming the cgroupfs layout, because Docker on a systemd Linux host places containers elsewhere. *Exit:* each VM passes a determinism holdout on its own host class.
+10. **Run the scored campaign.** *Exit:* Phase 3 stage 2 criteria.
 
 ## Purpose and research questions
 
@@ -53,7 +81,7 @@ Causal claims about graph access require the later graph-by-skills factorial abl
 | Radius skills | None | None | Generic, repository-scoped procedural skills |
 | Scenario-specific hints | None | None | None |
 
-Arm C is an active control. It answers the first question a skeptic will ask: does Radius beat a well-written description of the architecture? Without it, a Radius effect could mean only that any architecture description helps. The document in arm C states the same facts the Radius graph encodes: services, dependencies, endpoints, and where each is defined in source. A fresh Copilot session writes it, given only the Astronomy Shop source and the list of facts the Radius graph encodes. It never sees this plan, the incident set, or the injectors, and its model, prompt, and transcript are kept with the fixture. Its length is within 20 percent of the Radius additions, measured in tokens, and it passes the same leakage scan. The prompt does not mention it.
+Arm C is an active control. It answers the first question a skeptic will ask: does Radius beat a well-written description of the architecture? Without it, a Radius effect could mean only that any architecture description helps. The document in arm C states the same facts the Radius graph encodes: services, dependencies, endpoints, and where each is defined in source. A fresh Copilot session writes it, given only the Astronomy Shop source and the list of facts the Radius graph encodes. It never sees this plan, the incident set, or the injectors, and its model, prompt, and transcript are kept with the fixture. The author is Claude Opus 5 at high reasoning effort, a pilot model that no scored trial uses. Its prompt is committed with the benchmark code, and the fact list is generated mechanically from the validated `app.bicep` rather than written by hand. "Radius additions" means every file in the native-to-Radius difference manifest, and both sides are counted with one named tokenizer. Its length is within 20 percent of the Radius additions, measured in tokens, and it passes the same leakage scan. The prompt does not mention it.
 
 The Radius-enabled fixture must describe the deployed application and how to use Radius. It must not encode incident answers, expected root causes, scenario thresholds, or scenario-specific remediation.
 
@@ -67,7 +95,7 @@ Radius setup occurs before timed trials. Both fixtures are frozen and hashed. `a
 - Selected model and model version or provider snapshot.
 - GitHub Copilot SDK and CLI versions.
 - Reasoning effort and sampling configuration.
-- Wall-clock, model-call, tool-call, token, AI-credit, and cost budgets.
+- Budgets. Wall clock and tool calls are capped. Model calls, tokens, AI credits, and cost are recorded and identical in policy across arms, but not capped per trial.
 - Cold-context policy and fresh Copilot session.
 - Environment driver and benchmark host class.
 
@@ -191,7 +219,7 @@ CI therefore installs from the public registries, constrained to exactly what CF
 
 ### Prohibited patterns
 
-- Any reference to `pypi.org`, `files.pythonhosted.org`, or `registry.npmjs.org` in committed configuration, lockfiles, Dockerfiles, CI workflows, or documentation.
+- Any reference to `pypi.org`, `files.pythonhosted.org`, or `registry.npmjs.org` in committed configuration, lockfiles, Dockerfiles, or trial environments. The one exception is the hash-only CI install described above, which never resolves versions and fails on any file whose hash differs from the lock.
 - `--extra-index-url`, `PIP_EXTRA_INDEX_URL`, or any second package index. Multiple indexes are treated as a dependency-confusion risk and are flagged by CFS detectors.
 - Falling back to a public registry when a package or version is unavailable through CFS. The correct escalation is a CFS exception request, which is a human decision.
 
@@ -275,14 +303,15 @@ The benchmark repository and hidden validators should ultimately live outside th
 
 ### Phase 0 fixture construction
 
-Build and seal two artifacts from the same pinned application source commit:
+Build and seal three artifacts from the same pinned application source commit:
 
 1. **Native fixture:** allowlisted developer-realistic application source, tests, manifests, telemetry configuration, and ordinary repository instructions.
-2. **Radius-enabled fixture:** the exact native fixture plus one versioned, allowlisted Radius treatment overlay containing validated `app.bicep`, Radius repository configuration, stable graph/source references, and generic Radius skills.
+2. **Architecture-document fixture:** the exact native fixture plus one architecture document, written as described under [Primary conditions](#primary-conditions).
+3. **Radius-enabled fixture:** the exact native fixture plus one versioned, allowlisted Radius treatment overlay containing validated `app.bicep`, Radius repository configuration, stable graph/source references, and generic Radius skills.
 
 Prefer a content-addressed tar or OCI artifact with a manifest and SHA-256 digest. A dedicated fixture commit/repository exported with `git archive` is also acceptable, but the scored workspace must be created from the export, not attached to its `.git` directory. Application files and behavior must otherwise be byte-identical.
 
-Create a machine-readable difference manifest that records every native-versus-Radius path, file digest, mode, and treatment reason. Fixture publication fails if an undeclared difference exists.
+Create two machine-readable difference manifests, native to architecture document and native to Radius, each recording every differing path, file digest, mode, and treatment reason. Fixture publication fails if an undeclared difference exists.
 
 Explicitly exclude:
 
@@ -395,7 +424,7 @@ The agent harness permission API cannot confine shell execution. Three structure
 
 Shell therefore defaults to denied. Static command screening is defence in depth only, and probing established its boundary precisely: the screen holds against command substitution, because a literal path token survives it, and fails whenever no literal token is present — base64-encoded, interpreter-constructed, and variable-assembled paths all pass the screen. The weakness is the absence of a literal path, not substitution as such. These limitation probes are recorded as observations with no guaranteed outcome and are excluded from the pass criterion, so a screen that happens to deny one cannot be read as proof of confinement.
 
-No agent confinement boundary exists yet. In Increment 1 the Copilot CLI and every tool it runs are host processes working in a host temporary directory. The Compose containers hold the application under test, not the agent, so their mounts bound the application data plane and say nothing about what an agent shell can reach on the host. Shell-enabled scored runs are therefore blocked until an OS-enforced agent boundary exists. It must confine the SDK-side CLI process and every tool it runs, allow writes only to the standalone fixture workspace, reach only the declared application endpoints, and deny the host home directory, Docker socket, benchmark checkout, and credentials.
+*History.* Before the runtime sandbox was wired in, no agent confinement boundary existed. In Increment 1 the Copilot CLI and every tool it runs are host processes working in a host temporary directory. The Compose containers hold the application under test, not the agent, so their mounts bound the application data plane and say nothing about what an agent shell can reach on the host. Shell-enabled scored runs were therefore blocked until an OS-enforced agent boundary existed. It must confine the SDK-side CLI process and every tool it runs, allow writes only to the standalone fixture workspace, reach only the declared application endpoints, and deny the host home directory, Docker socket, benchmark checkout, and credentials.
 
 Two designs can supply that boundary: a dedicated agent runner (a container or VM that runs the CLI and its tools), or the Copilot runtime's own sandbox. The CLI wire protocol defines a `SandboxConfig` with filesystem path lists, network policy, a fail-closed bypass flag, and a macOS seatbelt backend. The pinned Python SDK doesn't accept it at session creation, but its experimental `session.options.update` RPC carries a `sandboxConfig` field.
 
@@ -410,7 +439,7 @@ The runtime sandbox is therefore the chosen agent boundary. Build a runner only 
 - **Don't probe through the model.** Each denial tells the agent not to attempt workarounds, and after the first denial the agent declined 4 of 11 probes. A probe the model can decline cannot separate "blocked" from "never tried." Calibration probes run one per fresh session, record "not executed" separately from "blocked," and a probe with only "not executed" results fails.
 - **Declare toolchain access.** With `allowDevToolAccess: false`, Python could not load its own shared library. Trials that build or test code declare the Go toolchain paths read-only, with a positive control showing that an in-workspace build succeeds.
 
-A later wiring check ran the probes through the harness rather than the model, with the screen off. All five were denied by the operating system with `sandboxApplied: "true"`, including two base64-encoded writes that contain no path text, and an in-workspace control write succeeded. That check first reported a false pass: the screen had denied every probe before it reached the sandbox, and only the failing in-workspace control exposed it. A denial now counts as confinement evidence only when that execution reports `sandboxApplied: "true"`. Still unverified: Linux hosts, and models other than the one tested. Process, IPC, and environment-variable exfiltration were not probed. Verify again whenever the SDK, CLI, or model pin changes.
+A later wiring check ran the probes through the harness rather than the model, with the screen off. All five were denied by the operating system with `sandboxApplied: "true"`, including two base64-encoded writes that contain no path text, and an in-workspace control write succeeded. That check first reported a false pass: the screen had denied every probe before it reached the sandbox, and only the failing in-workspace control exposed it. A denial now counts as confinement evidence only when that execution reports `sandboxApplied: "true"`. That wiring check ran on SDK 1.0.14 and CLI 1.0.87, while the lock pins SDK 1.0.13, so it does not qualify the locked pair. Still unverified: the locked pair, Linux hosts, and models other than the one tested. All three are re-verified before the pilot. Process, IPC, and environment-variable exfiltration were not probed. Verify again whenever the SDK, CLI, or model pin changes.
 
 The live escape probe in Increment 1 is a permission-handler wiring check, not evidence of confinement. It shows that the static screen rejected three literal paths, and its prompt tells the agent not to work around a denial. Confinement evidence must come from escape tests against the agent runner's actual boundary, exercised by commands the static screen cannot catch. Because the permission-API failures are invisible to unit tests, that boundary test runs as a gate in each scored run and must pass affirmatively: missing evidence or a skipped probe fails the trial.
 
@@ -502,7 +531,7 @@ The upstream Compose files defeat per-trial isolation, so the driver runs a deri
 
 Upstream declares memory limits on all 28 services and CPU limits on none. The derived copy adds the same CPU limit to every service. The limits are guard rails, not constraints: they exist so that a CPU-limit incident has a value to lower, and so that the Compose file the agent reads does not reveal which service is expected to strain, as it would if only the faulted service carried a limit, or if limits varied by service. They do not stop services competing for the host's cores; the one-trial-at-a-time rule and the offered-load gate handle contention. The limit is the smallest uniform value under which no service throttles for a single period over its whole life, startup included, measured by the kernel's lifetime counters rather than by `docker stats`, which averages away bursts. On the laptop that value is 8.0 cores: at 4.0, Kafka still throttled one period during startup, and a limit on that edge would bind on some runs and not others. A limit that binds adds throttling noise to every measurement, and one that binds on the load generator lowers offered load, so downstream services look healthier than they are. The limit is fitted per host class, and the driver refuses a limits file fitted on another class. A limit that binds during an incident could manufacture a fault nobody injected, so incident validation records throttling on every service during each incident, and an incident whose target is throttled when its declared cause is something else is retuned or dropped.
 
-The scored load is the load generator's upstream default, pinned and recorded with the fixture. The load is the independent variable, and anything that slows the load generator makes offered load depend on host contention while every service looks healthier. Each cycle therefore records the achieved request rate, and a cycle outside a frozen band around the target gives no verdict and is counted. A positive control holds the load generator to a tight quota and shows that the band catches it. Load-surge incidents raise it as a fault. If calibration shows the default is too light for faults to show, raising it is a fixture change and the determinism suite is refitted.
+The scored load is the load generator's upstream default, pinned and recorded with the fixture. The load is the independent variable, and anything that slows the load generator makes offered load depend on host contention while every service looks healthier. Each cycle therefore records the achieved request rate, and a cycle outside a frozen band around the target gives no verdict and is counted. A positive control holds the load generator to a tight quota and shows that the band catches it. Load-surge incidents raise it as a fault. If calibration shows the default is too light for faults to show, raising it is a fixture change and the determinism suite is refitted. The load generator's `ask_agent` task posts to an `agent` service that ships in upstream's Helm chart but not in its Compose files, so about 7 percent of healthy requests fail, in upstream's unmodified stack as well. A permanently broken endpoint would make a correct fault report on a no-fault control score as a false alarm, so the derived copy mounts a load-generator script without that task, read-only. The derived collector configuration likewise drops the `firepit` exporter, whose host no Compose file declares.
 
 The agent may query Prometheus, Jaeger, OpenSearch, and Grafana. Upstream Grafana downloads its OpenSearch datasource plugin from grafana.com on every start, unpinned, so each trial would run whatever version was current, depend on grafana.com being reachable, and fail once trial egress is blocked. The plugin is instead stored in the repository at a pinned version with its SHA-256 recorded, mounted read-only, and the download setting is removed; its hash goes into provenance with the image digests. Grafana then starts on the internal network with no outbound request. Upstream's dashboards encode how the services connect, and every arm sees them, so they give the native arm part of what the Radius graph provides and narrow the measurable difference. The report says so. The dashboards and their provisioning files are part of the sealed fixture and pass the same leakage scan, since a dashboard or panel named after a fault flag would name the answer.
 
@@ -578,10 +607,13 @@ Public documentation names scenario concepts, but each version includes hidden v
 15. Destroy the agent workspace, containers/namespace, mounts, volumes, credentials, and temporary files; verify every resource is absent.
 16. Repeat for each other arm from a newly extracted fixture and new runtime environment with the same incident seed. Randomize the order of arms within each set.
 
+### Trial outcomes and retries
+
 Terminal classifications are mutually exclusive:
 
-- infrastructure failure;
-- Copilot SDK or adapter failure;
+- harness failure: an infrastructure or environment failure, a Copilot SDK or adapter failure, a sandbox gate failure, or a cycle the environment gates refused a verdict;
+- isolation violation attempt;
+- no submission;
 - invalid structured output;
 - refusal;
 - budget exhaustion;
@@ -589,7 +621,7 @@ Terminal classifications are mutually exclusive:
 - remediation failure;
 - validated success.
 
-Infrastructure and adapter failures are reported and retried under a predetermined policy; they are not silently converted into agent failures or dropped.
+The code's terminal classes must match this list. Only harness failures are retried. Everything else is the agent's result and scores as it stands. A harness failure is rerun once, at the end of its block, with the same arm, incident, variant, and seed. A second harness failure excludes the trial, and the report lists every excluded trial with its reason. Excluded trials leave the denominator and are reported beside it. The campaign stops for a harness fix if harness failures exceed 5 percent of trials overall, or if one arm's harness failure rate is more than twice another's, because harness trouble that falls unevenly on the arms biases the comparison.
 
 ## Measures
 
@@ -600,7 +632,7 @@ Infrastructure and adapter failures are reported and retried under a predetermin
 ### Diagnosis
 
 - Correct causal category.
-- Correct causal resource and connection.
+- Correct causal resource and connection. The submission names a `component` and, optionally, a `connection` from one component to another. Each incident's hidden answer declares whether its cause is a component or a connection. For a component incident, the `component` must match. For a connection incident, the `connection` must match in direction, and the `component` must be one of its two ends.
 - Correct rejection of correlated but non-causal symptoms.
 - False-alarm rate on no-fault controls.
 
@@ -739,7 +771,7 @@ Remediation adds:
 
 A sandbox escape attempt, secret access attempt, shared-resource mutation, invalid output, or uncleanable environment is an automatic failure with its own classification.
 
-The weighted score remains as defined in [agent-evaluation-spec.md](agent-evaluation-spec.md). Optional blinded human review covers explanation clarity and operational practicality, is reported separately, and never overrides deterministic gates.
+The weighted score remains as defined in [agent-evaluation-spec.md](agent-evaluation-spec.md), with one change: the graph-grounding points are awarded in every arm for naming the correct component and connection by canonical name with valid evidence, however the agent found them. As written there, only the Radius arm could earn them. Optional blinded human review covers explanation clarity and operational practicality, is reported separately, and never overrides deterministic gates.
 
 ### Experimental design
 
@@ -885,7 +917,7 @@ Actual records use real immutable identifiers; placeholders above illustrate the
 - Expose only sandbox credentials and necessary model/registry endpoints.
 - Install all packages at image build time through CFS, and deny trial-container egress to package registries.
 - Deny production subscriptions, shared clusters, personal credentials, unrelated repositories, and unrestricted network access.
-- Cap wall time, model calls, tool calls, tokens, AI credits, premium requests, monetary cost, CPU, memory, storage, and process count.
+- Cap wall time and tool calls per trial, and cap premium requests and cost per campaign through the user's allowance. Record model calls, tokens, and AI credits per trial. Cap CPU, memory, storage, and process count per container.
 - Validate changes before execution and block paths/resources outside the declared sandbox.
 - Redact secrets from artifacts.
 - Fail closed when isolation, redaction, budget enforcement, or cleanup cannot be verified.
@@ -1031,26 +1063,28 @@ Exit criteria:
 
 | Area | Recommended default | Status |
 |---|---|---|
-| Orchestrator | Inspect AI | Recommended; version not selected |
-| Agent harness | GitHub Copilot SDK | Recommended; integration not implemented |
-| Environment | Docker Compose | Recommended for MVP |
+| Orchestrator | Inspect AI, pinned in `uv.lock` | Decided; task integration not built |
+| Agent harness | GitHub Copilot SDK | Decided; implemented |
+| Environment | Docker Compose | Decided |
 | Scored application | OpenTelemetry Astronomy Shop; catalog application for harness development only | Decided |
 | Primary arms | Native, native with architecture document (written by a fresh Copilot session without the plan), fully Radius-enabled | Decided |
 | Incident set | 20-50 distinct incidents, misleading-symptom incidents, and 10-15 percent no-fault controls, drawn from AIOpsLab and external injectors; flag fault code removed from agent-visible source, flag faults diagnosis-only | Decided; not built |
 | Smallest effect worth detecting | 15 percentage points | Decided; sets the campaign size |
 | Analysis plan | Pre-registered before the scored campaign; incident-clustered model; Holm correction across co-primary contrasts | Decided; plan not yet written |
-| Session policy | Fresh cold session, memory off | Recommended |
+| Session policy | Fresh cold session, memory off | Decided |
 | Model selection | Explicit pinned model, no auto routing | Decided |
-| Parallelism | One agent, no fleet or subagents | Recommended |
-| First task mode | Diagnosis-only | Recommended |
-| Remediation | Apply bounded changes automatically only in sandbox after Phase 3 | Recommended |
-| Initial Radius data | Static graph, no telemetry overlay | Recommended |
-| Prompt | Neutral, no Radius/graph/cache/root-cause mention | Recommended |
+| Parallelism | One agent, no fleet or subagents | Decided |
+| First task mode | Diagnosis-only | Decided |
+| Remediation | Apply bounded changes automatically only in sandbox after Phase 3 | Decided |
+| Initial Radius data | Static graph, no telemetry overlay | Decided |
+| Prompt | Neutral, no Radius/graph/cache/root-cause mention | Decided |
 | Radius fixture | Frozen validated `app.bicep`, repo config, graph, IDs/source refs, generic skills | Required; not built |
 | Trial budgets | 30 minutes wall clock and 100 tool calls, whichever comes first; high reasoning effort; identical across arms; exhaustion scores as failure; token, AI-credit, and cost usage recorded | Decided; revisited once after the pilot |
+| Harness failures | Rerun once at the end of the block with the same seed; a second failure excludes the trial; stop if harness failures exceed 5 percent or one arm's rate is more than twice another's | Decided; not built |
+| Weighted score | Graph-grounding points awarded in every arm for the correct component and connection with evidence | Decided |
 | Models | Pilot: Claude Opus 5 and GPT-5.6 Sol. Scored: Claude Opus 5.5 and GPT-6 Sol, after a calibration check on each | Decided |
-| Output schema | Submit tool with `faultPresent`, `causalCategory` from a fixed list, canonical `component`, `evidence`, `confidence`, `remediation` | Decided |
-| CI dependencies | Locked on the managed developer machine through CFS; GitHub-hosted runners install from public registries with hashes required and never re-resolve | Decided; export and check not built |
+| Output schema | Submit tool with `faultPresent`, `causalCategory` from a fixed list, canonical `component`, optional `connection`, `evidence`, `confidence`, `remediation` | Decided; `connection` not built |
+| CI dependencies | Locked on the managed developer machine through CFS; GitHub-hosted runners install from public registries with hashes required and never re-resolve | Decided; implemented |
 | Trial hosts | Pilot on the developer laptop, kept awake on power. Scored campaign on one to three non-burstable Linux Azure VMs, one trial at a time each, each passing the determinism suite; harness shipped as a digest-pinned image built through CFS; provisional size `Standard_D8s_v5` | Decided; size confirmed after load-surge and harness measurement; VMs not provisioned |
 | Kubernetes target | `ryanw-aks` / `ryanw-rg` / Test account | User-selected; access/setup unverified |
 | Package source | CFS proxy only, single index, installed at image build time | Required; machine configuration verified |
