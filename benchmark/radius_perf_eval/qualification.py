@@ -214,14 +214,31 @@ def load_requalifications(path: Path | None = None) -> list[Requalification]:
 
 
 def find_requalification(
-    records: list[Requalification], host_class: str, fingerprint: str
+    records: list[Requalification],
+    host_class: str,
+    fingerprint: str,
+    tolerances_fitted_at_commit: str | None = None,
 ) -> Requalification | None:
-    """The most recent record for exactly this class and fingerprint."""
+    """The most recent record for exactly this class, fingerprint and bounds.
+
+    The bounds are part of the identity of the check, not metadata about it. A
+    re-qualification is a claim that *these* three cycles fell inside *those*
+    tolerances. Match on class and fingerprint alone and a record made against
+    a superseded set silently clears bounds it never ran against, which is the
+    one thing the gate exists to prevent.
+
+    The commit is required rather than optional. Passing ``None`` matches
+    nothing, because a caller that cannot say which set is in force cannot be
+    told that some record satisfies it.
+    """
+    if not tolerances_fitted_at_commit:
+        return None
     matches = [
         record
         for record in records
         if record.host_class == host_class
         and record.fingerprint == fingerprint
+        and record.tolerances_fitted_at_commit == tolerances_fitted_at_commit
         and record.cycles >= MIN_REQUALIFICATION_CYCLES
     ]
     if not matches:
@@ -304,6 +321,7 @@ def evaluate_scored_readiness(
     *,
     fitted_fingerprint: str | None,
     tolerances_resolved: bool,
+    tolerances_fitted_at_commit: str | None = None,
     records: list[Requalification] | None = None,
     path: Path | None = None,
 ) -> ScoredReadiness:
@@ -356,7 +374,11 @@ def evaluate_scored_readiness(
 
     known = records if records is not None else load_requalifications(path)
     matched = (
-        find_requalification(known, host_class, observed) if observed else None
+        find_requalification(
+            known, host_class, observed, tolerances_fitted_at_commit
+        )
+        if observed
+        else None
     )
     if matched is not None:
         return ScoredReadiness(
@@ -364,7 +386,8 @@ def evaluate_scored_readiness(
             reason=(
                 "the fingerprint changed but was re-qualified on "
                 f"{matched.recorded_at} over {matched.cycles} cycles against "
-                "the unchanged frozen bounds"
+                "the frozen bounds now in force, fitted at "
+                f"{matched.tolerances_fitted_at_commit}"
             ),
             fingerprint=comparison,
             requalification=matched,

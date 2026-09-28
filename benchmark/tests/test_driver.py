@@ -9,6 +9,7 @@ Run with either ``python -m unittest discover -s benchmark/tests`` or pytest.
 
 from __future__ import annotations
 
+import ast
 import json
 import math
 import statistics
@@ -34,6 +35,7 @@ from radius_perf_eval.compose import (  # noqa: E402
 )
 from radius_perf_eval import astronomy_shop  # noqa: E402
 import pathlib
+import yaml
 from radius_perf_eval import cpu_limits  # noqa: E402
 from radius_perf_eval import offered_load  # noqa: E402
 import inspect
@@ -76,6 +78,7 @@ from radius_perf_eval.qualification import (  # noqa: E402
     MIN_REQUALIFICATION_CYCLES,
     QualificationError,
     Requalification,
+    find_requalification,
     compare_fingerprints,
     evaluate_scored_readiness,
     load_requalifications,
@@ -2189,11 +2192,102 @@ class ScoredStartGateTests(unittest.TestCase):
                 laptop_facts(python_version="3.12.13")
             ),
             tolerances_resolved=True,
+            tolerances_fitted_at_commit="0407638",
             path=self.store,
         )
         self.assertTrue(readiness.allowed)
         self.assertIn("re-qualified", readiness.reason)
         self.assertIsNotNone(readiness.requalification)
+
+    def test_a_requalification_against_old_bounds_does_not_clear_new_ones(self) -> None:
+        """The record must name the tolerance set it actually ran against.
+
+        A re-qualification is a claim that three cycles fell inside *those*
+        bounds. Match on class and fingerprint alone, as this gate once did,
+        and a check run against a superseded set silently authorises scored
+        trials against bounds it never saw. That is worse than no gate: the
+        report cites a real record, with a real date and cycle count, as
+        evidence for a set nobody verified on this host.
+        """
+        facts = laptop_facts()
+        record_requalification(
+            host_class=derive_class_id(facts),
+            fingerprint=derive_fingerprint(facts),
+            cycles=3,
+            suite_id="requal",
+            driver_commit="abc1234",
+            tolerances_fitted_at_commit="0407638",
+            path=self.store,
+        )
+        readiness = evaluate_scored_readiness(
+            facts,
+            fitted_fingerprint=derive_fingerprint(
+                laptop_facts(python_version="3.12.13")
+            ),
+            tolerances_resolved=True,
+            tolerances_fitted_at_commit="9999999",
+            path=self.store,
+        )
+        self.assertFalse(readiness.allowed)
+        self.assertIsNone(readiness.requalification)
+
+    def test_a_caller_that_names_no_tolerance_set_matches_nothing(self) -> None:
+        """Absent bounds cannot be satisfied by any record.
+
+        Falling back to "match on class and fingerprint" when the caller does
+        not say which set is in force would restore the defect for exactly the
+        callers least able to notice it.
+        """
+        facts = laptop_facts()
+        record_requalification(
+            host_class=derive_class_id(facts),
+            fingerprint=derive_fingerprint(facts),
+            cycles=3,
+            suite_id="requal",
+            driver_commit="abc1234",
+            tolerances_fitted_at_commit="0407638",
+            path=self.store,
+        )
+        readiness = evaluate_scored_readiness(
+            facts,
+            fitted_fingerprint=derive_fingerprint(
+                laptop_facts(python_version="3.12.13")
+            ),
+            tolerances_resolved=True,
+            path=self.store,
+        )
+        self.assertFalse(readiness.allowed)
+        self.assertIsNone(readiness.requalification)
+
+    def test_a_legacy_record_with_no_bounds_cannot_match_an_absent_set(self) -> None:
+        """Two blanks must not be treated as agreement.
+
+        `from_dict` defaults a missing `tolerancesFittedAtCommit` to the empty
+        string, so a record written before the field existed loads with no
+        bounds named. Compared with an equality test alone, that record would
+        match a caller that also names no set, and the oldest, least
+        attributable record in the store would be the one clearing the gate.
+        """
+        facts = laptop_facts()
+        legacy = Requalification.from_dict(
+            {
+                "hostClass": derive_class_id(facts),
+                "fingerprint": derive_fingerprint(facts),
+                "recordedAt": "2026-09-01T00:00:00+00:00",
+                "cycles": 3,
+            }
+        )
+        self.assertEqual(legacy.tolerances_fitted_at_commit, "")
+        self.assertIsNone(
+            find_requalification(
+                [legacy], legacy.host_class, legacy.fingerprint, ""
+            )
+        )
+        self.assertIsNone(
+            find_requalification(
+                [legacy], legacy.host_class, legacy.fingerprint, None
+            )
+        )
 
     def test_a_requalification_for_a_different_fingerprint_does_not_clear(self) -> None:
         """A record is for one fingerprint. Matching on host class alone would
@@ -2348,6 +2442,16 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _fitted_class(root: Path | None = None) -> str:
+    """The host class the committed limits were fitted on.
+
+    Read from the file rather than hard-coded, so these tests exercise the
+    class check without pinning the suite to whichever laptop fitted it.
+    """
+    payload = json.loads(cpu_limits.cpu_limits_path(root or _repo_root()).read_text())
+    return payload["fittedFrom"]["hostClass"]
+
+
 def _vendored_compose_text() -> str:
     return "\n".join(
         path.read_text() for path in astronomy_shop.compose_file_paths(_repo_root())
@@ -2443,7 +2547,7 @@ class AstronomyShopTransformTests(unittest.TestCase):
 
     def test_the_docker_socket_mount_is_removed(self):
         config = _fake_config()
-        changed = astronomy_shop.apply_transforms(config).applied
+        changed = astronomy_shop.apply_transforms(config, _fitted_class()).applied
         self.assertEqual(changed["remove-docker-socket"], ["otel-collector"])
         sources = [
             v["source"] for v in config["services"]["otel-collector"]["volumes"]
@@ -2452,7 +2556,7 @@ class AstronomyShopTransformTests(unittest.TestCase):
 
     def test_the_host_filesystem_mount_is_removed(self):
         config = _fake_config()
-        changed = astronomy_shop.apply_transforms(config).applied
+        changed = astronomy_shop.apply_transforms(config, _fitted_class()).applied
         self.assertEqual(changed["remove-host-filesystem"], ["otel-collector"])
         targets = [
             v["target"] for v in config["services"]["otel-collector"]["volumes"]
@@ -2461,21 +2565,21 @@ class AstronomyShopTransformTests(unittest.TestCase):
 
     def test_every_container_name_is_removed(self):
         config = _fake_config()
-        changed = astronomy_shop.apply_transforms(config).applied
+        changed = astronomy_shop.apply_transforms(config, _fitted_class()).applied
         self.assertEqual(len(changed["scope-container-names"]), 5)
         for name, service in config["services"].items():
             self.assertNotIn("container_name", service, name)
 
     def test_the_fixed_network_name_is_removed(self):
         config = _fake_config()
-        changed = astronomy_shop.apply_transforms(config).applied
+        changed = astronomy_shop.apply_transforms(config, _fitted_class()).applied
         self.assertEqual(changed["scope-network-names"], ["default"])
         self.assertNotIn("name", config["networks"]["default"])
         self.assertEqual(config["networks"]["default"]["driver"], "bridge")
 
     def test_published_ports_are_dropped_but_container_ports_are_kept(self):
         config = _fake_config()
-        astronomy_shop.apply_transforms(config)
+        astronomy_shop.apply_transforms(config, _fitted_class())
         proxy = config["services"]["frontend-proxy"]["ports"]
         self.assertEqual([p["target"] for p in proxy], [8080, 10000])
         for port in proxy:
@@ -2483,7 +2587,7 @@ class AstronomyShopTransformTests(unittest.TestCase):
 
     def test_the_flag_services_lose_their_ports_entirely(self):
         config = _fake_config()
-        changed = astronomy_shop.apply_transforms(config).applied
+        changed = astronomy_shop.apply_transforms(config, _fitted_class()).applied
         self.assertEqual(sorted(changed["hide-flag-services"]), ["flagd", "flagd-ui"])
         for name in astronomy_shop.FLAG_SERVICES:
             self.assertEqual(config["services"][name]["ports"], [])
@@ -2491,7 +2595,7 @@ class AstronomyShopTransformTests(unittest.TestCase):
     def test_a_service_the_transforms_do_not_target_is_untouched(self):
         config = _fake_config()
         before = json.dumps(config["services"]["cart"]["ports"])
-        astronomy_shop.apply_transforms(config)
+        astronomy_shop.apply_transforms(config, _fitted_class())
         self.assertEqual(json.dumps(config["services"]["cart"]["ports"]), before)
 
     def test_a_transform_with_nothing_to_remove_reports_an_empty_list(self):
@@ -2499,14 +2603,14 @@ class AstronomyShopTransformTests(unittest.TestCase):
         a transform that changed nothing, not as one that silently became a
         no-op while still claiming to protect something."""
         config = _fake_config()
-        astronomy_shop.apply_transforms(config)
-        again = astronomy_shop.apply_transforms(config).applied
+        astronomy_shop.apply_transforms(config, _fitted_class())
+        again = astronomy_shop.apply_transforms(config, _fitted_class()).applied
         self.assertEqual(again["remove-docker-socket"], [])
         self.assertEqual(again["scope-container-names"], [])
         self.assertEqual(again["scope-network-names"], [])
 
     def test_every_declared_transform_is_reported_even_when_it_changes_nothing(self):
-        report = astronomy_shop.apply_transforms(_fake_config())
+        report = astronomy_shop.apply_transforms(_fake_config(), _fitted_class())
         self.assertEqual(
             sorted(report.applied),
             sorted(t.name for t in astronomy_shop.TRANSFORMS),
@@ -2567,7 +2671,7 @@ class AstronomyShopCollectorConfigTests(unittest.TestCase):
 
     def test_the_collector_mounts_are_repointed_at_the_derived_copies(self):
         config = _fake_config()
-        changed = astronomy_shop.apply_transforms(config).applied
+        changed = astronomy_shop.apply_transforms(config, _fitted_class()).applied
         self.assertEqual(changed["use-derived-collector-config"], ["otel-collector"])
         source = config["services"]["otel-collector"]["volumes"][-1]["source"]
         self.assertIn("derived/otel-collector/", source)
@@ -2584,7 +2688,7 @@ class AstronomyShopCollectorConfigTests(unittest.TestCase):
             }
         ]
         with self.assertRaises(FileNotFoundError):
-            astronomy_shop.apply_transforms(config)
+            astronomy_shop.apply_transforms(config, _fitted_class())
 
     def test_the_collector_config_manifest_records_what_was_removed(self):
         manifest = json.loads(
@@ -3564,7 +3668,7 @@ class CpuLimitFittingTests(unittest.TestCase):
         It also means the multiplier does not bind here, which is why the
         test above picks a peak where it does.
         """
-        payload = cpu_limits.load_fitted_limits(_repo_root())
+        payload = cpu_limits.load_fitted_limits(_repo_root(), _fitted_class())
         limits = set(payload["limitCores"].values())
         self.assertEqual(limits, {cpu_limits.FLOOR_CORES})
         self.assertLess(
@@ -3607,7 +3711,7 @@ class CpuLimitFittingTests(unittest.TestCase):
             payload["manifestHash"] = "sha256:" + "0" * 64
             path.write_text(json.dumps(payload))
             with self.assertRaises(cpu_limits.CpuLimitError) as caught:
-                cpu_limits.load_fitted_limits(root)
+                cpu_limits.load_fitted_limits(root, _fitted_class(root))
             self.assertIn("manifestHash", str(caught.exception))
 
     def test_a_faithful_copy_loads(self):
@@ -3620,7 +3724,7 @@ class CpuLimitFittingTests(unittest.TestCase):
                 cpu_limits.cpu_limits_path(_repo_root()).read_text()
             )
             self.assertEqual(
-                cpu_limits.load_fitted_limits(root)["manifestHash"],
+                cpu_limits.load_fitted_limits(root, _fitted_class(root))["manifestHash"],
                 json.loads(path.read_text())["manifestHash"],
             )
 
@@ -3672,11 +3776,11 @@ class CpuLimitFittingTests(unittest.TestCase):
             payload["manifestHash"] = cpu_limits.fitted_limits_hash(payload)
             path.write_text(json.dumps(payload))
             with self.assertRaises(cpu_limits.CpuLimitError) as caught:
-                cpu_limits.load_fitted_limits(root)
+                cpu_limits.load_fitted_limits(root, _fitted_class(root))
             self.assertIn("kafka", str(caught.exception))
 
     def test_every_shop_service_has_a_fitted_limit(self):
-        payload = cpu_limits.load_fitted_limits(_repo_root())
+        payload = cpu_limits.load_fitted_limits(_repo_root(), _fitted_class())
         digests = json.loads(
             (_repo_root() / "benchmark/apps/astronomy-shop/image-digests.json").read_text()
         )
@@ -3686,7 +3790,7 @@ class CpuLimitFittingTests(unittest.TestCase):
 
     def test_the_committed_limits_reproduce_from_the_committed_peaks(self):
         """The manifest is not free to drift from the rule that made it."""
-        payload = cpu_limits.load_fitted_limits(_repo_root())
+        payload = cpu_limits.load_fitted_limits(_repo_root(), _fitted_class())
         refitted = cpu_limits.fit_limits(payload["peakCores"])
         self.assertEqual(refitted, payload["limitCores"])
 
@@ -3709,13 +3813,13 @@ class CpuLimitFittingTests(unittest.TestCase):
                 )
             )
             with self.assertRaises(cpu_limits.CpuLimitError) as caught:
-                cpu_limits.load_fitted_limits(root)
+                cpu_limits.load_fitted_limits(root, "any-class")
         self.assertIn("frozen rule", str(caught.exception))
 
     def test_a_missing_manifest_is_an_error_not_an_empty_set(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(cpu_limits.CpuLimitError):
-                cpu_limits.load_fitted_limits(pathlib.Path(tmp))
+                cpu_limits.load_fitted_limits(pathlib.Path(tmp), _fitted_class())
 
 
 class CpuLimitTransformTests(unittest.TestCase):
@@ -3742,12 +3846,14 @@ class CpuLimitTransformTests(unittest.TestCase):
         source and a tell: it is the one service whose shape differs.
         """
         with self.assertRaises(cpu_limits.CpuLimitError) as caught:
-            astronomy_shop._apply_cpu_limits(self._config("not-a-real-service"))
+            astronomy_shop._apply_cpu_limits(
+                self._config("not-a-real-service"), _fitted_class()
+            )
         self.assertIn("not-a-real-service", str(caught.exception))
 
     def test_the_memory_limit_survives_the_transform(self):
         config = self._config("ad")
-        astronomy_shop._apply_cpu_limits(config)
+        astronomy_shop._apply_cpu_limits(config, _fitted_class())
         limits = config["services"]["ad"]["deploy"]["resources"]["limits"]
         self.assertEqual(limits["memory"], "1000")
         self.assertIn("cpus", limits)
@@ -3759,7 +3865,7 @@ class CpuLimitTransformTests(unittest.TestCase):
         is limited so that a CPU-limit incident on some other service cannot
         be spotted by noticing which service has a limit at all.
         """
-        payload = cpu_limits.load_fitted_limits(_repo_root())
+        payload = cpu_limits.load_fitted_limits(_repo_root(), _fitted_class())
         self.assertIn("shipping", payload["limitCores"])
         self.assertEqual(payload["limitCores"]["shipping"], cpu_limits.FLOOR_CORES)
 
@@ -3903,3 +4009,280 @@ class ThrottleReadingParseTests(unittest.TestCase):
 
     def test_the_sidecar_image_is_pinned_by_digest(self):
         self.assertIn("@sha256:", cpu_limits.SIDECAR_IMAGE)
+
+
+class CpuLimitHostClassTests(unittest.TestCase):
+    """The limits are fitted on one machine and must not travel.
+
+    This was the gap: the loader read the rule, the hash and the per-service
+    arithmetic, and never once looked at the host class it was fitted on. The
+    laptop's limits would have applied on a two-core VM, and because a quota
+    far above a small host's capacity never binds, every service would have
+    reported no throttling and the verification would have passed while
+    measuring nothing.
+    """
+
+    def _payload(self, host_class: str) -> dict:
+        payload = json.loads(cpu_limits.cpu_limits_path(_repo_root()).read_text())
+        payload["fittedFrom"]["hostClass"] = host_class
+        payload["manifestHash"] = cpu_limits.fitted_limits_hash(payload)
+        return payload
+
+    def _write(self, root: pathlib.Path, payload: dict) -> None:
+        path = cpu_limits.cpu_limits_path(root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2))
+
+    def test_limits_fitted_on_another_host_class_are_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            self._write(root, self._payload("linux-vm-d8s-v5-8c-32gib"))
+            with self.assertRaises(cpu_limits.CpuLimitError) as caught:
+                cpu_limits.load_fitted_limits(root, _fitted_class())
+        message = str(caught.exception)
+        self.assertIn("linux-vm-d8s-v5-8c-32gib", message)
+        self.assertIn("borrowing", message)
+
+    def test_the_matching_host_class_is_accepted(self):
+        """The refusal must be about the class, not about refusing always."""
+        payload = cpu_limits.load_fitted_limits(_repo_root(), _fitted_class())
+        self.assertEqual(payload["fittedFrom"]["hostClass"], _fitted_class())
+
+    def test_the_host_class_is_inside_the_hash_basis(self):
+        """Relabelling the file must break its own hash.
+
+        Outside the basis, the class is a comment: anyone could point the
+        laptop's limits at another machine by editing one string, and the
+        hash would still verify and still be copied into provenance as
+        evidence that nothing had changed.
+        """
+        original = json.loads(cpu_limits.cpu_limits_path(_repo_root()).read_text())
+        relabelled = dict(original)
+        relabelled["fittedFrom"] = dict(original["fittedFrom"])
+        relabelled["fittedFrom"]["hostClass"] = "some-other-class"
+        self.assertNotEqual(
+            cpu_limits.fitted_limits_hash(original),
+            cpu_limits.fitted_limits_hash(relabelled),
+        )
+
+    def test_a_relabelled_file_is_caught_by_the_hash_check(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            payload = json.loads(cpu_limits.cpu_limits_path(_repo_root()).read_text())
+            payload["fittedFrom"]["hostClass"] = "forged-class"
+            self._write(root, payload)
+            with self.assertRaises(cpu_limits.CpuLimitError) as caught:
+                cpu_limits.load_fitted_limits(root, "forged-class")
+        self.assertIn("without refitting", str(caught.exception))
+
+    def test_the_committed_manifest_hash_is_the_one_its_contents_produce(self):
+        payload = json.loads(cpu_limits.cpu_limits_path(_repo_root()).read_text())
+        self.assertEqual(
+            payload["manifestHash"], cpu_limits.fitted_limits_hash(payload)
+        )
+
+
+class FlagFileIsolationTests(unittest.TestCase):
+    """A trial must not be able to edit the fixture it is measured against.
+
+    flagd-ui mounts the flag directory read-write, so a flag toggled in one
+    trial rewrites a committed file. Because a bind is not a volume, `down
+    --volumes` does not undo it, and the next trial starts from the previous
+    trial's flag state while the repository sits dirty.
+    """
+
+    def _rendered(self) -> dict:
+        config = _fake_config()
+        vendored = astronomy_shop.upstream_dir(_repo_root()) / "src" / "flagd"
+        config["services"]["flagd"] = {
+            "image": "x",
+            "volumes": [
+                {"type": "bind", "source": str(vendored), "target": "/etc/flagd"}
+            ],
+        }
+        config["services"]["flagd-ui"] = {
+            "image": "x",
+            "volumes": [
+                {"type": "bind", "source": str(vendored), "target": "/app/data"}
+            ],
+        }
+        astronomy_shop._isolate_flag_file(config)
+        return config
+
+    def test_the_rendered_config_never_mounts_the_vendored_flag_directory(self):
+        vendored = str(astronomy_shop.upstream_dir(_repo_root()) / "src" / "flagd")
+        config = self._rendered()
+        for name in astronomy_shop.FLAG_SERVICES:
+            for mount in config["services"][name]["volumes"]:
+                self.assertNotEqual(mount["source"], vendored, name)
+
+    def test_the_real_rendered_stack_mounts_no_path_under_the_vendored_tree(self):
+        """The real upstream file, not a synthetic one.
+
+        The other tests here build a config by hand, so they prove the
+        transform works on mounts shaped the way this test file expects. This
+        one reads the vendored `compose.yaml`, so it fails if upstream renames
+        the directory, moves to a named volume, or drops the bind: the cases
+        where a hand-built fixture would keep passing while the real stack
+        went back to sharing one writable file.
+
+        Bind sources are absolutised first because that is what `docker compose
+        config` does before the renderer sees them; the daemon is not needed to
+        reproduce it. Only this transform is run, not the whole chain: the
+        others assume the dict form that normalisation guarantees, and running
+        them on raw YAML would test the fixture rather than the code. That the
+        renderer runs this transform at all is covered separately by
+        `test_the_transform_is_declared_and_reported`.
+        """
+        upstream = astronomy_shop.upstream_dir(_repo_root()).resolve()
+        config = yaml.safe_load((upstream / "compose.yaml").read_text())
+        for service in config["services"].values():
+            volumes = service.get("volumes") or []
+            for index, mount in enumerate(volumes):
+                if isinstance(mount, str) and mount.startswith("."):
+                    source, _, rest = mount.partition(":")
+                    volumes[index] = f"{(upstream / source).resolve()}:{rest}"
+
+        changed = astronomy_shop._isolate_flag_file(config)
+        self.assertEqual(sorted(changed), sorted(astronomy_shop.FLAG_SERVICES))
+
+        flag_dir = (upstream / "src" / astronomy_shop.FLAG_DIR_NAME).resolve()
+        offenders = []
+        for name, service in sorted(config["services"].items()):
+            for mount in service.get("volumes") or []:
+                source, _ = astronomy_shop._bind_source(mount)
+                if not source:
+                    continue
+                resolved = pathlib.Path(source).resolve()
+                if resolved == flag_dir or flag_dir in resolved.parents:
+                    offenders.append(f"{name}:{source}")
+        self.assertEqual(offenders, [])
+
+    def test_a_flag_service_whose_mount_shape_changed_is_reported_not_skipped(self):
+        """Finding nothing to redirect must fail, not pass quietly.
+
+        If upstream renames the directory or switches the mount to a named
+        volume, a transform that returns an empty list leaves the shared
+        writable bind in place and reports success. The campaign would then be
+        corrupted by exactly the defect this transform was added to close,
+        with nothing in the run record showing it.
+        """
+        config = _fake_config()
+        config["services"]["flagd"] = {
+            "image": "x",
+            "volumes": [
+                {"type": "bind", "source": "/somewhere/else", "target": "/etc/flagd"}
+            ],
+        }
+        with self.assertRaises(astronomy_shop.AstronomyShopError) as caught:
+            astronomy_shop._isolate_flag_file(config)
+        self.assertIn("silently", str(caught.exception))
+
+    def test_a_flag_service_declaring_no_volumes_is_left_alone(self):
+        """Absence of mounts is not evidence of a changed mount shape.
+
+        Other transforms are exercised against configs that name flagd only to
+        check its ports are unpublished. Treating those as a shape change would
+        make this transform fail on every such config, so the alarm is raised
+        only when a flag service mounts something that is not the flag
+        directory.
+        """
+        config = _fake_config()
+        config["services"]["flagd"] = {"image": "x", "ports": ["8013:8013"]}
+        self.assertEqual(astronomy_shop._isolate_flag_file(config), [])
+
+    def test_the_private_copy_actually_holds_the_flag_definitions(self):
+        """Repointing at an empty directory would satisfy the test above.
+
+        Docker creates a missing bind source as an empty directory, so flagd
+        would start with no flags at all and the flag gate would then read a
+        state nothing had defined.
+        """
+        config = self._rendered()
+        source = pathlib.Path(config["services"]["flagd"]["volumes"][0]["source"])
+        vendored = astronomy_shop.upstream_dir(_repo_root()) / "src" / "flagd"
+        for original in vendored.iterdir():
+            if original.is_file():
+                copied = source / original.name
+                self.assertTrue(copied.is_file(), original.name)
+                self.assertEqual(copied.read_bytes(), original.read_bytes())
+
+    def test_each_render_gets_its_own_copy(self):
+        """Two stacks from one checkout must not share a flag file."""
+        first = self._rendered()["services"]["flagd"]["volumes"][0]["source"]
+        second = self._rendered()["services"]["flagd"]["volumes"][0]["source"]
+        self.assertNotEqual(first, second)
+
+    def test_writing_through_the_copy_leaves_the_vendored_file_untouched(self):
+        """The point of the transform, checked by doing the damaging thing.
+
+        The write is guarded rather than issued blind. An earlier version of
+        this test wrote unconditionally, so when the transform was disabled to
+        confirm the test fails without it, the test emptied the committed flag
+        file for real and every later run in that shell failed on a file that
+        the fix was supposed to protect. A test for a destructive defect must
+        not perform the destruction when the defect is present.
+        """
+        config = self._rendered()
+        source = pathlib.Path(config["services"]["flagd-ui"]["volumes"][0]["source"])
+        vendored = (
+            astronomy_shop.upstream_dir(_repo_root()) / "src" / "flagd"
+        ).resolve()
+        self.assertNotEqual(
+            source.resolve(),
+            vendored,
+            "flagd-ui still mounts the vendored directory; refusing to write "
+            "through it, because that is the corruption under test",
+        )
+        target = next(p for p in vendored.iterdir() if p.is_file())
+        before = target.read_bytes()
+        (source / target.name).write_text("{}")
+        self.assertEqual(target.read_bytes(), before)
+
+    def test_flagd_mounts_its_copy_read_only(self):
+        config = self._rendered()
+        self.assertTrue(config["services"]["flagd"]["volumes"][0]["read_only"])
+
+    def test_the_transform_is_declared_and_reported(self):
+        names = [t.name for t in astronomy_shop.TRANSFORMS]
+        self.assertIn("isolate-flag-file", names)
+
+
+class FootprintTeardownTests(unittest.TestCase):
+    """The footprint tool samples for minutes, then tears down.
+
+    With teardown as the last statement of the happy path, a Ctrl-C during
+    sampling left all 28 containers running, and the next run would measure a
+    host that already had a whole shop on it.
+    """
+
+    def _source(self) -> str:
+        return (
+            _repo_root() / "benchmark" / "tools" / "measure_astronomy_footprint.py"
+        ).read_text()
+
+    def test_teardown_runs_in_a_finally_block(self):
+        tree = ast.parse(self._source())
+        guarded = False
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Try) or not node.finalbody:
+                continue
+            body = ast.dump(ast.Module(body=node.finalbody, type_ignores=[]))
+            if '"down"' in body or "'down'" in body:
+                guarded = True
+        self.assertTrue(
+            guarded,
+            "compose down must run in a finally block, or an interrupted "
+            "sampling window leaks the whole stack",
+        )
+
+    def test_the_sampling_loop_is_inside_that_try(self):
+        """A finally that only guards teardown itself would prove nothing."""
+        tree = ast.parse(self._source())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Try) or not node.finalbody:
+                continue
+            body = ast.dump(ast.Module(body=node.body, type_ignores=[]))
+            if "sample_stats" in body:
+                return
+        self.fail("the sampling loop is not inside the guarded block")

@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -61,6 +63,11 @@ AIOPSLAB_REQUIRED_FLAGS: tuple[str, ...] = (
 # Services the flag service and its user interface run as. The plan puts both
 # out of the agent's reach, so neither may be reachable from the host.
 FLAG_SERVICES: tuple[str, ...] = ("flagd", "flagd-ui")
+# The service that only ever reads the flags, so its copy can be read-only.
+FLAGD_SERVICE = "flagd"
+# The vendored directory both flag services bind, matched by name rather than
+# by full path so the transform still fires when the checkout moves.
+FLAG_DIR_NAME = "flagd"
 
 # Host paths upstream binds into the collector, both of which we remove. Kept
 # as constants so the check that asserts their absence names the same strings
@@ -92,7 +99,13 @@ class Transform:
 
     name: str
     rationale: str
-    apply: Callable[[dict[str, Any]], list[str]]
+    apply: Callable[..., list[str]]
+    # True when the transform needs the observed host class. Only the CPU
+    # limits need it, and it is threaded through explicitly rather than
+    # observed inside the transform so that rendering stays testable without
+    # a Docker daemon, while the production path still observes rather than
+    # accepts a label.
+    needs_host_class: bool = False
 
     def to_dict(self) -> dict[str, str]:
         return {"name": self.name, "rationale": self.rationale}
@@ -242,7 +255,107 @@ def _hide_flag_services(config: dict[str, Any]) -> list[str]:
 
 
 
-def _apply_cpu_limits(config: dict) -> list[str]:
+def _bind_source(mount: Any) -> tuple[str | None, str]:
+    """Read a bind mount's source and target in either compose syntax.
+
+    `docker compose config` normalises volumes to the long dict form, so the
+    rendered stack only ever holds dicts. The upstream compose files that feed
+    it use the short `source:target[:mode]` string form. Handling only dicts
+    would work today and fail quietly the moment anything parses those files
+    without normalising them first, which is the failure this transform exists
+    to prevent. Returns `(None, "")` for anything that is not a bind.
+    """
+    if isinstance(mount, dict):
+        if mount.get("type") != "bind":
+            return None, ""
+        return str(mount.get("source", "")) or None, str(mount.get("target", ""))
+    if isinstance(mount, str):
+        parts = mount.split(":")
+        if len(parts) < 2:
+            return None, ""
+        source, target = parts[0], parts[1]
+        if not source.startswith((".", "/", "~")):
+            return None, ""
+        return source, target
+    return None, ""
+
+
+def _isolate_flag_file(config: dict[str, Any]) -> list[str]:
+    """Give each rendered stack its own copy of the flag definitions.
+
+    Upstream binds the vendored ``src/flagd`` directory into both flagd and
+    flagd-ui, and flagd-ui mounts it read-write because writing flags is what
+    that interface is for. Three consequences, and the second is the one that
+    corrupts a campaign silently. A flag toggled during a trial edits a file
+    that is committed to this repository, so the working tree goes dirty and
+    the fixture hash no longer describes what is on disk. The edit survives
+    teardown, because `down --volumes` removes volumes and this is a bind, so
+    the next trial starts from the previous trial's flag state rather than
+    from the baseline. And two stacks rendered from the same checkout share
+    one file, so they are not isolated from each other at all.
+
+    Each render therefore gets its own copy, and the mount points at that.
+    flagd's copy is additionally read-only, since flagd only reads.
+
+    The copy is made eagerly rather than by pointing at a path Docker would
+    create on demand: a missing bind source becomes an empty directory, flagd
+    would start with no flags at all, and the flag gate would then be reading
+    a state nothing had defined.
+    """
+    changed = []
+    vendored = None
+    mounted = [
+        name
+        for name in FLAG_SERVICES
+        if ((config.get("services") or {}).get(name) or {}).get("volumes")
+    ]
+    for name in mounted:
+        service = config["services"][name]
+        for mount in service.get("volumes") or []:
+            source, _ = _bind_source(mount)
+            if source is not None and Path(source).name == FLAG_DIR_NAME:
+                vendored = Path(source)
+    if vendored is None:
+        if mounted:
+            raise AstronomyShopError(
+                f"{', '.join(mounted)} mount volumes but none is a directory "
+                f"named {FLAG_DIR_NAME!r}; upstream mounts the flag directory "
+                "into these services, so either the mount shape changed or "
+                "this transform is now silently leaving the shared writable "
+                "bind in place"
+            )
+        return changed
+
+    if not vendored.is_dir():
+        raise AstronomyShopError(
+            f"the vendored flag directory {vendored} is missing; a bind to a "
+            "path that does not exist would be created as an empty directory "
+            "and flagd would start with no flags defined"
+        )
+
+    private = Path(tempfile.mkdtemp(prefix="radius-eval-flagd-"))
+    shutil.copytree(vendored, private, dirs_exist_ok=True)
+
+    for name in mounted:
+        service = config["services"][name]
+        volumes = service.get("volumes") or []
+        for index, mount in enumerate(volumes):
+            source, target = _bind_source(mount)
+            if source is None or Path(source).name != FLAG_DIR_NAME:
+                continue
+            replacement = {
+                "type": "bind",
+                "source": str(private),
+                "target": target,
+            }
+            if name == FLAGD_SERVICE:
+                replacement["read_only"] = True
+            volumes[index] = replacement
+            changed.append(name)
+    return changed
+
+
+def _apply_cpu_limits(config: dict, host_class: str) -> list[str]:
     """Give every service a fitted CPU limit.
 
     Upstream sets ``deploy.resources.limits.memory`` on all 28 services and
@@ -258,11 +371,16 @@ def _apply_cpu_limits(config: dict) -> list[str]:
     service missing from that manifest is an error rather than a service left
     unlimited, because an unlimited service is precisely the variance this
     removes.
+
+    The host class is observed here rather than accepted from a caller, and
+    the loader refuses limits fitted on a different one. Without that, a stack
+    rendered on a two-core VM would silently receive a ten-core laptop's
+    quotas, and every service would look unthrottled because no quota bound.
     """
     from .cpu_limits import CpuLimitError, load_fitted_limits
 
     repo_root = _repo_root_from_config(config)
-    limits = load_fitted_limits(repo_root)["limitCores"]
+    limits = load_fitted_limits(repo_root, host_class)["limitCores"]
     changed: list[str] = []
     unfitted: list[str] = []
     for name, spec in (config.get("services") or {}).items():
@@ -294,6 +412,22 @@ def _repo_root_from_config(config: dict) -> "Path":
 
 TRANSFORMS: tuple[Transform, ...] = (
     Transform(
+        name="isolate-flag-file",
+        rationale=(
+            "Upstream binds the vendored src/flagd directory into flagd and "
+            "into flagd-ui, and flagd-ui mounts it read-write because editing "
+            "flags is what that interface does. A flag toggled during a trial "
+            "therefore rewrites a file committed to this repository: the "
+            "working tree goes dirty, the fixture hash stops describing what "
+            "is on disk, and because a bind is not a volume the edit survives "
+            "`down --volumes` and seeds the next trial with the previous "
+            "trial's flag state. Two stacks rendered from one checkout would "
+            "also share the single file. Each render gets its own copy "
+            "instead, and flagd's is read-only since flagd only reads."
+        ),
+        apply=_isolate_flag_file,
+    ),
+    Transform(
         name="apply-cpu-limits",
         rationale=(
             "Upstream declares a memory limit on every service and a CPU "
@@ -308,6 +442,7 @@ TRANSFORMS: tuple[Transform, ...] = (
             "the measurement window."
         ),
         apply=_apply_cpu_limits,
+        needs_host_class=True,
     ),
     Transform(
         name="remove-docker-socket",
@@ -413,17 +548,34 @@ class TransformReport:
         }
 
 
-def apply_transforms(config: dict[str, Any]) -> TransformReport:
+def apply_transforms(
+    config: dict[str, Any], host_class: str | None = None
+) -> TransformReport:
     """Apply every declared transform in order, recording what each touched.
 
     A transform that changes nothing is reported as changing nothing rather
     than skipped silently. An upstream bump that removes the Docker socket
     mount on its own should show up as an empty list here, not as a transform
     that quietly became a no-op while still claiming to protect something.
+
+    ``host_class`` decides which fitted CPU limits may be applied. Left as
+    ``None`` it is *observed* from this machine, which is what every
+    production caller does; it is a parameter only so the transforms can be
+    exercised without a Docker daemon. Passing one does not weaken the check,
+    because the loader still refuses any class the committed limits were not
+    fitted on.
     """
+    if host_class is None:
+        from .hostclass import derive_class_id, observe_host
+
+        host_class = derive_class_id(observe_host())
     report = TransformReport()
     for transform in TRANSFORMS:
-        report.applied[transform.name] = transform.apply(config)
+        report.applied[transform.name] = (
+            transform.apply(config, host_class)
+            if transform.needs_host_class
+            else transform.apply(config)
+        )
     return report
 
 

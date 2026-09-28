@@ -1213,6 +1213,9 @@ def build_report(
         host_facts,
         fitted_fingerprint=tolerance_set.fitted_fingerprint if tolerance_set else None,
         tolerances_resolved=verdict_possible,
+        tolerances_fitted_at_commit=(
+            tolerance_set.fitted_at_commit if tolerance_set else None
+        ),
         records=prior_requalifications,
     )
     host_qualification["fingerprintComparison"] = scored_readiness.fingerprint.to_dict()

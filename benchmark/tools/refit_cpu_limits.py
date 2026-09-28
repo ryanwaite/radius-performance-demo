@@ -49,9 +49,34 @@ def main() -> int:
             (name, round(entry["meanCores"], 4))
             for name, entry in report["services"].items()
         ))
+        # The class must come from the measurement, never from the machine
+        # running this tool and never from a flag. Carrying the previous
+        # fittedFrom forward was the actual defect: limits refitted from a
+        # report measured anywhere kept whatever class the file already
+        # claimed, and the loader's class check then agreed with the label
+        # rather than with the host the numbers describe.
+        host_class = report.get("hostClass")
+        if not host_class:
+            raise SystemExit(
+                f"{options.demand_report} records no hostClass. Refusing to "
+                "guess it: observing this machine would label the fit with "
+                "whichever host happens to run the tool, and copying the "
+                "previous label would let limits from one host inherit "
+                "another's name. Re-measure with a tool that records the "
+                "class it measured."
+            )
         payload["fittedFrom"] = {
-            **payload.get("fittedFrom", {}),
             "run": options.demand_report.parent.name,
+            "basis": report.get("basis", "cgroup usage_usec deltas"),
+            "intervalSeconds": report.get("intervalSeconds"),
+            "intervalsPerService": report.get("minIntervals"),
+            "gapIntervals": report.get("totalGapIntervals"),
+            "windowSeconds": report.get("windowSeconds"),
+            "cpuLimitsInPlaceDuringFitting": bool(
+                report.get("cpuLimitedServices")
+            ),
+            "load": report.get("load", "upstream default load generator"),
+            "hostClass": host_class,
         }
 
     before = dict(payload.get("limitCores", {}))

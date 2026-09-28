@@ -380,21 +380,35 @@ def cpu_limits_path(repo_root: Path) -> Path:
 def fitted_limits_hash(payload: Mapping[str, Any]) -> str:
     """Hash the parts of the fit that change what actually runs.
 
-    Over the rule and the fitted limits only. The peaks and means that
-    motivated the fit are provenance, and re-measuring them on the same host
-    will move the last decimal place without changing a single quota, so
-    including them would make the hash report a fixture change that is not
-    one. Everything that reaches a container is covered.
+    Over the rule, the fitted limits, and the host class they were fitted on.
+    The peaks and means that motivated the fit are provenance, and re-measuring
+    them on the same host will move the last decimal place without changing a
+    single quota, so including them would make the hash report a fixture change
+    that is not one. Everything that reaches a container is covered.
+
+    The host class is in the basis even though it reaches no container, because
+    it decides whether these numbers may be used at all. Left out, the label
+    could be edited to name any machine and the hash would still verify, which
+    would turn the class check below into a formality that agrees with whatever
+    the file claims.
     """
     basis = {
         "rule": dict(payload.get("rule", {})),
         "limitCores": dict(payload.get("limitCores", {})),
+        "hostClass": (payload.get("fittedFrom") or {}).get("hostClass"),
     }
     canonical = json.dumps(basis, sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def load_fitted_limits(repo_root: Path) -> dict[str, Any]:
+def load_fitted_limits(repo_root: Path, host_class: str) -> dict[str, Any]:
+    """Load the frozen limits for this host class, or refuse.
+
+    The class is required rather than optional. These limits were fitted from
+    one machine's measured demand, and applying them elsewhere would silently
+    impose a 10-core laptop's quotas on a host that may have two. A default
+    would be read as agreement by every caller that forgot to pass one.
+    """
     path = cpu_limits_path(repo_root)
     if not path.exists():
         raise CpuLimitError(
@@ -413,6 +427,14 @@ def load_fitted_limits(repo_root: Path) -> dict[str, Any]:
             f"{path} was fitted with rule {stored_rule!r}, but the frozen rule "
             f"is multiplier={MULTIPLIER} floorCores={FLOOR_CORES}; refit or "
             "restore the constants"
+        )
+    # Limits fitted on one host class say nothing about another. This is the
+    # same refusal offered_load.load_band makes, and for the same reason.
+    stored_class = (payload.get("fittedFrom") or {}).get("hostClass")
+    if stored_class != host_class:
+        raise CpuLimitError(
+            f"{path} was fitted on host class {stored_class!r} but this host "
+            f"is {host_class!r}; fit limits here rather than borrowing them"
         )
     # The hash goes into provenance, so it has to be recomputed from the file
     # rather than trusted. An earlier revision carried a hash that matched no
