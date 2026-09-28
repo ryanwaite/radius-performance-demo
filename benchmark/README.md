@@ -780,8 +780,18 @@ an earlier holdout's evidence was lost to a routine clean-up.
 Run the Docker-free tests with:
 
 ```bash
-cd /path/to/repo && python3.12 -m unittest discover -s benchmark/tests -t benchmark
+cd /path/to/repo/benchmark && uv run python -m pytest tests/
 ```
+
+Use `pytest`, not `unittest discover`. Seven of the eight test modules are
+written as bare `def test_*` functions rather than `unittest.TestCase`
+subclasses, and `unittest discover` collects **zero** tests from a module in
+that style. It does not error: it imports the module, finds no `TestCase`,
+collects nothing, and reports `OK` on whatever remains. On a machine with the
+SDK dependencies installed, the `unittest` command therefore ran one module of
+eight and printed a green result, which is the silent-omission failure this
+README warns about two paragraphs below. CI has always used `pytest`, so the
+defect was in this instruction rather than in the gate.
 
 ### What CI does and does not cover
 
@@ -1056,6 +1066,91 @@ applying a declared list of transforms, rather than being layered with a Compose
 overlay, because Compose merges `volumes` and `ports` by appending: an overlay
 can add a mount but can never remove one, and most of what the shop needs is
 removal.
+
+### Status: what is built, and what is not
+
+The shop is **not** ready to run scored trials. The list below is the handover.
+It is deliberately specific about the unbuilt items, because each one has
+requirements that were settled in discussion and would otherwise survive only
+in a chat log.
+
+**Built and verified on this laptop**
+
+  - Host class derived from observed facts, with tolerances frozen per class,
+    and a refusal to give a verdict on an unknown class.
+  - Fingerprint recorded beside the qualification fingerprint, with a drift
+    gate: a changed fingerprint yields a verdict marked "not re-qualified" and
+    blocks a scored start until a 3-cycle re-check passes. A missing
+    fingerprint counts as a mismatch.
+  - Vendored upstream `3.1.0` at a pinned commit, all images resolved to
+    digests, with the manifest hash carried in provenance.
+  - Generated per-service checks, derived from the Compose file rather than
+    enumerated, covering image pinning, limits, environment, egress and
+    readiness. A service with no checks fails sign-off.
+  - The three upstream isolation defects fixed by transform, and a static check
+    on the rendered config for `container_name`, named networks, fixed host
+    ports, and socket or `/hostfs` mounts.
+  - Application-level readiness per service, including Kafka and the databases,
+    with ports rediscovered after every container recreation.
+  - Flag services unpublished, and a gate that reads every flag's resolved
+    variant from flagd itself and fails if any is not at its baseline variant
+    or if the state cannot be read.
+  - CPU limits on all 28 services, fitted from kernel `usage_usec` with limits
+    removed, applied as a uniform generous floor, and accepted only on zero
+    lifetime throttling across every service.
+  - The offered-load gate: achieved request rate measured per cycle from the
+    generator's own counter, scored only inside a frozen band.
+  - The `firepit` exporter stripped from the derived collector config.
+
+**Not built**
+
+  - **Grafana plugin vendoring.** Grafana is part of the agent's surface: the
+    agent may query it, and the plugin must be pinned in the repository rather
+    than downloaded at startup. Required: download
+    `grafana-opensearch-datasource` once at tooling time, at a version
+    compatible with the Grafana image pinned in `3.1.0`, and state how
+    compatibility was checked. Commit it under the vendored tree with its
+    version, source URL, SHA-256 and license. **Check the license before
+    committing; if it is anything other than a permissive license we can
+    redistribute, stop and report rather than commit it.** Mount it read-only
+    into Grafana's plugins directory and remove `GF_INSTALL_PLUGINS` from the
+    derived Compose. Put the plugin hash in the digest manifest beside the
+    image digests. Derivation must fail if the file is missing or its hash
+    differs, and must not let Docker create an empty mount in place of it.
+    Evidence required: Grafana starts on the internal network, stays healthy,
+    and makes **no outbound request** (check its logs for `grafana.com` or any
+    external host, not just `up --wait`); an OpenSearch-backed dashboard
+    returns data, proving the plugin loaded rather than merely being present on
+    disk; and a negative control in which the mount is removed, with
+    `GF_INSTALL_PLUGINS` still stripped, shows the datasource failing to load.
+    Grafana's dashboards and provisioning files join the fixture-file list for
+    the leakage scan: list any dashboard, panel or variable whose name refers
+    to a fault flag or to flagd, and do not change them yet. Upstream routes
+    Grafana through `frontend-proxy` at `/grafana`, so it should need no extra
+    route off the internal network; confirm that.
+  - **The ingress and internal network split.** `internal: true` was shown to
+    work and to cost all port publishing, so the intended shape is one routed
+    network carrying a single ingress container with the egress check applied
+    to the other 27. That split is not implemented, and the egress check is not
+    yet applied per service.
+  - **The incident-phase load gate.** The rate band is valid for healthy cycles
+    only, because Locust is closed-loop and a working incident legitimately
+    lowers the rate. Incident phases must instead gate on the cause: the load
+    generator's own lifetime throttled-period count must be zero, and it must
+    be in the running state with its configured user count. Load-surge
+    incidents declare their own expected rate.
+  - **The healthy failure rate.** The healthy baseline fails a non-trivial
+    fraction of its requests. See the section below for what the two-arm run
+    found and what remains open.
+  - **The determinism fit and holdout.** Roughly three hours at about eight
+    minutes a cycle, fitting on one set of cycles and validating on a separate
+    holdout, following the catalog app's method. It needs the user's go-ahead
+    and a laptop kept awake and on power. Until it runs, the shop has no frozen
+    tolerance set and therefore cannot produce a verdict.
+  - **Host coverage.** Everything fitted here covers **this laptop only**. The
+    Linux VM host class has no frozen tolerances, and by the rule above the
+    suite will refuse to give a verdict there until it is qualified on that
+    class. Nothing measured on this laptop transfers.
 
 ### It is 28 services, not 17
 
