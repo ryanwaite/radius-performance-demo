@@ -2,7 +2,10 @@
 
 ## Purpose and status
 
-**Status:** planned; no benchmark runner, provider integration, scenario harness, or results are implemented yet.
+> [!IMPORTANT]
+> Superseded in part. The [experiment plan](copilot-radius-experiment-plan.md) now scores on the OpenTelemetry Astronomy Shop with three arms (native, architecture document, Radius), budgets of 30 minutes and 100 tool calls, and the submit-tool answer contract. Where this document disagrees with the plan, the plan wins. Its current state and next steps are in [Current state and next steps](copilot-radius-experiment-plan.md#current-state-and-next-steps).
+
+**Status:** the harness, driver, sandbox, and submit tool are implemented under `benchmark/`; scenarios, validators, and results are not.
 
 The canonical product-treatment design is the [Copilot + Radius experiment plan](copilot-radius-experiment-plan.md). It defines the primary native-versus-fully-Radius conditions, Inspect AI orchestration, GitHub Copilot SDK harness, usage capture, estimands, and phased decisions. This focused specification supplies scenario, validator, scoring, and artifact detail.
 

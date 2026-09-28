@@ -153,7 +153,11 @@ only durable copy.
 
 ## Isolation: what actually holds
 
-**There is no OS or process boundary.** The SDK spawns its pinned CLI as a
+This section describes the smoke harness, `run_smoke`, which runs without the
+runtime sandbox. Scored trials run inside the sandbox with the static screen
+off; see [Sandbox, budgets, and the submit tool](#sandbox-budgets-and-the-submit-tool-increment-3).
+
+**Without the sandbox there is no OS or process boundary.** The SDK spawns its pinned CLI as a
 host child process, and the workspace is an ordinary host temporary directory.
 Everything below rests on an advisory, in-process permission handler: a denial
 is this harness declining a request, not the kernel refusing an operation.
@@ -192,19 +196,17 @@ statically for absolute, `~`, and `..` path tokens.
 probes are observations, never assertions, and are excluded from
 `allFailedClosed` so a lucky denial cannot read as proof.
 
-Real confinement requires an OS boundary around the agent process, which this
-harness does not yet establish. The Compose increment does not supply it:
-those containers bound the application under test, while the agent stays a
-host process outside them.
+Real confinement requires an OS boundary around the agent process. The Compose
+increment does not supply it: those containers bound the application under
+test, while the agent stays a host process outside them.
 
-The runtime sandbox that would supply it is **reachable only after the session
-exists, via the experimental `session.options.update`** — so there is a window
-between session start and that call in which no policy is in force, which a
-runner must close or account for. A spike on SDK 1.0.13 / CLI 1.0.83 with one
-model denied every escape that executed. The harness does not enable it yet,
-so shell stays disabled for scored runs until it does. See the runtime-sandbox
-section of `docs/specs/copilot-radius-experiment-plan.md` for the conditions
-that adoption is gated on.
+The runtime sandbox supplies it. It is **reachable only after the session
+exists, via the experimental `session.options.update`**, so the session applies
+it between creation and the first prompt, when it is given `SandboxSettings`.
+The smoke harness passes none, so shell stays disabled in smoke runs. A live
+wiring check on SDK 1.0.14 / CLI 1.0.87 found every escape probe denied by the
+operating system; the locked pair is re-verified before the pilot. See the
+runtime-sandbox section of `docs/specs/copilot-radius-experiment-plan.md`.
 
 The same capability is absent from the session-creation API. The CLI wire
 protocol defines an OS-level `SandboxConfig` — an `enabled` flag,
@@ -218,7 +220,8 @@ successfully through the update call.
 ### Handler denial is a run gate, not a metric
 
 Because the gap is invisible to tests written against the API, the handler is
-proven to deny by a **live escape probe in every scored run**, and the verdict
+proven to deny by a **live escape probe in every smoke run marked scored**,
+and the verdict
 **stops the run**. `evaluate_isolation_gate` requires every check to be
 *affirmatively* satisfied:
 
@@ -234,10 +237,13 @@ raises only *after* the run record is written so a failed run stays auditable.
 `--skip-live-escape-probe` explicitly downgrades the run to `scored: false`,
 recorded in the artifact, so the degradation is visible rather than silent.
 
-This design is **under review**: the sandbox spike found that the runtime's
-denial text asks the agent not to attempt workarounds, and the agent complies,
-so a per-run probe may stop attempting escapes for reasons unrelated to the
-harness. That behaviour is unchanged here and is being scoped separately.
+This design is **settled for scored trials**: the sandbox spike found that the
+runtime's denial text asks the agent not to attempt workarounds, and the agent
+complies, so a probe issued through the model cannot tell "blocked" from "never
+tried". The smoke harness keeps this probe. Scored trials run no probe; each is
+gated on every tool execution reporting `sandboxApplied: "true"`, and
+harness-driven escape probes run in separate sessions on the same host and pins
+before each campaign batch.
 
 What a passing gate establishes is narrow and worth stating exactly: the
 handler was wired, it saw real attempts, and it denied them. That is a
@@ -324,7 +330,8 @@ in exactly the same way, and a control that cannot write inside its own
 workspace is obviously broken. `ProbeOutcome.SCREENED` now records that class
 separately, it is excluded from the evidence that supports a confinement claim,
 and `screen_shell_paths=False` puts the sandbox in the position of being the
-only thing that can deny. Scored runs leave the screen on.
+only thing that can deny. Scored shell trials use the same setting, gated on the
+sandbox; see the next section.
 
 A denial is also not counted unless that execution reported
 `sandboxApplied=true`. If the sandbox was not in force, something else refused
