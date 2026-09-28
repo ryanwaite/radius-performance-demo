@@ -1,0 +1,20 @@
+receivers:
+  kafkametrics:
+    scrapers:
+    - brokers
+    - topics
+    - consumers
+    brokers:
+    - ${KAFKA_ADDR}
+    collection_interval: 10s
+service:
+  pipelines:
+    metrics:
+      receivers:
+      - http_check/frontend-proxy
+      - nginx
+      - otlp
+      - redis
+      - postgresql
+      - span_metrics
+      - kafkametrics

@@ -9,15 +9,18 @@ Run with either ``python -m unittest discover -s benchmark/tests`` or pytest.
 
 from __future__ import annotations
 
+import ast
 import json
 import math
 import statistics
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import types
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -30,6 +33,14 @@ from radius_perf_eval.compose import (  # noqa: E402
     parse_port_mapping,
     parse_resource_lines,
 )
+from radius_perf_eval import astronomy_shop  # noqa: E402
+import pathlib
+import yaml
+from radius_perf_eval import cpu_limits  # noqa: E402
+from radius_perf_eval import offered_load  # noqa: E402
+import inspect
+from radius_perf_eval import checks  # noqa: E402
+from radius_perf_eval import shop_readiness  # noqa: E402
 from radius_perf_eval import environment as environment_module  # noqa: E402
 from radius_perf_eval.environment import (  # noqa: E402
     EGRESS_EXCEPTIONS,
@@ -54,7 +65,25 @@ from radius_perf_eval.checks import (  # noqa: E402
     redact_env,
     summarise_problems,
 )
+from radius_perf_eval.hostclass import (  # noqa: E402
+    HostClassError,
+    HostFacts,
+    derive_class_id,
+    derive_fingerprint,
+    gibibytes,
+    observe_host,
+)
 from radius_perf_eval.images import PinnedImage, is_digest  # noqa: E402
+from radius_perf_eval.qualification import (  # noqa: E402
+    MIN_REQUALIFICATION_CYCLES,
+    QualificationError,
+    Requalification,
+    find_requalification,
+    compare_fingerprints,
+    evaluate_scored_readiness,
+    load_requalifications,
+    record_requalification,
+)
 from radius_perf_eval.incidents import (  # noqa: E402
     MYSQL_POOL_DELAY_V1,
     IncidentVerification,
@@ -82,7 +111,10 @@ from radius_perf_eval.telemetry import HTTP_LATENCY_QUANTILE, TelemetryWindow  #
 from radius_perf_eval.trials import (  # noqa: E402
     DECLARED_TOLERANCES,
     DRIFT_SENSITIVE_METRICS,
+    FROZEN_TOLERANCE_SETS,
     INCIDENT_PROFILE,
+    ToleranceSet,
+    LAPTOP_M5_CLASS_ID,
     MAX_ERROR_RATE,
     MAX_HOST_SUSPENSION_SECONDS,
     MAX_STALL_RATE,
@@ -95,6 +127,7 @@ from radius_perf_eval.trials import (  # noqa: E402
     host_power_state,
     parse_power_state,
     host_suspension_seconds,
+    resolve_tolerance_set,
     suite_provenance,
     summarise,
 )
@@ -834,18 +867,40 @@ def _cycle(index: int, *, stalls: float = 0.0, excursions: float = 0.0, ok: bool
     )
 
 
-class ReportGenerationTests(unittest.TestCase):
-    """Exercise the whole report path, including the branches only a stall reaches.
+def laptop_facts(**overrides) -> HostFacts:
+    """The host class the catalog-app tolerances were actually fitted on.
 
-    The stall block crashed on a field name that CycleResult does not define,
-    and every unit test passed anyway, because none of them built a cycle with
-    a nonzero stall count. Testing the detector was not the same as testing
-    the thing that reports it.
+    Built from the values `observe_host` read off that machine, so a test that
+    resolves tolerances is resolving the same class a real run would. The
+    asserted class id is checked against `derive_class_id` in
+    `HostClassTests`, so this fixture cannot drift from the derivation it
+    stands in for.
     """
+    base = dict(
+        os_name="Darwin",
+        os_release="27.2.0",
+        arch="arm64",
+        cpu_model="Apple M5",
+        cpu_cores=10,
+        memory_bytes=34359738368,
+        docker_engine_version="29.8.0",
+        docker_operating_system="Docker Desktop",
+        docker_kernel="7.0.12-linuxkit",
+        docker_arch="aarch64",
+        docker_cpus=10,
+        docker_memory_bytes=8319504384,
+        docker_virtualized=True,
+        docker_virtualization_evidence="container runtime reports 'linuxkit'",
+        python_version="3.12.14",
+    )
+    base.update(overrides)
+    return HostFacts(**base)
 
+
+class ReportGenerationTests(unittest.TestCase):
     def test_report_builds_with_a_stall_present(self) -> None:
         cycles = [_cycle(i) for i in range(1, 10)] + [_cycle(10, stalls=1.0)]
-        report = build_report(cycles, suite_id="suite", cycles=10)
+        report = build_report(cycles, suite_id="suite", cycles=10, host_facts=laptop_facts())
 
         observations = report["stallBudget"]["observations"]
         self.assertEqual(len(observations), 1)
@@ -857,13 +912,16 @@ class ReportGenerationTests(unittest.TestCase):
         # The report is written to disk; a value that cannot be encoded fails
         # just as completely as an AttributeError.
         cycles = [_cycle(i) for i in range(1, 10)] + [_cycle(10, stalls=3.0)]
-        report = build_report(cycles, suite_id="suite", cycles=10)
+        report = build_report(cycles, suite_id="suite", cycles=10, host_facts=laptop_facts())
         encoded = json.dumps(report, sort_keys=True, default=str)
         self.assertIn("stallBudget", encoded)
 
     def test_clean_run_reports_no_observations(self) -> None:
         report = build_report(
-            [_cycle(i) for i in range(1, 11)], suite_id="suite", cycles=10
+            [_cycle(i) for i in range(1, 11)],
+            suite_id="suite",
+            cycles=10,
+            host_facts=laptop_facts(),
         )
         self.assertEqual(report["stallBudget"]["observations"], [])
         self.assertTrue(report["stallBudget"]["withinBudget"])
@@ -871,13 +929,13 @@ class ReportGenerationTests(unittest.TestCase):
     def test_stall_budget_fails_when_breached(self) -> None:
         # 8 stalls in a 640-request window is 1.25%, above the 0.5% bound.
         cycles = [_cycle(i) for i in range(1, 10)] + [_cycle(10, stalls=8.0)]
-        report = build_report(cycles, suite_id="suite", cycles=10)
+        report = build_report(cycles, suite_id="suite", cycles=10, host_facts=laptop_facts())
         self.assertFalse(report["stallBudget"]["withinBudget"])
         self.assertFalse(report["exitCriterionMet"])
 
     def test_absolute_excursions_are_reported_alongside_relative_stalls(self) -> None:
         cycles = [_cycle(i) for i in range(1, 10)] + [_cycle(10, stalls=1.0, excursions=1.0)]
-        report = build_report(cycles, suite_id="suite", cycles=10)
+        report = build_report(cycles, suite_id="suite", cycles=10, host_facts=laptop_facts())
         totals = report["stallBudget"]["absoluteExcursions"]["totals"]
         self.assertEqual(totals["incident.excursionCount"], 1)
         thresholds = report["stallBudget"]["absoluteExcursions"]["thresholdsSeconds"]
@@ -891,13 +949,17 @@ class ReportGenerationTests(unittest.TestCase):
             cycles=10,
             setup_cycles=[{"runId": "suite-setup-c00", "ok": True, "role": "image-acquisition"}],
             warmups=[{"runId": "suite-warmup-c01", "ok": True, "role": "discarded-warmup"}],
+            host_facts=laptop_facts(),
         )
         self.assertEqual(len(report["unmeasured"]["setupCycles"]), 1)
         self.assertEqual(len(report["unmeasured"]["warmupCycles"]), 1)
 
     def test_gate_definition_is_pre_registered_in_the_report(self) -> None:
         report = build_report(
-            [_cycle(i) for i in range(1, 11)], suite_id="suite", cycles=10
+            [_cycle(i) for i in range(1, 11)],
+            suite_id="suite",
+            cycles=10,
+            host_facts=laptop_facts(),
         )
         pre = report["stallBudget"]["preRegistration"]
         self.assertEqual(pre["stallFactor"], 3.0)
@@ -905,7 +967,7 @@ class ReportGenerationTests(unittest.TestCase):
 
     def test_failed_cycle_does_not_meet_exit_criterion(self) -> None:
         cycles = [_cycle(i) for i in range(1, 10)] + [_cycle(10, ok=False)]
-        report = build_report(cycles, suite_id="suite", cycles=10)
+        report = build_report(cycles, suite_id="suite", cycles=10, host_facts=laptop_facts())
         self.assertFalse(report["exitCriterionMet"])
 
 
@@ -1082,11 +1144,11 @@ class HostSuspensionTests(unittest.TestCase):
         """Positive control for the gate, not just the arithmetic: a suite
         that is otherwise perfect must still fail on a suspended cycle."""
         clean = [_cycle(i) for i in (1, 2)]
-        report = build_report(clean, suite_id="s", cycles=2)
+        report = build_report(clean, suite_id="s", cycles=2, host_facts=laptop_facts())
         self.assertTrue(report["hostSuspension"]["hostAwakeThroughout"])
 
         clean[1].host_suspension_seconds = 5460.0
-        suspended = build_report(clean, suite_id="s", cycles=2)
+        suspended = build_report(clean, suite_id="s", cycles=2, host_facts=laptop_facts())
         self.assertFalse(suspended["hostSuspension"]["hostAwakeThroughout"])
         self.assertFalse(suspended["exitCriterionMet"])
         self.assertEqual(
@@ -1391,7 +1453,10 @@ class DaemonVersionCaptureTests(unittest.TestCase):
         trials_module.daemon_info = lambda: (_ for _ in ()).throw(RuntimeError("down"))
         try:
             report = build_report(
-                [_cycle(i) for i in range(1, 11)], suite_id="s", cycles=10
+                [_cycle(i) for i in range(1, 11)],
+                suite_id="s",
+                cycles=10,
+                host_facts=laptop_facts(),
             )
         finally:
             trials_module.daemon_info = original
@@ -1816,3 +1881,2408 @@ class EnvironmentCheckCoverageTests(unittest.TestCase):
         gate, payload = self._run_check({"A": "1"}, {"A": "2"})
         self.assertFalse(gate.passed)
         self.assertEqual(payload["mismatched"], ["A"])
+
+
+class HostClassTests(unittest.TestCase):
+    """The host class must come from observation and must refuse the unknown.
+
+    The mechanism being tested is not "can we build a string". It is that a
+    machine nobody fitted tolerances on cannot obtain a verdict, and that no
+    caller can talk its way into one.
+    """
+
+    def test_the_fixture_matches_the_derivation(self) -> None:
+        """Without this the laptop fixture could drift from `derive_class_id`
+        and every tolerance-resolution test below would be testing a class id
+        that no real run ever produces."""
+        self.assertEqual(derive_class_id(laptop_facts()), LAPTOP_M5_CLASS_ID)
+
+    def test_the_fitted_class_has_a_frozen_set(self) -> None:
+        self.assertIn(LAPTOP_M5_CLASS_ID, FROZEN_TOLERANCE_SETS)
+
+    def test_a_different_machine_is_a_different_class(self) -> None:
+        """Each envelope fact must move the class, because each one moves the
+        performance envelope. A class that ignored core count would let bounds
+        fitted on ten cores judge a two-core machine."""
+        for field, value in (
+            ("os_name", "Linux"),
+            ("arch", "x86_64"),
+            ("cpu_model", "Intel Xeon Platinum 8370C"),
+            ("cpu_cores", 8),
+            ("memory_bytes", 68719476736),
+            ("docker_cpus", 8),
+            ("docker_memory_bytes", 34359738368),
+            ("docker_virtualized", False),
+        ):
+            with self.subTest(field=field):
+                other = derive_class_id(laptop_facts(**{field: value}))
+                self.assertNotEqual(other, LAPTOP_M5_CLASS_ID)
+
+    def test_patch_versions_do_not_change_the_class(self) -> None:
+        """Deliberate, and backed by measurement: the engine moved 29.7.2 to
+        29.8.0 and Python 3.12.13 to 3.12.14 between the holdout and a later
+        check, and the numbers did not move. Patch drift is reported through
+        the fingerprint instead, so it stays visible without crying wolf."""
+        drifted = laptop_facts(
+            os_release="27.3.0", docker_engine_version="30.0.1", python_version="3.12.20"
+        )
+        self.assertEqual(derive_class_id(drifted), LAPTOP_M5_CLASS_ID)
+        self.assertNotEqual(derive_fingerprint(drifted), derive_fingerprint(laptop_facts()))
+
+    def test_the_fingerprint_contains_the_patch_versions(self) -> None:
+        fingerprint = derive_fingerprint(laptop_facts())
+        self.assertIn("docker29.8.0", fingerprint)
+        self.assertIn("py3.12.14", fingerprint)
+        self.assertIn("os27.2.0", fingerprint)
+
+    def test_an_unreadable_fact_refuses_classification(self) -> None:
+        """A missing fact must not become a default. An unread core count
+        silently becoming 0 would produce a stable, meaningless class id that
+        someone could then freeze tolerances against."""
+        for field in ("cpu_model", "cpu_cores", "memory_bytes", "docker_memory_bytes"):
+            with self.subTest(field=field):
+                with self.assertRaises(HostClassError):
+                    derive_class_id(laptop_facts(**{field: None}))
+
+    def test_virtualization_is_detected_with_evidence(self) -> None:
+        facts = observe_host(
+            docker_info={
+                "ServerVersion": "29.8.0",
+                "OperatingSystem": "Docker Desktop",
+                "KernelVersion": "7.0.12-linuxkit",
+                "Architecture": "aarch64",
+                "NCPU": "10",
+                "MemTotal": "8319504384",
+            }
+        )
+        self.assertTrue(facts.docker_virtualized)
+        self.assertIn("linuxkit", facts.docker_virtualization_evidence)
+
+    def test_a_linux_engine_on_a_linux_host_is_not_virtualized(self) -> None:
+        """The Azure case. It must land in a different class from the laptop,
+        which is the entire point of the mechanism."""
+        facts = observe_host(
+            docker_info={
+                "ServerVersion": "27.1.1",
+                "OperatingSystem": "Ubuntu 22.04.4 LTS",
+                "KernelVersion": "6.5.0-1018-azure",
+                "Architecture": "x86_64",
+                "NCPU": "8",
+                "MemTotal": "34359738368",
+            }
+        )
+        if facts.os_name == "Linux":
+            self.assertIs(facts.docker_virtualized, False)
+        else:
+            # Observed from macOS, where a virtual machine is always present
+            # even when the engine did not advertise one, so the honest answer
+            # is unknown rather than False.
+            self.assertIsNone(facts.docker_virtualized)
+
+    def test_gibibytes_rounds_for_display_only(self) -> None:
+        self.assertEqual(gibibytes(34359738368), 32.0)
+        self.assertEqual(gibibytes(8319504384), 7.7)
+        self.assertIsNone(gibibytes(None))
+
+
+class HostQualificationRefusalTests(unittest.TestCase):
+    """An unknown host class must fail, not pass and not skip.
+
+    This is the positive control the brief asked for. The failure it guards
+    against is the quiet one: bounds fitted on a laptop being applied to a
+    cloud virtual machine and producing a verdict that looks exactly like a
+    real one.
+    """
+
+    def test_a_known_host_class_resolves(self) -> None:
+        """Control for every test below. Without it, they could all pass
+        because resolution never works rather than because it refuses."""
+        resolved, audit = resolve_tolerance_set(laptop_facts())
+        self.assertIsNotNone(resolved)
+        self.assertTrue(audit["resolved"])
+        self.assertIsNone(audit["refusal"])
+        self.assertEqual(audit["observedClass"], LAPTOP_M5_CLASS_ID)
+
+    def test_an_unknown_host_class_refuses(self) -> None:
+        resolved, audit = resolve_tolerance_set(
+            laptop_facts(cpu_model="Intel Xeon Platinum 8370C", cpu_cores=8)
+        )
+        self.assertIsNone(resolved)
+        self.assertFalse(audit["resolved"])
+        self.assertIn("no frozen tolerance set", audit["refusal"])
+
+    def test_an_unknown_host_class_fails_the_exit_criterion(self) -> None:
+        """The refusal has to reach the verdict, not just the audit block."""
+        cycles = [_cycle(i) for i in range(1, 11)]
+        unknown = laptop_facts(cpu_model="Neoverse-N2", cpu_cores=16)
+
+        known_report = build_report(
+            cycles, suite_id="s", cycles=10, host_facts=laptop_facts()
+        )
+        unknown_report = build_report(cycles, suite_id="s", cycles=10, host_facts=unknown)
+
+        self.assertTrue(known_report["exitCriterionMet"])
+        self.assertFalse(unknown_report["exitCriterionMet"])
+        self.assertIn("no frozen tolerance set", unknown_report["hostQualification"]["refusal"])
+
+    def test_an_unobserved_host_fails_the_exit_criterion(self) -> None:
+        report = build_report(
+            [_cycle(i) for i in range(1, 11)], suite_id="s", cycles=10, host_facts=None
+        )
+        self.assertFalse(report["exitCriterionMet"])
+        self.assertIn("not observed", report["hostQualification"]["refusal"])
+
+    def test_refusal_does_not_leave_an_empty_tolerance_list_passing(self) -> None:
+        """`all([])` is True, so a refused run would have satisfied the
+        tolerance clause vacuously and failed only by luck elsewhere. The
+        report must contain no tolerance entries and the verdict must be false
+        for that reason, not despite it."""
+        report = build_report(
+            [_cycle(i) for i in range(1, 11)], suite_id="s", cycles=10, host_facts=None
+        )
+        self.assertEqual(report["tolerances"], [])
+        self.assertTrue(all(entry["withinTolerance"] for entry in report["tolerances"]))
+        self.assertFalse(report["hostQualification"]["verdictPossible"])
+        self.assertFalse(report["exitCriterionMet"])
+
+    def test_a_registered_class_with_no_bounds_still_refuses(self) -> None:
+        """This is the case the second half of `verdict_possible` exists for,
+        and the only case that distinguishes it from the first half.
+
+        A class present in the registry but carrying an empty tolerance tuple
+        resolves successfully and then checks nothing. Without this test both
+        halves of the condition could be deleted one at a time with every test
+        still green, which is how the guard was written the first time.
+        """
+        empty_class = "test-only-empty-set"
+        FROZEN_TOLERANCE_SETS[empty_class] = ToleranceSet(
+            host_class=empty_class,
+            description="a registry entry with no bounds in it",
+            fitted_on="never fitted",
+            fitted_at_commit="none",
+            tolerances=(),
+            max_error_rate=MAX_ERROR_RATE,
+            max_stall_rate=MAX_STALL_RATE,
+        )
+        try:
+            with unittest.mock.patch(
+                "radius_perf_eval.trials.derive_class_id", return_value=empty_class
+            ):
+                report = build_report(
+                    [_cycle(i) for i in range(1, 11)],
+                    suite_id="s",
+                    cycles=10,
+                    host_facts=laptop_facts(),
+                )
+        finally:
+            del FROZEN_TOLERANCE_SETS[empty_class]
+
+        self.assertTrue(report["hostQualification"]["resolved"])
+        self.assertFalse(report["hostQualification"]["verdictPossible"])
+        self.assertIn("nothing to check", report["hostQualification"]["refusal"])
+        self.assertFalse(report["exitCriterionMet"])
+
+    def test_the_audit_names_the_classes_it_would_have_accepted(self) -> None:
+        _, audit = resolve_tolerance_set(laptop_facts(cpu_cores=4))
+        self.assertIn(LAPTOP_M5_CLASS_ID, audit["knownHostClasses"])
+        self.assertIn("facts", audit)
+
+    def test_every_frozen_set_is_keyed_by_its_own_host_class(self) -> None:
+        """A set filed under the wrong key would be applied to the wrong
+        machine, which is the exact failure this module exists to prevent."""
+        for class_id, tolerance_set in FROZEN_TOLERANCE_SETS.items():
+            with self.subTest(class_id=class_id):
+                self.assertEqual(tolerance_set.host_class, class_id)
+                self.assertTrue(tolerance_set.tolerances)
+                self.assertTrue(tolerance_set.fitted_at_commit)
+
+
+class FingerprintDriftTests(unittest.TestCase):
+    """The fingerprint is recorded, compared, and acted on.
+
+    An identifier that is written to a report and read by nothing is
+    decoration. These tests pin the three things that stop it being that: a
+    mismatch is named component by component, a mismatch blocks a scored
+    start, and a recorded re-qualification clears it.
+    """
+
+    def test_an_identical_fingerprint_matches_with_no_drift(self) -> None:
+        printed = derive_fingerprint(laptop_facts())
+        comparison = compare_fingerprints(printed, printed)
+        self.assertTrue(comparison.matches)
+        self.assertTrue(comparison.comparable)
+        self.assertEqual(comparison.drift, ())
+
+    def test_drift_names_the_component_that_moved(self) -> None:
+        fitted = derive_fingerprint(laptop_facts(python_version="3.12.13"))
+        observed = derive_fingerprint(laptop_facts(python_version="3.12.14"))
+        comparison = compare_fingerprints(observed, fitted)
+
+        self.assertFalse(comparison.matches)
+        self.assertTrue(comparison.comparable)
+        self.assertEqual(len(comparison.drift), 1)
+        entry = comparison.drift[0]
+        self.assertEqual(entry["component"], "pythonVersion")
+        self.assertEqual(entry["fittedOn"], "py3.12.13")
+        self.assertEqual(entry["observed"], "py3.12.14")
+
+    def test_several_components_can_drift_at_once(self) -> None:
+        fitted = derive_fingerprint(
+            laptop_facts(python_version="3.12.13", docker_engine_version="29.7.2")
+        )
+        observed = derive_fingerprint(laptop_facts())
+        comparison = compare_fingerprints(observed, fitted)
+        moved = {entry["component"] for entry in comparison.drift}
+        self.assertEqual(moved, {"dockerEngine", "pythonVersion"})
+
+    def test_an_unknown_fitted_fingerprint_is_a_mismatch_not_a_match(self) -> None:
+        """The dangerous default. Treating "we never recorded one" as "it has
+        not changed" would let the gate pass on exactly the hosts nobody has
+        ever checked."""
+        comparison = compare_fingerprints(derive_fingerprint(laptop_facts()), None)
+        self.assertFalse(comparison.matches)
+        self.assertFalse(comparison.comparable)
+
+
+class ScoredStartGateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.store = Path(tempfile.mkdtemp()) / "qualifications.json"
+        self.addCleanup(shutil.rmtree, self.store.parent, ignore_errors=True)
+
+    def test_an_unchanged_fingerprint_allows_a_scored_start(self) -> None:
+        facts = laptop_facts()
+        readiness = evaluate_scored_readiness(
+            facts,
+            fitted_fingerprint=derive_fingerprint(facts),
+            tolerances_resolved=True,
+            records=[],
+        )
+        self.assertTrue(readiness.allowed)
+        self.assertIn("unchanged", readiness.reason)
+
+    def test_a_changed_fingerprint_with_no_requalification_blocks(self) -> None:
+        """The positive control. If this ever passes, the gate is decoration."""
+        facts = laptop_facts()
+        readiness = evaluate_scored_readiness(
+            facts,
+            fitted_fingerprint=derive_fingerprint(
+                laptop_facts(python_version="3.12.13")
+            ),
+            tolerances_resolved=True,
+            records=[],
+        )
+        self.assertFalse(readiness.allowed)
+        self.assertIn("not re-qualified", readiness.reason)
+        self.assertIn("pythonVersion", readiness.reason)
+
+    def test_a_recorded_requalification_clears_the_block(self) -> None:
+        facts = laptop_facts()
+        record_requalification(
+            host_class=derive_class_id(facts),
+            fingerprint=derive_fingerprint(facts),
+            cycles=3,
+            suite_id="requal",
+            driver_commit="abc1234",
+            tolerances_fitted_at_commit="0407638",
+            path=self.store,
+        )
+        readiness = evaluate_scored_readiness(
+            facts,
+            fitted_fingerprint=derive_fingerprint(
+                laptop_facts(python_version="3.12.13")
+            ),
+            tolerances_resolved=True,
+            tolerances_fitted_at_commit="0407638",
+            path=self.store,
+        )
+        self.assertTrue(readiness.allowed)
+        self.assertIn("re-qualified", readiness.reason)
+        self.assertIsNotNone(readiness.requalification)
+
+    def test_a_requalification_against_old_bounds_does_not_clear_new_ones(self) -> None:
+        """The record must name the tolerance set it actually ran against.
+
+        A re-qualification is a claim that three cycles fell inside *those*
+        bounds. Match on class and fingerprint alone, as this gate once did,
+        and a check run against a superseded set silently authorises scored
+        trials against bounds it never saw. That is worse than no gate: the
+        report cites a real record, with a real date and cycle count, as
+        evidence for a set nobody verified on this host.
+        """
+        facts = laptop_facts()
+        record_requalification(
+            host_class=derive_class_id(facts),
+            fingerprint=derive_fingerprint(facts),
+            cycles=3,
+            suite_id="requal",
+            driver_commit="abc1234",
+            tolerances_fitted_at_commit="0407638",
+            path=self.store,
+        )
+        readiness = evaluate_scored_readiness(
+            facts,
+            fitted_fingerprint=derive_fingerprint(
+                laptop_facts(python_version="3.12.13")
+            ),
+            tolerances_resolved=True,
+            tolerances_fitted_at_commit="9999999",
+            path=self.store,
+        )
+        self.assertFalse(readiness.allowed)
+        self.assertIsNone(readiness.requalification)
+
+    def test_a_caller_that_names_no_tolerance_set_matches_nothing(self) -> None:
+        """Absent bounds cannot be satisfied by any record.
+
+        Falling back to "match on class and fingerprint" when the caller does
+        not say which set is in force would restore the defect for exactly the
+        callers least able to notice it.
+        """
+        facts = laptop_facts()
+        record_requalification(
+            host_class=derive_class_id(facts),
+            fingerprint=derive_fingerprint(facts),
+            cycles=3,
+            suite_id="requal",
+            driver_commit="abc1234",
+            tolerances_fitted_at_commit="0407638",
+            path=self.store,
+        )
+        readiness = evaluate_scored_readiness(
+            facts,
+            fitted_fingerprint=derive_fingerprint(
+                laptop_facts(python_version="3.12.13")
+            ),
+            tolerances_resolved=True,
+            path=self.store,
+        )
+        self.assertFalse(readiness.allowed)
+        self.assertIsNone(readiness.requalification)
+
+    def test_a_legacy_record_with_no_bounds_cannot_match_an_absent_set(self) -> None:
+        """Two blanks must not be treated as agreement.
+
+        `from_dict` defaults a missing `tolerancesFittedAtCommit` to the empty
+        string, so a record written before the field existed loads with no
+        bounds named. Compared with an equality test alone, that record would
+        match a caller that also names no set, and the oldest, least
+        attributable record in the store would be the one clearing the gate.
+        """
+        facts = laptop_facts()
+        legacy = Requalification.from_dict(
+            {
+                "hostClass": derive_class_id(facts),
+                "fingerprint": derive_fingerprint(facts),
+                "recordedAt": "2026-09-01T00:00:00+00:00",
+                "cycles": 3,
+            }
+        )
+        self.assertEqual(legacy.tolerances_fitted_at_commit, "")
+        self.assertIsNone(
+            find_requalification(
+                [legacy], legacy.host_class, legacy.fingerprint, ""
+            )
+        )
+        self.assertIsNone(
+            find_requalification(
+                [legacy], legacy.host_class, legacy.fingerprint, None
+            )
+        )
+
+    def test_a_requalification_for_a_different_fingerprint_does_not_clear(self) -> None:
+        """A record is for one fingerprint. Matching on host class alone would
+        let a check of 3.12.13 vouch for 3.12.14."""
+        facts = laptop_facts()
+        record_requalification(
+            host_class=derive_class_id(facts),
+            fingerprint=derive_fingerprint(laptop_facts(python_version="3.12.13")),
+            cycles=3,
+            suite_id="requal",
+            driver_commit="abc1234",
+            tolerances_fitted_at_commit="0407638",
+            path=self.store,
+        )
+        readiness = evaluate_scored_readiness(
+            facts,
+            fitted_fingerprint=None,
+            tolerances_resolved=True,
+            path=self.store,
+        )
+        self.assertFalse(readiness.allowed)
+
+    def test_a_short_requalification_is_refused_at_write_time(self) -> None:
+        with self.assertRaises(QualificationError):
+            record_requalification(
+                host_class="anything",
+                fingerprint="anything",
+                cycles=MIN_REQUALIFICATION_CYCLES - 1,
+                suite_id="s",
+                driver_commit="c",
+                tolerances_fitted_at_commit="f",
+                path=self.store,
+            )
+
+    def test_an_unresolved_host_class_blocks_regardless_of_fingerprint(self) -> None:
+        facts = laptop_facts()
+        readiness = evaluate_scored_readiness(
+            facts,
+            fitted_fingerprint=derive_fingerprint(facts),
+            tolerances_resolved=False,
+            records=[],
+        )
+        self.assertFalse(readiness.allowed)
+        self.assertIn("no frozen tolerance set", readiness.reason)
+
+    def test_an_unobserved_host_blocks(self) -> None:
+        readiness = evaluate_scored_readiness(
+            None, fitted_fingerprint="x", tolerances_resolved=True, records=[]
+        )
+        self.assertFalse(readiness.allowed)
+
+    def test_records_survive_a_round_trip_through_the_store(self) -> None:
+        record_requalification(
+            host_class="class-a",
+            fingerprint="class-a/os1/docker2/py3",
+            cycles=3,
+            suite_id="s1",
+            driver_commit="c1",
+            tolerances_fitted_at_commit="f1",
+            path=self.store,
+        )
+        record_requalification(
+            host_class="class-b",
+            fingerprint="class-b/os1/docker2/py3",
+            cycles=4,
+            suite_id="s2",
+            driver_commit="c2",
+            tolerances_fitted_at_commit="f2",
+            path=self.store,
+        )
+        loaded = load_requalifications(self.store)
+        self.assertEqual([r.suite_id for r in loaded], ["s1", "s2"])
+        self.assertEqual(loaded[1].cycles, 4)
+
+    def test_a_corrupt_store_raises_rather_than_reading_as_empty(self) -> None:
+        """An unreadable store that degrades to "no records" is indistinguishable
+        from a clean machine, and would block rather than mislead -- but a
+        store holding a malformed record could otherwise be silently skipped."""
+        self.store.parent.mkdir(parents=True, exist_ok=True)
+        self.store.write_text('{"requalifications": [{"hostClass": "a"}]}')
+        with self.assertRaises(QualificationError):
+            load_requalifications(self.store)
+
+    def test_an_absent_store_reads_as_no_records(self) -> None:
+        self.assertEqual(load_requalifications(self.store), [])
+
+
+class ScoredGateInReportTests(unittest.TestCase):
+    """The gate has to reach the report, and must not change the verdict."""
+
+    def test_a_drifted_fingerprint_still_gets_a_verdict(self) -> None:
+        report = build_report(
+            [_cycle(i) for i in range(1, 11)],
+            suite_id="s",
+            cycles=10,
+            host_facts=laptop_facts(),
+            prior_requalifications=[],
+        )
+        self.assertTrue(report["exitCriterionMet"])
+        self.assertFalse(report["hostQualification"]["scoredTrials"]["allowed"])
+
+    def test_the_report_lists_the_drift(self) -> None:
+        report = build_report(
+            [_cycle(i) for i in range(1, 11)],
+            suite_id="s",
+            cycles=10,
+            host_facts=laptop_facts(),
+            prior_requalifications=[],
+        )
+        comparison = report["hostQualification"]["fingerprintComparison"]
+        self.assertEqual(comparison["observed"], derive_fingerprint(laptop_facts()))
+        self.assertIsNone(comparison["fittedOn"])
+        self.assertFalse(comparison["comparable"])
+
+    def test_a_prior_requalification_reaches_the_report(self) -> None:
+        facts = laptop_facts()
+        report = build_report(
+            [_cycle(i) for i in range(1, 11)],
+            suite_id="s",
+            cycles=10,
+            host_facts=facts,
+            prior_requalifications=[
+                Requalification(
+                    host_class=derive_class_id(facts),
+                    fingerprint=derive_fingerprint(facts),
+                    recorded_at="2026-09-24T00:00:00+00:00",
+                    cycles=3,
+                    suite_id="requal",
+                    driver_commit="abc1234",
+                    tolerances_fitted_at_commit="0407638",
+                )
+            ],
+        )
+        scored = report["hostQualification"]["scoredTrials"]
+        self.assertTrue(scored["allowed"])
+        self.assertEqual(scored["requalification"]["suiteId"], "requal")
+
+    def test_the_catalog_set_declares_its_fitted_fingerprint_as_unknown(self) -> None:
+        """Pins the honest value. If someone later writes today's fingerprint
+        in here to make the gate pass, this fails and says why."""
+        self.assertIsNone(
+            FROZEN_TOLERANCE_SETS[LAPTOP_M5_CLASS_ID].fitted_fingerprint
+        )
+
+
+# ---------------------------------------------------------------------------
+# Astronomy Shop: vendored upstream, declared transforms, pinned digests
+# ---------------------------------------------------------------------------
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _fitted_class(root: Path | None = None) -> str:
+    """The host class the committed limits were fitted on.
+
+    Read from the file rather than hard-coded, so these tests exercise the
+    class check without pinning the suite to whichever laptop fitted it.
+    """
+    payload = json.loads(cpu_limits.cpu_limits_path(root or _repo_root()).read_text())
+    return payload["fittedFrom"]["hostClass"]
+
+
+def _vendored_compose_text() -> str:
+    return "\n".join(
+        path.read_text() for path in astronomy_shop.compose_file_paths(_repo_root())
+    )
+
+
+def _fake_config() -> dict:
+    """A config shaped like the merged upstream one, built by hand.
+
+    These tests run with the Docker daemon unreachable, so they cannot call
+    `docker compose config`. The fixture carries one instance of everything
+    the transforms are supposed to act on, and the separate `...OnRealUpstream`
+    tests below check that the vendored files still contain those constructs,
+    so the fixture cannot drift into describing a stack that no longer exists.
+    """
+    return {
+        "name": "opentelemetry-demo",
+        "networks": {"default": {"name": "opentelemetry-demo", "driver": "bridge"}},
+        "services": {
+            "otel-collector": {
+                "container_name": "otel-collector",
+                "image": "otel/opentelemetry-collector-contrib:0.119.0",
+                "user": "0:0",
+                "volumes": [
+                    {"source": "/", "target": "/hostfs", "read_only": True},
+                    {
+                        "source": "/var/run/docker.sock",
+                        "target": "/var/run/docker.sock",
+                        "read_only": True,
+                    },
+                    {
+                        "source": str(
+                            astronomy_shop.upstream_dir(_repo_root())
+                            / "src/otel-collector/otelcol-config.yml"
+                        ),
+                        "target": "/etc/otelcol-config.yml",
+                    },
+                ],
+            },
+            "frontend-proxy": {
+                "container_name": "frontend-proxy",
+                "image": "ghcr.io/open-telemetry/demo:latest-frontend-proxy",
+                "ports": [
+                    {"target": 8080, "published": "8080"},
+                    {"target": 10000, "published": "10000"},
+                ],
+            },
+            "flagd": {
+                "container_name": "flagd",
+                "image": "ghcr.io/open-feature/flagd:v0.12.2",
+                "ports": [{"target": 8013, "published": "8013"}],
+            },
+            "flagd-ui": {
+                "container_name": "flagd-ui",
+                "image": "ghcr.io/open-telemetry/demo:latest-flagd-ui",
+                "ports": [{"target": 4000, "published": "4000"}],
+            },
+            "cart": {
+                "container_name": "cart",
+                "image": "ghcr.io/open-telemetry/demo:latest-cart",
+                "ports": [{"target": 8080}],
+            },
+        },
+    }
+
+
+class AstronomyShopPinTests(unittest.TestCase):
+    """The vendored tree is pinned to one release and one commit."""
+
+    def test_the_upstream_pin_names_a_tag_and_a_full_commit(self):
+        self.assertEqual(astronomy_shop.UPSTREAM_TAG, "3.1.0")
+        self.assertRegex(astronomy_shop.UPSTREAM_COMMIT, r"^[0-9a-f]{40}$")
+
+    def test_the_vendored_tree_is_present_and_has_the_three_compose_files(self):
+        paths = astronomy_shop.compose_file_paths(_repo_root())
+        self.assertEqual(len(paths), 3)
+        for path in paths:
+            self.assertTrue(path.is_file(), f"missing vendored file: {path}")
+
+    def test_the_upstream_directory_is_absolute(self):
+        """Every caller runs `docker compose` with cwd set to this directory,
+        so a relative path would be resolved twice and land nowhere."""
+        self.assertTrue(astronomy_shop.upstream_dir(_repo_root()).is_absolute())
+
+    def test_the_apache_licence_notice_is_kept(self):
+        licence = astronomy_shop.upstream_dir(_repo_root()) / "LICENSE"
+        self.assertTrue(licence.is_file())
+        self.assertIn("Apache License", licence.read_text())
+
+
+class AstronomyShopTransformTests(unittest.TestCase):
+    """Each transform removes what it claims, and nothing else."""
+
+    def test_the_docker_socket_mount_is_removed(self):
+        config = _fake_config()
+        changed = astronomy_shop.apply_transforms(config, _fitted_class()).applied
+        self.assertEqual(changed["remove-docker-socket"], ["otel-collector"])
+        sources = [
+            v["source"] for v in config["services"]["otel-collector"]["volumes"]
+        ]
+        self.assertNotIn("/var/run/docker.sock", sources)
+
+    def test_the_host_filesystem_mount_is_removed(self):
+        config = _fake_config()
+        changed = astronomy_shop.apply_transforms(config, _fitted_class()).applied
+        self.assertEqual(changed["remove-host-filesystem"], ["otel-collector"])
+        targets = [
+            v["target"] for v in config["services"]["otel-collector"]["volumes"]
+        ]
+        self.assertNotIn("/hostfs", targets)
+
+    def test_every_container_name_is_removed(self):
+        config = _fake_config()
+        changed = astronomy_shop.apply_transforms(config, _fitted_class()).applied
+        self.assertEqual(len(changed["scope-container-names"]), 5)
+        for name, service in config["services"].items():
+            self.assertNotIn("container_name", service, name)
+
+    def test_the_fixed_network_name_is_removed(self):
+        config = _fake_config()
+        changed = astronomy_shop.apply_transforms(config, _fitted_class()).applied
+        self.assertEqual(changed["scope-network-names"], ["default"])
+        self.assertNotIn("name", config["networks"]["default"])
+        self.assertEqual(config["networks"]["default"]["driver"], "bridge")
+
+    def test_published_ports_are_dropped_but_container_ports_are_kept(self):
+        config = _fake_config()
+        astronomy_shop.apply_transforms(config, _fitted_class())
+        proxy = config["services"]["frontend-proxy"]["ports"]
+        self.assertEqual([p["target"] for p in proxy], [8080, 10000])
+        for port in proxy:
+            self.assertNotIn("published", port)
+
+    def test_the_flag_services_lose_their_ports_entirely(self):
+        config = _fake_config()
+        changed = astronomy_shop.apply_transforms(config, _fitted_class()).applied
+        self.assertEqual(sorted(changed["hide-flag-services"]), ["flagd", "flagd-ui"])
+        for name in astronomy_shop.FLAG_SERVICES:
+            self.assertEqual(config["services"][name]["ports"], [])
+
+    def test_a_service_the_transforms_do_not_target_is_untouched(self):
+        config = _fake_config()
+        before = json.dumps(config["services"]["cart"]["ports"])
+        astronomy_shop.apply_transforms(config, _fitted_class())
+        self.assertEqual(json.dumps(config["services"]["cart"]["ports"]), before)
+
+    def test_a_transform_with_nothing_to_remove_reports_an_empty_list(self):
+        """An upstream bump that drops the socket mount itself must show up as
+        a transform that changed nothing, not as one that silently became a
+        no-op while still claiming to protect something."""
+        config = _fake_config()
+        astronomy_shop.apply_transforms(config, _fitted_class())
+        again = astronomy_shop.apply_transforms(config, _fitted_class()).applied
+        self.assertEqual(again["remove-docker-socket"], [])
+        self.assertEqual(again["scope-container-names"], [])
+        self.assertEqual(again["scope-network-names"], [])
+
+    def test_every_declared_transform_is_reported_even_when_it_changes_nothing(self):
+        report = astronomy_shop.apply_transforms(_fake_config(), _fitted_class())
+        self.assertEqual(
+            sorted(report.applied),
+            sorted(t.name for t in astronomy_shop.TRANSFORMS),
+        )
+
+    def test_every_transform_carries_a_rationale(self):
+        for transform in astronomy_shop.TRANSFORMS:
+            self.assertGreater(len(transform.rationale), 80, transform.name)
+
+
+class AstronomyShopTransformsOnRealUpstreamTests(unittest.TestCase):
+    """Positive controls: the vendored files still contain what we remove.
+
+    Without these the transform tests above could keep passing against a
+    fixture describing constructs upstream no longer has, which is the shape
+    of a test that proves nothing.
+    """
+
+    def test_upstream_really_does_bind_the_docker_socket(self):
+        self.assertIn("DOCKER_SOCK", _vendored_compose_text())
+
+    def test_upstream_really_does_bind_the_host_filesystem(self):
+        self.assertIn("HOST_FILESYSTEM", _vendored_compose_text())
+
+    def test_upstream_really_does_set_container_name_on_every_service(self):
+        text = _vendored_compose_text()
+        self.assertGreaterEqual(text.count("container_name:"), 28)
+
+    def test_upstream_really_does_pin_the_network_name(self):
+        self.assertIn("name: opentelemetry-demo", _vendored_compose_text())
+
+
+class AstronomyShopCollectorConfigTests(unittest.TestCase):
+    """The derived collector configs match the mounts the stack actually has."""
+
+    def _derived_dir(self):
+        return _repo_root() / "benchmark/apps/astronomy-shop/derived/otel-collector"
+
+    def test_the_derived_configs_exist(self):
+        self.assertTrue(self._derived_dir().is_dir())
+        self.assertTrue((self._derived_dir() / "otelcol-config.yml").is_file())
+
+    def test_the_removed_receivers_are_absent_from_every_derived_config(self):
+        for path in self._derived_dir().glob("otelcol-config*.yml"):
+            text = path.read_text()
+            self.assertNotIn("docker_stats", text, path.name)
+            self.assertNotIn("host_metrics", text, path.name)
+
+    def test_upstream_really_does_configure_those_receivers(self):
+        """Positive control. If upstream stops shipping them, the derivation
+        is a no-op and this test says so instead of passing quietly."""
+        source = (
+            astronomy_shop.upstream_dir(_repo_root())
+            / "src/otel-collector/otelcol-config.yml"
+        ).read_text()
+        self.assertIn("docker_stats", source)
+        self.assertIn("host_metrics", source)
+
+    def test_the_collector_mounts_are_repointed_at_the_derived_copies(self):
+        config = _fake_config()
+        changed = astronomy_shop.apply_transforms(config, _fitted_class()).applied
+        self.assertEqual(changed["use-derived-collector-config"], ["otel-collector"])
+        source = config["services"]["otel-collector"]["volumes"][-1]["source"]
+        self.assertIn("derived/otel-collector/", source)
+        self.assertNotIn("upstream/src/", source)
+
+    def test_a_missing_derived_config_is_a_hard_error(self):
+        """Docker would create an empty directory at the mount point and the
+        collector would start against a config nobody reviewed."""
+        config = _fake_config()
+        config["services"]["otel-collector"]["volumes"] = [
+            {
+                "source": "/nowhere/upstream/src/otel-collector/otelcol-config.yml",
+                "target": "/etc/otelcol-config.yml",
+            }
+        ]
+        with self.assertRaises(FileNotFoundError):
+            astronomy_shop.apply_transforms(config, _fitted_class())
+
+    def test_the_collector_config_manifest_records_what_was_removed(self):
+        manifest = json.loads(
+            (
+                _repo_root()
+                / "benchmark/apps/astronomy-shop/derived/collector-config-manifest.json"
+            ).read_text()
+        )
+        self.assertEqual(manifest["upstreamTag"], astronomy_shop.UPSTREAM_TAG)
+        self.assertEqual(manifest["upstreamCommit"], astronomy_shop.UPSTREAM_COMMIT)
+        self.assertRegex(manifest["manifestHash"], r"^sha256:[0-9a-f]{64}$")
+        removed = manifest["files"]["otelcol-config.yml"]["removed"]
+        self.assertIn("receivers::docker_stats", removed)
+        self.assertIn("receivers::host_metrics", removed)
+
+
+class OfferedLoadProbeTests(unittest.TestCase):
+    """Reading the generator's own counter, and refusing to guess.
+
+    Every failure path here raises rather than defaulting. A missing counter
+    defaulting to zero would read as a stopped generator, and a stopped
+    generator is the exact condition the gate exists to catch, so it must
+    never be manufactured by a parsing accident.
+    """
+
+    @staticmethod
+    def _payload(requests=1000, failures=0, users=5, state="running", clock=100.0):
+        return json.dumps(
+            {
+                "clock": clock,
+                "stats": {
+                    "state": state,
+                    "user_count": users,
+                    "stats": [
+                        {"name": "/api/products", "num_requests": 400, "num_failures": 0},
+                        {
+                            "name": "Aggregated",
+                            "num_requests": requests,
+                            "num_failures": failures,
+                        },
+                    ],
+                },
+            }
+        )
+
+    def test_a_reading_comes_from_the_aggregate_row(self):
+        reading = offered_load.parse_reading(self._payload(requests=1234, failures=7))
+        self.assertEqual(reading.requests, 1234)
+        self.assertEqual(reading.failures, 7)
+        self.assertEqual(reading.users, 5)
+        self.assertEqual(reading.state, "running")
+
+    def test_log_lines_before_the_payload_are_ignored(self):
+        noisy = "WARNING: something\nINFO: else\n" + self._payload()
+        self.assertEqual(offered_load.parse_reading(noisy).requests, 1000)
+
+    def test_a_missing_aggregate_row_is_an_error_not_zero_requests(self):
+        document = json.loads(self._payload())
+        document["stats"]["stats"] = [
+            {"name": "/api/products", "num_requests": 400, "num_failures": 0}
+        ]
+        with self.assertRaises(offered_load.OfferedLoadError):
+            offered_load.parse_reading(json.dumps(document))
+
+    def test_empty_output_is_an_error(self):
+        with self.assertRaises(offered_load.OfferedLoadError):
+            offered_load.parse_reading("   ")
+
+    def test_non_json_output_is_an_error(self):
+        with self.assertRaises(offered_load.OfferedLoadError):
+            offered_load.parse_reading("Traceback (most recent call last):")
+
+    def test_a_missing_clock_is_an_error(self):
+        document = json.loads(self._payload())
+        del document["clock"]
+        with self.assertRaises(offered_load.OfferedLoadError):
+            offered_load.parse_reading(json.dumps(document))
+
+    def test_the_probe_runs_inside_the_container_and_needs_no_published_port(self):
+        """The stack moves to an internal network, where Docker publishes
+        nothing. A probe that needed a published port would have to punch a
+        hole for itself."""
+        seen = {}
+
+        def runner(argv, **kwargs):
+            seen["argv"] = argv
+            return subprocess.CompletedProcess(argv, 0, stdout=self._payload(), stderr="")
+
+        offered_load.read_offered_load("proj", "compose.yml", runner=runner)
+        self.assertIn("exec", seen["argv"])
+        self.assertIn("load-generator", seen["argv"])
+        self.assertIn("127.0.0.1", " ".join(seen["argv"]))
+
+    def test_a_failed_probe_is_an_error(self):
+        def runner(argv, **kwargs):
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="no such service")
+
+        with self.assertRaises(offered_load.OfferedLoadError):
+            offered_load.read_offered_load("proj", "compose.yml", runner=runner)
+
+
+class AchievedLoadTests(unittest.TestCase):
+    """Differencing two readings into a rate."""
+
+    @staticmethod
+    def _reading(clock, requests, failures=0, users=5, state="running"):
+        return offered_load.LoadReading(
+            clock=clock, requests=requests, failures=failures, users=users, state=state
+        )
+
+    def test_the_rate_is_the_counter_delta_over_the_elapsed_time(self):
+        achieved = offered_load.achieved_between(
+            self._reading(100.0, 1000), self._reading(400.0, 4000)
+        )
+        self.assertEqual(achieved.requests, 3000)
+        self.assertAlmostEqual(achieved.elapsed_seconds, 300.0)
+        self.assertAlmostEqual(achieved.requests_per_second, 10.0)
+
+    def test_the_failure_ratio_is_over_the_window_not_the_run(self):
+        achieved = offered_load.achieved_between(
+            self._reading(100.0, 1000, failures=500),
+            self._reading(200.0, 2000, failures=510),
+        )
+        self.assertEqual(achieved.failures, 10)
+        self.assertAlmostEqual(achieved.failure_ratio, 0.01)
+
+    def test_a_non_positive_interval_is_an_error(self):
+        with self.assertRaises(offered_load.OfferedLoadError):
+            offered_load.achieved_between(
+                self._reading(100.0, 1000), self._reading(100.0, 2000)
+            )
+
+    def test_a_counter_going_backwards_is_an_error_not_a_zero_rate(self):
+        """The generator restarted, so the readings describe different runs.
+        Clamping to zero would report a stalled generator as a slow one."""
+        with self.assertRaises(offered_load.OfferedLoadError):
+            offered_load.achieved_between(
+                self._reading(100.0, 5000), self._reading(200.0, 10)
+            )
+
+
+class OfferedLoadGateTests(unittest.TestCase):
+    """A cycle outside the band yields no verdict, which is not a failure."""
+
+    BAND = offered_load.LoadBand(
+        host_class="test-class", target_rps=10.0, fraction=0.20, expected_users=5
+    )
+
+    @staticmethod
+    def _achieved(rps=10.0, elapsed=300.0, users=5, state="running", failures=0):
+        requests = int(rps * elapsed)
+        return offered_load.AchievedLoad(
+            requests=requests,
+            failures=failures,
+            elapsed_seconds=elapsed,
+            requests_per_second=rps,
+            failure_ratio=(failures / requests) if requests else 0.0,
+            users=users,
+            state=state,
+        )
+
+    def test_a_cycle_inside_the_band_is_scored(self):
+        """Positive control for every rejection below. If this fails, the gate
+        rejects everything and the other tests prove nothing."""
+        verdict = offered_load.evaluate_offered_load(self._achieved(), self.BAND)
+        self.assertTrue(verdict.scored)
+        self.assertTrue(verdict.in_band)
+        self.assertEqual(verdict.reasons, ())
+        self.assertEqual(verdict.to_dict()["verdict"], "scored")
+
+    def test_the_band_edges_are_inclusive_and_sit_where_the_fraction_says(self):
+        self.assertAlmostEqual(self.BAND.low_rps, 8.0)
+        self.assertAlmostEqual(self.BAND.high_rps, 12.0)
+        for edge in (8.0, 12.0):
+            self.assertTrue(
+                offered_load.evaluate_offered_load(
+                    self._achieved(rps=edge), self.BAND
+                ).scored
+            )
+
+    def test_a_rate_below_the_band_gives_no_verdict(self):
+        verdict = offered_load.evaluate_offered_load(
+            self._achieved(rps=6.0), self.BAND
+        )
+        self.assertFalse(verdict.scored)
+        self.assertFalse(verdict.in_band)
+        self.assertEqual(verdict.to_dict()["verdict"], "no-verdict")
+
+    def test_a_rate_above_the_band_gives_no_verdict(self):
+        verdict = offered_load.evaluate_offered_load(
+            self._achieved(rps=14.0), self.BAND
+        )
+        self.assertFalse(verdict.scored)
+
+    def test_a_generator_that_is_not_running_gives_no_verdict(self):
+        verdict = offered_load.evaluate_offered_load(
+            self._achieved(state="stopped"), self.BAND
+        )
+        self.assertFalse(verdict.scored)
+        self.assertTrue(any("stopped" in reason for reason in verdict.reasons))
+
+    def test_a_different_user_count_gives_no_verdict(self):
+        """The band was fitted at one concurrency. At another it describes
+        nothing, even if the rate happens to land inside it."""
+        verdict = offered_load.evaluate_offered_load(
+            self._achieved(users=9), self.BAND
+        )
+        self.assertFalse(verdict.scored)
+
+    def test_a_window_too_short_to_average_gives_no_verdict(self):
+        verdict = offered_load.evaluate_offered_load(
+            self._achieved(elapsed=5.0), self.BAND
+        )
+        self.assertFalse(verdict.scored)
+
+    def test_zero_requests_gives_no_verdict(self):
+        verdict = offered_load.evaluate_offered_load(
+            self._achieved(rps=0.0), self.BAND
+        )
+        self.assertFalse(verdict.scored)
+        self.assertTrue(any("no requests" in reason for reason in verdict.reasons))
+
+
+class OfferedLoadBandFitTests(unittest.TestCase):
+    """Fitting and freezing the band."""
+
+    def test_the_target_is_the_median_not_the_mean(self):
+        """One stalled cycle drags a mean to a rate no cycle produced."""
+        samples = [10.0, 10.0, 10.0, 10.0, 1.0]
+        band = offered_load.fit_band(
+            samples, host_class="c", expected_users=5
+        )
+        self.assertAlmostEqual(band.target_rps, 10.0)
+
+    def test_too_few_cycles_cannot_be_fitted(self):
+        with self.assertRaises(offered_load.OfferedLoadError):
+            offered_load.fit_band([10.0, 10.0], host_class="c", expected_users=5)
+
+    def test_a_non_positive_sample_cannot_be_fitted(self):
+        with self.assertRaises(offered_load.OfferedLoadError):
+            offered_load.fit_band(
+                [10.0, 10.0, 10.0, 10.0, 0.0], host_class="c", expected_users=5
+            )
+
+    def test_band_covers_reports_the_fitting_cycles_its_own_band_rejects(self):
+        samples = [10.0, 10.0, 10.0, 10.0, 10.0, 20.0]
+        band = offered_load.fit_band(samples, host_class="c", expected_users=5)
+        self.assertEqual(offered_load.band_covers(band, samples), [20.0])
+
+    def test_band_covers_is_empty_for_a_band_that_holds_its_inputs(self):
+        """Positive control for the test above."""
+        samples = [10.0, 10.1, 9.9, 10.2, 9.8]
+        band = offered_load.fit_band(samples, host_class="c", expected_users=5)
+        self.assertEqual(offered_load.band_covers(band, samples), [])
+
+
+class OfferedLoadFrozenFileTests(unittest.TestCase):
+    """The committed band cannot be borrowed, widened or edited."""
+
+    def _write(self, directory, **overrides):
+        payload = {
+            "hostClass": "test-class",
+            "targetRps": 10.0,
+            "fraction": offered_load.BAND_FRACTION,
+            "expectedUsers": 5,
+            "samples": [10.0, 10.1, 9.9],
+        }
+        payload.update(overrides)
+        payload["manifestHash"] = overrides.get(
+            "manifestHash", offered_load.band_hash(payload)
+        )
+        path = pathlib.Path(directory) / "benchmark/apps/astronomy-shop"
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "offered-load.json").write_text(json.dumps(payload))
+        return pathlib.Path(directory)
+
+    def test_a_well_formed_band_loads(self):
+        """Positive control for the four refusals below."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._write(directory)
+            band = offered_load.load_band(root, "test-class")
+            self.assertAlmostEqual(band.target_rps, 10.0)
+
+    def test_a_missing_file_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(offered_load.OfferedLoadError):
+                offered_load.load_band(pathlib.Path(directory), "test-class")
+
+    def test_a_band_fitted_on_another_host_class_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._write(directory)
+            with self.assertRaises(offered_load.OfferedLoadError):
+                offered_load.load_band(root, "some-linux-vm")
+
+    def test_a_file_that_widens_its_own_band_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._write(directory, fraction=0.95)
+            with self.assertRaises(offered_load.OfferedLoadError):
+                offered_load.load_band(root, "test-class")
+
+    def test_an_edited_file_is_refused_by_the_hash(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._write(directory, manifestHash="sha256:" + "0" * 64)
+            with self.assertRaises(offered_load.OfferedLoadError):
+                offered_load.load_band(root, "test-class")
+
+    def test_the_hash_covers_the_target_and_ignores_the_samples(self):
+        """Re-measuring the fitting cycles moves the samples without moving
+        the band, and that must not read as a fixture change."""
+        base = {
+            "hostClass": "c", "targetRps": 10.0,
+            "fraction": 0.2, "expectedUsers": 5, "samples": [1, 2, 3],
+        }
+        moved_samples = dict(base, samples=[9, 9, 9])
+        moved_target = dict(base, targetRps=11.0)
+        self.assertEqual(
+            offered_load.band_hash(base), offered_load.band_hash(moved_samples)
+        )
+        self.assertNotEqual(
+            offered_load.band_hash(base), offered_load.band_hash(moved_target)
+        )
+
+
+class CollectorExporterStripTests(unittest.TestCase):
+    """`firepit` is stripped, and nothing else is.
+
+    The exporter removed here is `otlp_grpc/firepit`. Its type, `otlp_grpc`,
+    is shared with `otlp_grpc/jaeger`, which carries every trace the agent
+    under test would diagnose from. Matching on the type instead of the full
+    name would delete both and still produce a config that starts cleanly, so
+    the over-deletion case is tested as carefully as the removal itself.
+    """
+
+    @staticmethod
+    def _tool():
+        import importlib.util
+
+        path = _repo_root() / "benchmark/tools/derive_collector_config.py"
+        spec = importlib.util.spec_from_file_location("_derive_cc", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    @staticmethod
+    def _document():
+        return {
+            "exporters": {
+                "otlp_grpc/jaeger": {"endpoint": "jaeger:4317"},
+                "otlp_grpc/firepit": {"endpoint": "firepit:4317"},
+                "debug": {},
+            },
+            "service": {
+                "pipelines": {
+                    "traces": {"exporters": ["debug", "otlp_grpc/jaeger"]},
+                    "profiles": {"exporters": ["debug", "otlp_grpc/firepit"]},
+                }
+            },
+        }
+
+    def test_the_firepit_exporter_and_its_pipeline_entry_are_removed(self):
+        tool = self._tool()
+        document, removed = tool.strip_exporters(self._document())
+        self.assertNotIn("otlp_grpc/firepit", document["exporters"])
+        self.assertEqual(
+            document["service"]["pipelines"]["profiles"]["exporters"], ["debug"]
+        )
+        self.assertIn("exporters::otlp_grpc/firepit", removed)
+        self.assertIn(
+            "service::pipelines::profiles::otlp_grpc/firepit", removed
+        )
+
+    def test_the_jaeger_exporter_sharing_the_type_survives(self):
+        """Positive control for the test above. If matching ever moves to the
+        part before the slash, this is the test that fails."""
+        tool = self._tool()
+        document, _ = tool.strip_exporters(self._document())
+        self.assertIn("otlp_grpc/jaeger", document["exporters"])
+        self.assertEqual(
+            document["service"]["pipelines"]["traces"]["exporters"],
+            ["debug", "otlp_grpc/jaeger"],
+        )
+
+    def test_a_pipeline_left_with_no_exporters_is_a_hard_error(self):
+        """The collector rejects an empty exporter list at startup, so writing
+        one out would convert a config change into an `up --wait` timeout."""
+        tool = self._tool()
+        document = self._document()
+        document["service"]["pipelines"]["profiles"]["exporters"] = [
+            "otlp_grpc/firepit"
+        ]
+        with self.assertRaises(SystemExit):
+            tool.strip_exporters(document)
+
+    def test_the_committed_derived_configs_name_firepit_nowhere(self):
+        derived = _repo_root() / "benchmark/apps/astronomy-shop/derived/otel-collector"
+        found = [
+            path.name
+            for path in sorted(derived.glob("otelcol-config*.yml"))
+            if "firepit" in path.read_text()
+        ]
+        self.assertEqual(found, [])
+
+    def test_the_committed_derived_config_still_exports_traces_to_jaeger(self):
+        """Guards the test above against passing because the strip took the
+        whole exporters block with it."""
+        text = (
+            _repo_root()
+            / "benchmark/apps/astronomy-shop/derived/otel-collector"
+            / "otelcol-config-observability.yml"
+        ).read_text()
+        self.assertIn("otlp_grpc/jaeger", text)
+        self.assertIn("otlp_http/prometheus", text)
+        self.assertIn("opensearch", text)
+
+    def test_the_manifest_records_the_removed_exporter(self):
+        manifest = json.loads(
+            (
+                _repo_root()
+                / "benchmark/apps/astronomy-shop/derived/collector-config-manifest.json"
+            ).read_text()
+        )
+        self.assertIn("otlp_grpc/firepit", manifest["removedExporters"])
+        removed = manifest["files"]["otelcol-config-observability.yml"]["removed"]
+        self.assertIn("exporters::otlp_grpc/firepit", removed)
+
+
+class AstronomyShopFlagTests(unittest.TestCase):
+    """The flags AIOpsLab drives are present, and the baseline is off."""
+
+    def test_the_vendored_release_declares_every_flag_aiopslab_uses(self):
+        flags = astronomy_shop.declared_flags(_repo_root())
+        missing = sorted(set(astronomy_shop.AIOPSLAB_REQUIRED_FLAGS) - set(flags))
+        self.assertEqual(missing, [], f"3.1.0 is missing {missing}")
+
+    def test_the_required_flag_list_is_not_empty(self):
+        """Guards the test above against passing because it compared nothing."""
+        self.assertGreaterEqual(len(astronomy_shop.AIOPSLAB_REQUIRED_FLAGS), 11)
+
+    def test_default_variants_are_read_from_the_definition_not_assumed_off(self):
+        """Graded flags have numeric or duration neutral variants, so assuming
+        the string "off" would mislabel them."""
+        flags = astronomy_shop.declared_flags(_repo_root())
+        defaults = astronomy_shop.default_off_flags(flags)
+        self.assertEqual(sorted(defaults), sorted(flags))
+        for name, variant in defaults.items():
+            self.assertIn(variant, flags[name]["variants"], name)
+
+    def test_the_flag_services_are_named(self):
+        self.assertIn("flagd", astronomy_shop.FLAG_SERVICES)
+        self.assertIn("flagd-ui", astronomy_shop.FLAG_SERVICES)
+
+
+class AstronomyShopDigestTests(unittest.TestCase):
+    """Every image is pinned by digest, and the manifest covers every service."""
+
+    def _manifest(self) -> dict:
+        return json.loads(
+            (
+                _repo_root() / "benchmark/apps/astronomy-shop/image-digests.json"
+            ).read_text()
+        )
+
+    def test_the_manifest_hash_is_recorded(self):
+        self.assertRegex(self._manifest()["manifestHash"], r"^sha256:[0-9a-f]{64}$")
+
+    def test_every_pinned_reference_is_a_digest_not_a_tag(self):
+        for service, reference in self._manifest()["images"].items():
+            self.assertIn("@sha256:", reference, service)
+            self.assertNotIn(":latest", reference, service)
+
+    def test_the_manifest_covers_all_twenty_eight_services(self):
+        self.assertEqual(len(self._manifest()["images"]), 28)
+
+    def test_upstream_references_really_are_floating(self):
+        """Positive control for the pinning step: if upstream ever ships
+        digests itself, pinning is a no-op and this says so."""
+        floating = astronomy_shop.floating_references(_fake_config())
+        self.assertGreater(len(floating), 0)
+        self.assertIn("cart", floating)
+
+    def test_a_digest_reference_is_not_reported_as_floating(self):
+        config = _fake_config()
+        config["services"]["cart"]["image"] = "ghcr.io/x/demo@sha256:" + "a" * 64
+        self.assertNotIn("cart", astronomy_shop.floating_references(config))
+
+
+# ---------------------------------------------------------------------------
+# Astronomy Shop readiness and the flag gate
+# ---------------------------------------------------------------------------
+
+
+def _shop_services() -> list[str]:
+    """Service names taken from the vendored compose files, not hard-coded."""
+    text = _vendored_compose_text()
+    names = set()
+    for line in text.splitlines():
+        if line.startswith("  ") and line.endswith(":") and not line.startswith("    "):
+            name = line.strip().rstrip(":")
+            if name and not name.startswith("#"):
+                names.add(name)
+    return sorted(names)
+
+
+class ShopReadinessCoverageTests(unittest.TestCase):
+    """Every service is probed, and every probe names a real service."""
+
+    def test_there_is_one_probe_for_every_service_in_the_compose_file(self):
+        config = json.loads(
+            (
+                _repo_root()
+                / "benchmark/apps/astronomy-shop/image-digests.json"
+            ).read_text()
+        )
+        gaps = shop_readiness.missing_probes(sorted(config["images"]))
+        self.assertEqual(gaps["servicesWithoutProbe"], [])
+        self.assertEqual(gaps["probesWithoutService"], [])
+
+    def test_the_probe_count_matches_the_service_count(self):
+        self.assertEqual(len(shop_readiness.build_probes()), 28)
+
+    def test_a_service_with_no_probe_is_reported(self):
+        """Positive control for the reconciliation itself."""
+        gaps = shop_readiness.missing_probes(["frontend", "a-new-service"])
+        self.assertIn("a-new-service", gaps["servicesWithoutProbe"])
+
+    def test_a_probe_naming_an_absent_service_is_reported(self):
+        gaps = shop_readiness.missing_probes(["frontend"])
+        self.assertIn("kafka", gaps["probesWithoutService"])
+
+    def test_the_two_portless_services_are_probed_through_the_broker(self):
+        """`accounting` and `fraud-detection` publish nothing, so the only
+        externally observable readiness is consumer-group membership."""
+        by_service = {p.service: p for p in shop_readiness.build_probes()}
+        for name in shop_readiness.KAFKA_CONSUMERS:
+            self.assertEqual(by_service[name].kind, "consumer-group", name)
+
+    def test_the_flag_services_are_probed_from_inside_the_network(self):
+        """They are unpublished by `hide-flag-services`, so a host probe could
+        not reach them, and both images are distroless so exec is impossible."""
+        by_service = {p.service: p for p in shop_readiness.build_probes()}
+        for name in ("flagd", "flagd-ui"):
+            self.assertEqual(by_service[name].kind, "internal-http", name)
+
+    def test_every_probe_has_a_detail_describing_what_it_asks(self):
+        for probe in shop_readiness.build_probes():
+            self.assertTrue(probe.detail.strip(), probe.service)
+
+
+class ShopReadinessResultTests(unittest.TestCase):
+    """An unevaluable probe is a failure, never a skip."""
+
+    def test_an_unevaluable_probe_is_recorded_as_not_ready_with_a_reason(self):
+        context = shop_readiness.ProbeContext(
+            project="p", compose_file="none.json", ports={}, timeout=0.1
+        )
+        with self.assertRaises(shop_readiness.ReadinessError):
+            context.host_port("frontend", 8080)
+
+    def test_a_missing_port_does_not_abort_the_whole_sweep(self):
+        """A probe that raises must not hide the state of every probe after
+        it, and must not be silently dropped from the result set."""
+        probe = shop_readiness.Probe(
+            service="x", kind="http", detail="d",
+            evaluate=lambda _: (_ for _ in ()).throw(
+                shop_readiness.ReadinessError("no port")
+            ),
+        )
+        with unittest.mock.patch.object(
+            shop_readiness, "build_probes", return_value=(probe,)
+        ):
+            results, ready = shop_readiness.evaluate_all(
+                shop_readiness.ProbeContext(
+                    project="p", compose_file="f", ports={}
+                )
+            )
+        self.assertFalse(ready)
+        self.assertEqual(len(results), 1)
+        self.assertIn("no port", results[0].error)
+
+    def test_the_probe_image_is_pinned_by_digest(self):
+        self.assertIn("@sha256:", shop_readiness.PROBE_IMAGE)
+
+
+class ShopFlagGateTests(unittest.TestCase):
+    """The baseline gate reads flagd, and fails closed."""
+
+    def _baseline(self) -> dict:
+        return json.loads(
+            (
+                _repo_root() / "benchmark/apps/astronomy-shop/flag-baseline.json"
+            ).read_text()
+        )
+
+    def test_the_recorded_baseline_covers_every_declared_flag(self):
+        baseline = self._baseline()
+        declared = astronomy_shop.declared_flags(_repo_root())
+        self.assertEqual(sorted(baseline["resolved"]), sorted(declared))
+
+    def test_the_recorded_baseline_agrees_with_the_shipped_default_variants(self):
+        """Pins today's agreement. A flag whose targeting rules make it
+        resolve to something other than its defaultVariant would show up here
+        rather than silently weakening the gate."""
+        self.assertEqual(self._baseline()["disagreements"], {})
+
+    def test_unreadable_flag_state_fails_the_gate(self):
+        """A gate that cannot see the flags has observed nothing, which is not
+        the same as having observed a clean baseline."""
+        with unittest.mock.patch.object(
+            shop_readiness, "read_flag_state", return_value=(False, {}, "boom")
+        ):
+            state = shop_readiness.evaluate_flag_gate("p", {"adFailure": "off"})
+        self.assertFalse(state.readable)
+        self.assertFalse(state.baseline_clean)
+        self.assertIn("boom", state.error)
+
+    def test_a_flag_that_is_on_fails_the_gate(self):
+        with unittest.mock.patch.object(
+            shop_readiness, "read_flag_state",
+            return_value=(True, {"adFailure": "on", "cartFailure": "off"}, ""),
+        ):
+            state = shop_readiness.evaluate_flag_gate(
+                "p", {"adFailure": "off", "cartFailure": "off"}
+            )
+        self.assertFalse(state.baseline_clean)
+        self.assertEqual(state.unexpected_on, ("adFailure",))
+
+    def test_a_clean_baseline_passes(self):
+        with unittest.mock.patch.object(
+            shop_readiness, "read_flag_state",
+            return_value=(True, {"adFailure": "off", "cartFailure": "off"}, ""),
+        ):
+            state = shop_readiness.evaluate_flag_gate(
+                "p", {"adFailure": "off", "cartFailure": "off"}
+            )
+        self.assertTrue(state.baseline_clean)
+        self.assertEqual(state.unexpected_on, ())
+
+    def test_a_flag_missing_from_the_response_fails_the_gate(self):
+        """flagd answering with a subset must not read as the subset being
+        clean; the unreported flag's state is unknown, not off."""
+        with unittest.mock.patch.object(
+            shop_readiness, "read_flag_state",
+            return_value=(True, {"adFailure": "off"}, ""),
+        ):
+            state = shop_readiness.evaluate_flag_gate(
+                "p", {"adFailure": "off", "cartFailure": "off"}
+            )
+        self.assertFalse(state.baseline_clean)
+        self.assertEqual(state.missing, ("cartFailure",))
+
+    def test_a_graded_flag_is_compared_by_variant_not_by_truthiness(self):
+        """Several flags carry numeric or duration payloads whose neutral
+        setting is not boolean false, so comparing values would mislabel
+        them."""
+        with unittest.mock.patch.object(
+            shop_readiness, "read_flag_state",
+            return_value=(True, {"aiRunawayAgent": "high"}, ""),
+        ):
+            state = shop_readiness.evaluate_flag_gate("p", {"aiRunawayAgent": "off"})
+        self.assertEqual(state.unexpected_on, ("aiRunawayAgent",))
+
+    def test_unreadable_state_fails_even_when_nothing_else_could_fail(self):
+        """Isolates the `readable` term.
+
+        The other unreadable-state test passes because the early return also
+        populates `missing`, so it would still pass if `readable` were dropped
+        from the verdict entirely. With no expected flags there is nothing for
+        `missing` or `unexpectedOn` to catch, so only `readable` can fail this.
+        Found by mutation: removing `self.readable` from `baseline_clean` left
+        the whole suite green.
+        """
+        with unittest.mock.patch.object(
+            shop_readiness, "read_flag_state", return_value=(False, {}, "unreachable")
+        ):
+            state = shop_readiness.evaluate_flag_gate("p", {})
+        self.assertEqual(state.missing, ())
+        self.assertEqual(state.unexpected_on, ())
+        self.assertFalse(state.baseline_clean)
+
+
+class ShopCheckPlanTests(unittest.TestCase):
+    """The shop's checks are generated, and its known gaps stay visible.
+
+    The rendered 28-service stack is run-specific (project name, dynamically
+    allocated ports), so committing one would pin a single run's ports as
+    though they were a property of the fixture. These tests therefore exercise
+    the machinery on a synthetic config that reproduces the two upstream
+    properties that matter, and coverage of the real 28 services is asserted
+    against the vendored digest manifest in `ShopReadinessCoverageTests`.
+    """
+
+    def _upstream_shaped_config(self, services: int = 3) -> str:
+        """A config shaped like upstream: memory limits, no cpu, routing bridge."""
+        return json.dumps(
+            {
+                "networks": {"default": {"driver": "bridge", "ipam": {}}},
+                "services": {
+                    f"svc{i}": {
+                        "image": f"ghcr.io/x/svc{i}@sha256:{'0' * 64}",
+                        "deploy": {"resources": {"limits": {"memory": "314572800"}}},
+                        "networks": {"default": None},
+                        "environment": {"OTEL_SERVICE_NAME": f"svc{i}"},
+                    }
+                    for i in range(services)
+                },
+            }
+        )
+
+    def test_every_service_gets_one_check_of_each_required_kind(self):
+        plan = astronomy_shop.shop_check_plan(
+            self._upstream_shaped_config(3),
+            readiness_probes=("svc0", "svc1", "svc2"),
+        )
+        self.assertEqual(len(plan.checks), 3 * len(checks.REQUIRED_CHECK_KINDS))
+        for service in ("svc0", "svc1", "svc2"):
+            kinds = {c.kind for c in plan.checks if c.service == service}
+            self.assertEqual(kinds, set(checks.REQUIRED_CHECK_KINDS), service)
+
+    def test_adding_a_service_grows_the_check_set(self):
+        """Positive control: the plan is derived, not enumerated."""
+        small = astronomy_shop.shop_check_plan(self._upstream_shaped_config(3))
+        large = astronomy_shop.shop_check_plan(self._upstream_shaped_config(4))
+        self.assertEqual(
+            len(large.checks) - len(small.checks), len(checks.REQUIRED_CHECK_KINDS)
+        )
+
+    def test_a_memory_only_limit_does_not_count_as_a_limit(self):
+        """Upstream sets `deploy.resources.limits.memory` and no `cpus`.
+
+        Half a limit must not read as a limit, because an unbounded CPU share
+        across 28 services is the variance this check exists to catch.
+        """
+        plan = astronomy_shop.shop_check_plan(
+            self._upstream_shaped_config(1), readiness_probes=("svc0",)
+        )
+        self.assertIn(
+            "service 'svc0' declares no cpu and memory limits", plan.problems
+        )
+
+    def test_the_routing_default_bridge_is_reported_as_egress(self):
+        plan = astronomy_shop.shop_check_plan(
+            self._upstream_shaped_config(1), readiness_probes=("svc0",)
+        )
+        self.assertIn(
+            "service 'svc0' can reach the network and declares no egress exception",
+            plan.problems,
+        )
+
+    def test_the_shop_plan_takes_no_egress_exceptions(self):
+        """The generator deliberately exposes no suppression parameter.
+
+        `generate_check_plan` accepts `egress_exceptions`, which would silence
+        the egress family for all 28 services while changing nothing about the
+        environment. `shop_check_plan` does not forward it, so the gap cannot
+        be made to disappear from sign-off by a caller.
+        """
+        signature = inspect.signature(astronomy_shop.shop_check_plan)
+        self.assertNotIn("egress_exceptions", signature.parameters)
+
+    def test_the_known_gaps_are_the_only_ones_on_an_otherwise_sound_service(self):
+        """Pins the gap count, so a third family cannot appear unnoticed."""
+        plan = astronomy_shop.shop_check_plan(
+            self._upstream_shaped_config(1), readiness_probes=("svc0",)
+        )
+        self.assertEqual(len(plan.problems), 2)
+        self.assertFalse(plan.complete)
+
+
+# ---------------------------------------------------------------------------
+# CPU limits: fitting, and the throttling acceptance test
+# ---------------------------------------------------------------------------
+
+
+class DemandStreamParseTests(unittest.TestCase):
+    """The parser that turns kernel counters into per-service demand.
+
+    These matter more than they look. The limits that throttled 19 of 28
+    services were fitted from ``docker stats`` averages, and this parser
+    exists to replace that basis, so a defect here reproduces the original
+    fault with better provenance.
+    """
+
+    IDS = {"aaa": "payment", "bbb": "frontend"}
+
+    def test_rate_uses_observed_elapsed_time(self):
+        # 1.0s apart, 500_000us consumed -> 0.5 cores.
+        text = "@100.0\naaa 1000000\n@101.0\naaa 1500000\n"
+        got = cpu_limits.parse_demand_stream(text, {"aaa": "payment"})
+        self.assertAlmostEqual(got["payment"].peak_cores, 0.5, places=6)
+
+    def test_rate_reflects_real_interval_not_requested_one(self):
+        # Same usage delta over 2s is half the rate of the same delta over 1s.
+        slow = cpu_limits.parse_demand_stream(
+            "@100.0\naaa 0\n@102.0\naaa 1000000\n", {"aaa": "payment"}
+        )
+        self.assertAlmostEqual(slow["payment"].peak_cores, 0.5, places=6)
+
+    def test_peak_is_the_burst_not_the_average(self):
+        """The defect that produced the bad fit, in miniature.
+
+        A service idle for three intervals and then briefly at a full core
+        averages 0.25 cores. Fitting 2x the average gives 0.5 and the burst
+        needs 1.0, which is how payment ended up throttled at 17%.
+        """
+        # The burst sits in the middle deliberately. With it last, "the
+        # maximum rate" and "the most recent rate" are the same number, and a
+        # parser that reported the latter would pass while losing every burst
+        # that is not the final one.
+        text = (
+            "@0.0\naaa 0\n"
+            "@1.0\naaa 0\n"
+            "@2.0\naaa 1000000\n"
+            "@3.0\naaa 1000000\n"
+            "@4.0\naaa 1000000\n"
+        )
+        got = cpu_limits.parse_demand_stream(text, {"aaa": "payment"})
+        self.assertAlmostEqual(got["payment"].peak_cores, 1.0, places=6)
+        self.assertAlmostEqual(got["payment"].mean_cores, 0.25, places=6)
+        self.assertLess(got["payment"].mean_cores, got["payment"].peak_cores)
+        # And the final interval really is quiet, so the assertion above can
+        # only be satisfied by remembering the earlier burst.
+        self.assertEqual(got["payment"].intervals, 4)
+
+    def test_single_frame_is_rejected_rather_than_reported_as_zero(self):
+        with self.assertRaises(cpu_limits.CpuLimitError) as ctx:
+            cpu_limits.parse_demand_stream("@100.0\naaa 5\n", {"aaa": "payment"})
+        self.assertIn("at least two", str(ctx.exception))
+
+    def test_empty_stream_is_rejected(self):
+        with self.assertRaises(cpu_limits.CpuLimitError):
+            cpu_limits.parse_demand_stream("", {"aaa": "payment"})
+
+    def test_non_advancing_clock_is_skipped_not_divided_by(self):
+        """10ms clock resolution means consecutive frames can tie."""
+        text = (
+            "@100.0\naaa 0\n"
+            "@100.0\naaa 500000\n"
+            "@101.0\naaa 1000000\n"
+        )
+        got = cpu_limits.parse_demand_stream(text, {"aaa": "payment"})
+        self.assertAlmostEqual(got["payment"].peak_cores, 0.5, places=6)
+        self.assertEqual(got["payment"].intervals, 1)
+
+    def test_counter_going_backwards_is_skipped(self):
+        """usage_usec is monotonic, so a drop means the container was replaced."""
+        text = (
+            "@100.0\naaa 9000000\n"
+            "@101.0\naaa 10\n"
+            "@102.0\naaa 200010\n"
+        )
+        got = cpu_limits.parse_demand_stream(text, {"aaa": "payment"})
+        self.assertAlmostEqual(got["payment"].peak_cores, 0.2, places=6)
+        self.assertEqual(got["payment"].intervals, 1)
+
+    def test_service_absent_from_a_frame_skips_only_that_interval(self):
+        text = (
+            "@100.0\naaa 0\nbbb 0\n"
+            "@101.0\naaa 100000\n"
+            "@102.0\naaa 200000\nbbb 400000\n"
+        )
+        got = cpu_limits.parse_demand_stream(
+            text, self.IDS, expected_interval=1.0
+        )
+        self.assertEqual(got["payment"].intervals, 2)
+        # Measured across the gap rather than dropped: 400_000us over 2.0s.
+        self.assertEqual(got["frontend"].intervals, 1)
+        self.assertAlmostEqual(got["frontend"].peak_cores, 0.2, places=6)
+        self.assertEqual(got["frontend"].gap_intervals, 1)
+        self.assertEqual(got["payment"].gap_intervals, 0)
+
+    def test_unknown_container_ids_are_ignored(self):
+        text = "@100.0\nzzz 0\naaa 0\n@101.0\nzzz 9000000\naaa 100000\n"
+        got = cpu_limits.parse_demand_stream(text, {"aaa": "payment"})
+        self.assertEqual(sorted(got), ["payment"])
+
+    def test_malformed_lines_do_not_abort_the_parse(self):
+        text = (
+            "@100.0\naaa 0\ngarbage line here\n"
+            "@not-a-clock\n"
+            "@101.0\naaa 100000\naaa notanumber\n"
+        )
+        got = cpu_limits.parse_demand_stream(text, {"aaa": "payment"})
+        self.assertAlmostEqual(got["payment"].peak_cores, 0.1, places=6)
+
+    def test_mean_is_time_weighted_across_uneven_intervals(self):
+        # 0.1 cores for 1s, then 1.0 core for 4s -> 4.1 core-seconds / 5s.
+        text = (
+            "@0.0\naaa 0\n"
+            "@1.0\naaa 100000\n"
+            "@5.0\naaa 4100000\n"
+        )
+        got = cpu_limits.parse_demand_stream(text, {"aaa": "payment"})
+        self.assertAlmostEqual(got["payment"].mean_cores, 0.82, places=6)
+        self.assertAlmostEqual(got["payment"].peak_cores, 1.0, places=6)
+
+    def test_a_gap_understates_a_burst_so_it_is_counted(self):
+        """A rate averaged over a gap hides the burst inside it.
+
+        This is the same error as fitting from a multi-second average, so a
+        gap is recorded rather than silently folded into the result.
+        """
+        text = (
+            "@0.0\naaa 0\n"
+            "@1.0\n"
+            "@2.0\naaa 1000000\n"
+        )
+        got = cpu_limits.parse_demand_stream(
+            text, {"aaa": "payment"}, expected_interval=1.0
+        )
+        self.assertEqual(got["payment"].gap_intervals, 1)
+        # 1.0 core-second over 2.0s reads as 0.5, though the burst was 1.0.
+        self.assertAlmostEqual(got["payment"].peak_cores, 0.5, places=6)
+
+    def test_clean_run_reports_no_gaps(self):
+        text = "@0.0\naaa 0\n@1.0\naaa 100000\n@2.0\naaa 200000\n"
+        got = cpu_limits.parse_demand_stream(
+            text, {"aaa": "payment"}, expected_interval=1.0
+        )
+        self.assertEqual(got["payment"].gap_intervals, 0)
+        self.assertEqual(got["payment"].intervals, 2)
+
+
+class DemandSamplerGuardTests(unittest.TestCase):
+    """Argument guards, verified without a daemon."""
+
+    def test_non_positive_duration_is_rejected(self):
+        for bad in (0, -1.0):
+            with self.assertRaises(cpu_limits.CpuLimitError):
+                cpu_limits.sample_cpu_demand("p", duration_seconds=bad)
+
+    def test_non_positive_interval_is_rejected(self):
+        for bad in (0, -0.5):
+            with self.assertRaises(cpu_limits.CpuLimitError):
+                cpu_limits.sample_cpu_demand(
+                    "p", duration_seconds=10, interval_seconds=bad
+                )
+
+    def test_sampler_does_not_use_date_percent_n(self):
+        """busybox date ignores %N and returns whole seconds.
+
+        That collapses every sub-second interval to a zero time delta, which
+        the parser then skips, so the sampler would return almost no data
+        while appearing to work. The clock must be /proc/uptime.
+        """
+        source = inspect.getsource(cpu_limits.sample_cpu_demand)
+        body = source.split('"""')[-1]
+        self.assertNotIn("date +", body)
+        self.assertIn("/proc/uptime", body)
+
+    def test_sidecar_is_unprivileged_and_has_no_docker_socket(self):
+        source = inspect.getsource(cpu_limits.sample_cpu_demand)
+        self.assertNotIn("--privileged", source)
+        self.assertNotIn("docker.sock", source)
+        self.assertIn("/hostcg:ro", source)
+
+
+class CpuLimitFittingTests(unittest.TestCase):
+    """The rule, and the manifest that records what it produced."""
+
+    def test_the_rule_is_twice_the_peak(self):
+        """Above half the floor, the multiplier is what decides the limit.
+
+        The probe value used to be 0.60, which stopped exercising the
+        multiplier the moment the floor rose to 8.0: the assertion still
+        passed as a floor test while claiming to test the multiplier.
+        """
+        self.assertGreater(cpu_limits.MULTIPLIER * 5.0, cpu_limits.FLOOR_CORES)
+        self.assertAlmostEqual(cpu_limits.fit_limit(5.0), 10.0)
+
+    def test_the_floor_dominates_every_service_in_the_committed_fit(self):
+        """Stated rather than left to be noticed from the numbers.
+
+        No measured peak on this host class reaches half the floor, so every
+        committed limit is the floor and the set is uniform. That uniformity
+        is wanted: the agent under test reads this Compose file, and a limit
+        fitted per service would tell it which service we expect to strain.
+        It also means the multiplier does not bind here, which is why the
+        test above picks a peak where it does.
+        """
+        payload = cpu_limits.load_fitted_limits(_repo_root(), _fitted_class())
+        limits = set(payload["limitCores"].values())
+        self.assertEqual(limits, {cpu_limits.FLOOR_CORES})
+        self.assertLess(
+            max(payload["peakCores"].values()),
+            cpu_limits.FLOOR_CORES / cpu_limits.MULTIPLIER,
+        )
+
+    def test_a_small_service_gets_the_floor_not_a_tiny_limit(self):
+        """Twice a 0.01-core peak is 0.02 cores, which would throttle the
+        service constantly for no measurement benefit."""
+        self.assertAlmostEqual(cpu_limits.fit_limit(0.01), cpu_limits.FLOOR_CORES)
+
+    def test_rounding_never_lands_below_the_rule(self):
+        for peak in (0.333, 0.1234, 0.9999, 1.005):
+            self.assertGreaterEqual(
+                cpu_limits.fit_limit(peak) + 1e-9,
+                max(cpu_limits.MULTIPLIER * peak, cpu_limits.FLOOR_CORES),
+                peak,
+            )
+
+    def test_fitting_nothing_is_an_error(self):
+        with self.assertRaises(cpu_limits.CpuLimitError):
+            cpu_limits.fit_limits({})
+
+    def test_a_stale_hash_is_rejected_on_load(self):
+        """The positive control for the guard, not just for the function.
+
+        Mutation testing showed the previous tests pinned only that the hash
+        changes when contents change. Disabling the guard in
+        ``load_fitted_limits`` still passed them all, so the check that
+        actually protects a run was itself unchecked.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            path = cpu_limits.cpu_limits_path(root)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = json.loads(
+                cpu_limits.cpu_limits_path(_repo_root()).read_text()
+            )
+            payload["manifestHash"] = "sha256:" + "0" * 64
+            path.write_text(json.dumps(payload))
+            with self.assertRaises(cpu_limits.CpuLimitError) as caught:
+                cpu_limits.load_fitted_limits(root, _fitted_class(root))
+            self.assertIn("manifestHash", str(caught.exception))
+
+    def test_a_faithful_copy_loads(self):
+        """So the test above fails for the hash, not for the copying."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            path = cpu_limits.cpu_limits_path(root)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                cpu_limits.cpu_limits_path(_repo_root()).read_text()
+            )
+            self.assertEqual(
+                cpu_limits.load_fitted_limits(root, _fitted_class(root))["manifestHash"],
+                json.loads(path.read_text())["manifestHash"],
+            )
+
+    def test_the_committed_hash_matches_the_committed_contents(self):
+        """The hash reaches provenance, so it has to be recomputable.
+
+        An earlier revision carried a hash matching no basis that could be
+        reconstructed from the file, which is provenance proving nothing.
+        """
+        payload = json.loads(
+            cpu_limits.cpu_limits_path(_repo_root()).read_text()
+        )
+        self.assertEqual(
+            payload["manifestHash"], cpu_limits.fitted_limits_hash(payload)
+        )
+
+    def test_an_edited_limit_invalidates_the_hash(self):
+        """The positive control for the check above."""
+        payload = json.loads(
+            cpu_limits.cpu_limits_path(_repo_root()).read_text()
+        )
+        before = cpu_limits.fitted_limits_hash(payload)
+        payload["limitCores"]["kafka"] = 99.0
+        self.assertNotEqual(cpu_limits.fitted_limits_hash(payload), before)
+
+    def test_the_hash_ignores_remeasured_peaks_that_change_no_limit(self):
+        """Re-measuring moves the last decimal without moving a quota.
+
+        If that counted as a fixture change, every re-measurement would
+        look like one and the signal would stop meaning anything.
+        """
+        payload = json.loads(
+            cpu_limits.cpu_limits_path(_repo_root()).read_text()
+        )
+        before = cpu_limits.fitted_limits_hash(payload)
+        payload["peakCores"]["kafka"] = payload["peakCores"]["kafka"] + 0.0001
+        self.assertEqual(cpu_limits.fitted_limits_hash(payload), before)
+
+    def test_a_limit_that_does_not_follow_the_rule_is_rejected(self):
+        """Otherwise the rule is a comment and the numbers are magic."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            path = cpu_limits.cpu_limits_path(root)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = json.loads(
+                cpu_limits.cpu_limits_path(_repo_root()).read_text()
+            )
+            payload["limitCores"]["kafka"] = cpu_limits.FLOOR_CORES / 2
+            payload["manifestHash"] = cpu_limits.fitted_limits_hash(payload)
+            path.write_text(json.dumps(payload))
+            with self.assertRaises(cpu_limits.CpuLimitError) as caught:
+                cpu_limits.load_fitted_limits(root, _fitted_class(root))
+            self.assertIn("kafka", str(caught.exception))
+
+    def test_every_shop_service_has_a_fitted_limit(self):
+        payload = cpu_limits.load_fitted_limits(_repo_root(), _fitted_class())
+        digests = json.loads(
+            (_repo_root() / "benchmark/apps/astronomy-shop/image-digests.json").read_text()
+        )
+        self.assertEqual(
+            sorted(payload["limitCores"]), sorted(digests["images"])
+        )
+
+    def test_the_committed_limits_reproduce_from_the_committed_peaks(self):
+        """The manifest is not free to drift from the rule that made it."""
+        payload = cpu_limits.load_fitted_limits(_repo_root(), _fitted_class())
+        refitted = cpu_limits.fit_limits(payload["peakCores"])
+        self.assertEqual(refitted, payload["limitCores"])
+
+    def test_a_manifest_fitted_under_a_different_rule_is_rejected(self):
+        """Positive control for the rule check.
+
+        Without it, changing the multiplier would leave 28 committed numbers
+        describing a fitting nobody could reproduce.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            path = cpu_limits.cpu_limits_path(root)
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "rule": {"multiplier": 99.0, "floorCores": 0.25},
+                        "limitCores": {"a": 1.0},
+                    }
+                )
+            )
+            with self.assertRaises(cpu_limits.CpuLimitError) as caught:
+                cpu_limits.load_fitted_limits(root, "any-class")
+        self.assertIn("frozen rule", str(caught.exception))
+
+    def test_a_missing_manifest_is_an_error_not_an_empty_set(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(cpu_limits.CpuLimitError):
+                cpu_limits.load_fitted_limits(pathlib.Path(tmp), _fitted_class())
+
+
+class CpuLimitTransformTests(unittest.TestCase):
+    """Every service gets a limit, including the ones that barely use CPU."""
+
+    def _config(self, *names: str) -> dict:
+        return {
+            "services": {
+                n: {"image": "x@sha256:" + "0" * 64,
+                    "deploy": {"resources": {"limits": {"memory": "1000"}}}}
+                for n in names
+            }
+        }
+
+    def test_the_transform_is_declared(self):
+        self.assertIn(
+            "apply-cpu-limits", {t.name for t in astronomy_shop.TRANSFORMS}
+        )
+
+    def test_a_service_with_no_fitted_limit_is_an_error(self):
+        """Not a service left unlimited.
+
+        An unlimited service in an otherwise limited stack is both a variance
+        source and a tell: it is the one service whose shape differs.
+        """
+        with self.assertRaises(cpu_limits.CpuLimitError) as caught:
+            astronomy_shop._apply_cpu_limits(
+                self._config("not-a-real-service"), _fitted_class()
+            )
+        self.assertIn("not-a-real-service", str(caught.exception))
+
+    def test_the_memory_limit_survives_the_transform(self):
+        config = self._config("ad")
+        astronomy_shop._apply_cpu_limits(config, _fitted_class())
+        limits = config["services"]["ad"]["deploy"]["resources"]["limits"]
+        self.assertEqual(limits["memory"], "1000")
+        self.assertIn("cpus", limits)
+
+    def test_the_lightest_service_is_limited_too(self):
+        """The uniformity property, stated as a test.
+
+        `shipping` peaks at 0.01 cores and needs no limit for its own sake. It
+        is limited so that a CPU-limit incident on some other service cannot
+        be spotted by noticing which service has a limit at all.
+        """
+        payload = cpu_limits.load_fitted_limits(_repo_root(), _fitted_class())
+        self.assertIn("shipping", payload["limitCores"])
+        self.assertEqual(payload["limitCores"]["shipping"], cpu_limits.FLOOR_CORES)
+
+
+class ThrottleVerdictTests(unittest.TestCase):
+    """The acceptance test, which is the part that counts as evidence."""
+
+    def _reading(self, service, periods, throttled, quota=1.0):
+        return cpu_limits.ThrottleReading(
+            service=service, nr_periods=periods, nr_throttled=throttled,
+            throttled_usec=throttled * 1000, quota_cores=quota,
+        )
+
+    def test_a_clean_window_is_accepted(self):
+        opened = {"a": self._reading("a", 100, 0)}
+        closed = {"a": self._reading("a", 200, 0)}
+        verdict = cpu_limits.verdict_from_readings(opened, closed, {"a": 1.0})
+        self.assertTrue(verdict.accepted)
+        # A service that never throttled must not be listed as bound. A
+        # check that fires on everything is as useless as one that never
+        # fires, and mutation testing showed nothing else pinned this.
+        self.assertEqual(verdict.lifetime_bound, ())
+
+    def test_throttling_during_the_window_fails(self):
+        opened = {"a": self._reading("a", 100, 0)}
+        closed = {"a": self._reading("a", 200, 5)}
+        verdict = cpu_limits.verdict_from_readings(opened, closed, {"a": 1.0})
+        self.assertFalse(verdict.accepted)
+        self.assertEqual(verdict.lifetime_bound, ("a",))
+        # The window figure survives as diagnostic detail: it localises when
+        # the throttling happened, which the lifetime total cannot.
+        self.assertEqual(verdict.services[0].throttled, 5)
+
+    def test_startup_throttling_fails_even_though_the_window_is_clean(self):
+        """This assertion was inverted by measurement, deliberately.
+
+        It used to assert that startup throttling was harmless, on the
+        reasoning that only throttling during measurement can corrupt a
+        measurement. A probe disproved the premise: throttling lengthens
+        bring-up, so readiness timing becomes a function of host contention,
+        which is run-to-run variance in the environment itself. The window
+        subtraction it checked is still correct and still checked.
+        """
+        opened = {"a": self._reading("a", 100, 40)}
+        closed = {"a": self._reading("a", 200, 40)}
+        verdict = cpu_limits.verdict_from_readings(opened, closed, {"a": 1.0})
+        self.assertFalse(verdict.accepted)
+        self.assertEqual(verdict.lifetime_bound, ("a",))
+        self.assertEqual(verdict.services[0].cumulative_throttled, 40)
+        self.assertEqual(verdict.services[0].throttled, 0)
+
+    def test_a_service_absent_from_the_reading_fails(self):
+        """A verdict that passed because a service went unread would be a
+        check that examined nothing and reported success."""
+        verdict = cpu_limits.verdict_from_readings({}, {}, {"a": 1.0})
+        self.assertFalse(verdict.accepted)
+        self.assertEqual(verdict.missing, ("a",))
+
+    def test_a_window_with_no_scheduling_periods_is_unmeasured_not_clean(self):
+        opened = {"a": self._reading("a", 100, 0)}
+        closed = {"a": self._reading("a", 100, 0)}
+        verdict = cpu_limits.verdict_from_readings(opened, closed, {"a": 1.0})
+        self.assertFalse(verdict.accepted)
+        self.assertEqual(verdict.unmeasured, ("a",))
+
+    def test_an_unfitted_service_present_in_the_project_is_reported(self):
+        opened = {"a": self._reading("a", 100, 0), "b": self._reading("b", 100, 0)}
+        closed = {"a": self._reading("a", 200, 0), "b": self._reading("b", 200, 0)}
+        verdict = cpu_limits.verdict_from_readings(opened, closed, {"a": 1.0})
+        self.assertFalse(verdict.accepted)
+        self.assertTrue(any("b" in m for m in verdict.missing))
+
+    def test_lifetime_throttling_is_reported_even_when_the_window_is_clean(self):
+        """Measurement showed most throttling happens before any window opens.
+
+        Kafka spent 131 throttled periods starting up and one in a 300s
+        steady window. A verdict that reported only the window would call
+        that stack clean, so the lifetime counter is surfaced separately.
+        """
+        opened = {"a": self._reading("a", 100, 40)}
+        closed = {"a": self._reading("a", 200, 40)}
+        verdict = cpu_limits.verdict_from_readings(opened, closed, {"a": 1.0})
+        self.assertEqual(verdict.lifetime_bound, ("a",))
+        self.assertEqual(verdict.to_dict()["lifetimeBound"], ["a"])
+
+    def test_window_throttling_always_implies_lifetime_throttling(self):
+        """Why the window budget was removed rather than kept alongside.
+
+        Throttled periods counted inside a window are a subset of those
+        counted since container start, so the lifetime criterion subsumes a
+        window threshold entirely and that threshold could never decide a
+        verdict. Keeping both would have been a dead conjunct. This pins the
+        implication so the removal cannot be quietly undone.
+        """
+        opened = {"a": self._reading("a", 100, 0)}
+        closed = {"a": self._reading("a", 200, 5)}
+        verdict = cpu_limits.verdict_from_readings(opened, closed, {"a": 1.0})
+        self.assertGreater(verdict.services[0].throttled, 0)
+        self.assertEqual(verdict.lifetime_bound, ("a",))
+
+    def test_the_verdict_exposes_no_tunable_throttling_threshold(self):
+        """A gate with a knob invites the knob being turned until it passes.
+
+        The criterion is zero throttled periods, which needs no threshold.
+        """
+        import inspect as _inspect
+        sig = _inspect.signature(cpu_limits.verdict_from_readings)
+        self.assertEqual(
+            [p for p in sig.parameters if "budget" in p or "threshold" in p],
+            [],
+        )
+        self.assertFalse(
+            [n for n in dir(cpu_limits) if "BUDGET" in n or "THRESHOLD" in n]
+        )
+
+class ThrottleReadingParseTests(unittest.TestCase):
+    """Parsing the kernel's files, with no daemon involved."""
+
+    def test_cpu_stat_is_parsed(self):
+        values = cpu_limits._parse_cpu_stat(
+            "usage_usec 31557\nnr_periods 12\nnr_throttled 3\nthrottled_usec 99\n"
+        )
+        self.assertEqual(values["nr_periods"], 12)
+        self.assertEqual(values["nr_throttled"], 3)
+
+    def test_an_unset_cpu_max_reads_as_no_limit_not_as_zero(self):
+        """`max 100000` means unlimited. Reading it as 0.0 would make an
+        unlimited service look like the most constrained one."""
+        self.assertIsNone(cpu_limits._parse_cpu_max("max 100000"))
+
+    def test_a_quota_is_converted_to_cores(self):
+        self.assertAlmostEqual(cpu_limits._parse_cpu_max("25000 100000"), 0.25)
+
+    def test_a_project_with_no_containers_raises(self):
+        """Nothing to read is not the same as nothing throttled."""
+        def runner(*args, **kwargs):
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        with self.assertRaises(cpu_limits.CpuLimitError):
+            cpu_limits.read_throttling("empty", runner=runner)
+
+    def test_the_sidecar_image_is_pinned_by_digest(self):
+        self.assertIn("@sha256:", cpu_limits.SIDECAR_IMAGE)
+
+
+class CpuLimitHostClassTests(unittest.TestCase):
+    """The limits are fitted on one machine and must not travel.
+
+    This was the gap: the loader read the rule, the hash and the per-service
+    arithmetic, and never once looked at the host class it was fitted on. The
+    laptop's limits would have applied on a two-core VM, and because a quota
+    far above a small host's capacity never binds, every service would have
+    reported no throttling and the verification would have passed while
+    measuring nothing.
+    """
+
+    def _payload(self, host_class: str) -> dict:
+        payload = json.loads(cpu_limits.cpu_limits_path(_repo_root()).read_text())
+        payload["fittedFrom"]["hostClass"] = host_class
+        payload["manifestHash"] = cpu_limits.fitted_limits_hash(payload)
+        return payload
+
+    def _write(self, root: pathlib.Path, payload: dict) -> None:
+        path = cpu_limits.cpu_limits_path(root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2))
+
+    def test_limits_fitted_on_another_host_class_are_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            self._write(root, self._payload("linux-vm-d8s-v5-8c-32gib"))
+            with self.assertRaises(cpu_limits.CpuLimitError) as caught:
+                cpu_limits.load_fitted_limits(root, _fitted_class())
+        message = str(caught.exception)
+        self.assertIn("linux-vm-d8s-v5-8c-32gib", message)
+        self.assertIn("borrowing", message)
+
+    def test_the_matching_host_class_is_accepted(self):
+        """The refusal must be about the class, not about refusing always."""
+        payload = cpu_limits.load_fitted_limits(_repo_root(), _fitted_class())
+        self.assertEqual(payload["fittedFrom"]["hostClass"], _fitted_class())
+
+    def test_the_host_class_is_inside_the_hash_basis(self):
+        """Relabelling the file must break its own hash.
+
+        Outside the basis, the class is a comment: anyone could point the
+        laptop's limits at another machine by editing one string, and the
+        hash would still verify and still be copied into provenance as
+        evidence that nothing had changed.
+        """
+        original = json.loads(cpu_limits.cpu_limits_path(_repo_root()).read_text())
+        relabelled = dict(original)
+        relabelled["fittedFrom"] = dict(original["fittedFrom"])
+        relabelled["fittedFrom"]["hostClass"] = "some-other-class"
+        self.assertNotEqual(
+            cpu_limits.fitted_limits_hash(original),
+            cpu_limits.fitted_limits_hash(relabelled),
+        )
+
+    def test_a_relabelled_file_is_caught_by_the_hash_check(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            payload = json.loads(cpu_limits.cpu_limits_path(_repo_root()).read_text())
+            payload["fittedFrom"]["hostClass"] = "forged-class"
+            self._write(root, payload)
+            with self.assertRaises(cpu_limits.CpuLimitError) as caught:
+                cpu_limits.load_fitted_limits(root, "forged-class")
+        self.assertIn("without refitting", str(caught.exception))
+
+    def test_the_committed_manifest_hash_is_the_one_its_contents_produce(self):
+        payload = json.loads(cpu_limits.cpu_limits_path(_repo_root()).read_text())
+        self.assertEqual(
+            payload["manifestHash"], cpu_limits.fitted_limits_hash(payload)
+        )
+
+
+class FlagFileIsolationTests(unittest.TestCase):
+    """A trial must not be able to edit the fixture it is measured against.
+
+    flagd-ui mounts the flag directory read-write, so a flag toggled in one
+    trial rewrites a committed file. Because a bind is not a volume, `down
+    --volumes` does not undo it, and the next trial starts from the previous
+    trial's flag state while the repository sits dirty.
+    """
+
+    def _rendered(self) -> dict:
+        config = _fake_config()
+        vendored = astronomy_shop.upstream_dir(_repo_root()) / "src" / "flagd"
+        config["services"]["flagd"] = {
+            "image": "x",
+            "volumes": [
+                {"type": "bind", "source": str(vendored), "target": "/etc/flagd"}
+            ],
+        }
+        config["services"]["flagd-ui"] = {
+            "image": "x",
+            "volumes": [
+                {"type": "bind", "source": str(vendored), "target": "/app/data"}
+            ],
+        }
+        astronomy_shop._isolate_flag_file(config)
+        return config
+
+    def test_the_rendered_config_never_mounts_the_vendored_flag_directory(self):
+        vendored = str(astronomy_shop.upstream_dir(_repo_root()) / "src" / "flagd")
+        config = self._rendered()
+        for name in astronomy_shop.FLAG_SERVICES:
+            for mount in config["services"][name]["volumes"]:
+                self.assertNotEqual(mount["source"], vendored, name)
+
+    def test_the_real_rendered_stack_mounts_no_path_under_the_vendored_tree(self):
+        """The real upstream file, not a synthetic one.
+
+        The other tests here build a config by hand, so they prove the
+        transform works on mounts shaped the way this test file expects. This
+        one reads the vendored `compose.yaml`, so it fails if upstream renames
+        the directory, moves to a named volume, or drops the bind: the cases
+        where a hand-built fixture would keep passing while the real stack
+        went back to sharing one writable file.
+
+        Bind sources are absolutised first because that is what `docker compose
+        config` does before the renderer sees them; the daemon is not needed to
+        reproduce it. Only this transform is run, not the whole chain: the
+        others assume the dict form that normalisation guarantees, and running
+        them on raw YAML would test the fixture rather than the code. That the
+        renderer runs this transform at all is covered separately by
+        `test_the_transform_is_declared_and_reported`.
+        """
+        upstream = astronomy_shop.upstream_dir(_repo_root()).resolve()
+        config = yaml.safe_load((upstream / "compose.yaml").read_text())
+        for service in config["services"].values():
+            volumes = service.get("volumes") or []
+            for index, mount in enumerate(volumes):
+                if isinstance(mount, str) and mount.startswith("."):
+                    source, _, rest = mount.partition(":")
+                    volumes[index] = f"{(upstream / source).resolve()}:{rest}"
+
+        changed = astronomy_shop._isolate_flag_file(config)
+        self.assertEqual(sorted(changed), sorted(astronomy_shop.FLAG_SERVICES))
+
+        flag_dir = (upstream / "src" / astronomy_shop.FLAG_DIR_NAME).resolve()
+        offenders = []
+        for name, service in sorted(config["services"].items()):
+            for mount in service.get("volumes") or []:
+                source, _ = astronomy_shop._bind_source(mount)
+                if not source:
+                    continue
+                resolved = pathlib.Path(source).resolve()
+                if resolved == flag_dir or flag_dir in resolved.parents:
+                    offenders.append(f"{name}:{source}")
+        self.assertEqual(offenders, [])
+
+    def test_a_flag_service_whose_mount_shape_changed_is_reported_not_skipped(self):
+        """Finding nothing to redirect must fail, not pass quietly.
+
+        If upstream renames the directory or switches the mount to a named
+        volume, a transform that returns an empty list leaves the shared
+        writable bind in place and reports success. The campaign would then be
+        corrupted by exactly the defect this transform was added to close,
+        with nothing in the run record showing it.
+        """
+        config = _fake_config()
+        config["services"]["flagd"] = {
+            "image": "x",
+            "volumes": [
+                {"type": "bind", "source": "/somewhere/else", "target": "/etc/flagd"}
+            ],
+        }
+        with self.assertRaises(astronomy_shop.AstronomyShopError) as caught:
+            astronomy_shop._isolate_flag_file(config)
+        self.assertIn("silently", str(caught.exception))
+
+    def test_a_flag_service_declaring_no_volumes_is_left_alone(self):
+        """Absence of mounts is not evidence of a changed mount shape.
+
+        Other transforms are exercised against configs that name flagd only to
+        check its ports are unpublished. Treating those as a shape change would
+        make this transform fail on every such config, so the alarm is raised
+        only when a flag service mounts something that is not the flag
+        directory.
+        """
+        config = _fake_config()
+        config["services"]["flagd"] = {"image": "x", "ports": ["8013:8013"]}
+        self.assertEqual(astronomy_shop._isolate_flag_file(config), [])
+
+    def test_the_private_copy_actually_holds_the_flag_definitions(self):
+        """Repointing at an empty directory would satisfy the test above.
+
+        Docker creates a missing bind source as an empty directory, so flagd
+        would start with no flags at all and the flag gate would then read a
+        state nothing had defined.
+        """
+        config = self._rendered()
+        source = pathlib.Path(config["services"]["flagd"]["volumes"][0]["source"])
+        vendored = astronomy_shop.upstream_dir(_repo_root()) / "src" / "flagd"
+        for original in vendored.iterdir():
+            if original.is_file():
+                copied = source / original.name
+                self.assertTrue(copied.is_file(), original.name)
+                self.assertEqual(copied.read_bytes(), original.read_bytes())
+
+    def test_each_render_gets_its_own_copy(self):
+        """Two stacks from one checkout must not share a flag file."""
+        first = self._rendered()["services"]["flagd"]["volumes"][0]["source"]
+        second = self._rendered()["services"]["flagd"]["volumes"][0]["source"]
+        self.assertNotEqual(first, second)
+
+    def test_writing_through_the_copy_leaves_the_vendored_file_untouched(self):
+        """The point of the transform, checked by doing the damaging thing.
+
+        The write is guarded rather than issued blind. An earlier version of
+        this test wrote unconditionally, so when the transform was disabled to
+        confirm the test fails without it, the test emptied the committed flag
+        file for real and every later run in that shell failed on a file that
+        the fix was supposed to protect. A test for a destructive defect must
+        not perform the destruction when the defect is present.
+        """
+        config = self._rendered()
+        source = pathlib.Path(config["services"]["flagd-ui"]["volumes"][0]["source"])
+        vendored = (
+            astronomy_shop.upstream_dir(_repo_root()) / "src" / "flagd"
+        ).resolve()
+        self.assertNotEqual(
+            source.resolve(),
+            vendored,
+            "flagd-ui still mounts the vendored directory; refusing to write "
+            "through it, because that is the corruption under test",
+        )
+        target = next(p for p in vendored.iterdir() if p.is_file())
+        before = target.read_bytes()
+        (source / target.name).write_text("{}")
+        self.assertEqual(target.read_bytes(), before)
+
+    def test_flagd_mounts_its_copy_read_only(self):
+        config = self._rendered()
+        self.assertTrue(config["services"]["flagd"]["volumes"][0]["read_only"])
+
+    def test_the_transform_is_declared_and_reported(self):
+        names = [t.name for t in astronomy_shop.TRANSFORMS]
+        self.assertIn("isolate-flag-file", names)
+
+
+class FootprintTeardownTests(unittest.TestCase):
+    """The footprint tool samples for minutes, then tears down.
+
+    With teardown as the last statement of the happy path, a Ctrl-C during
+    sampling left all 28 containers running, and the next run would measure a
+    host that already had a whole shop on it.
+    """
+
+    def _source(self) -> str:
+        return (
+            _repo_root() / "benchmark" / "tools" / "measure_astronomy_footprint.py"
+        ).read_text()
+
+    def test_teardown_runs_in_a_finally_block(self):
+        tree = ast.parse(self._source())
+        guarded = False
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Try) or not node.finalbody:
+                continue
+            body = ast.dump(ast.Module(body=node.finalbody, type_ignores=[]))
+            if '"down"' in body or "'down'" in body:
+                guarded = True
+        self.assertTrue(
+            guarded,
+            "compose down must run in a finally block, or an interrupted "
+            "sampling window leaks the whole stack",
+        )
+
+    def test_the_sampling_loop_is_inside_that_try(self):
+        """A finally that only guards teardown itself would prove nothing."""
+        tree = ast.parse(self._source())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Try) or not node.finalbody:
+                continue
+            body = ast.dump(ast.Module(body=node.body, type_ignores=[]))
+            if "sample_stats" in body:
+                return
+        self.fail("the sampling loop is not inside the guarded block")
