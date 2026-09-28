@@ -1139,9 +1139,9 @@ in a chat log.
     generator's own lifetime throttled-period count must be zero, and it must
     be in the running state with its configured user count. Load-surge
     incidents declare their own expected rate.
-  - **The healthy failure rate.** The healthy baseline fails a non-trivial
-    fraction of its requests. See the section below for what the two-arm run
-    found and what remains open.
+  - **The healthy failure rate** is explained and attributed, and needs a
+    decision rather than an investigation. See "Every healthy baseline failure
+    is one absent host" below.
   - **The determinism fit and holdout.** Roughly three hours at about eight
     minutes a cycle, fitting on one set of cycles and validating on a separate
     holdout, following the catalog app's method. It needs the user's go-ahead
@@ -1482,3 +1482,73 @@ request, so a slow stack lowers the offered rate by construction. The band
 therefore describes the **healthy baseline only**. Applied to an incident
 phase it would refuse a verdict exactly when an incident worked. Incident
 phases need their own expectation, and this gate is not it.
+
+### Every healthy baseline failure is one absent host
+
+The healthy baseline failed about one request in fifteen. A floor that size
+cannot be fitted over, because an incident's signal has to clear it before it
+is visible, and an unexplained floor might have been our own derivation
+breaking something.
+
+It was measured per endpoint, with pristine upstream `3.1.0` as the control:
+same host, same load, same window, the vendored Compose files run unmodified
+from their own directory.
+
+    derived    21 failures / 313 requests    6.71%
+    upstream   24 failures / 340 requests    7.06%
+
+Two things settle it. The rates match, with the derived stack marginally
+*lower*, and in both arms every single failure is the same endpoint, `POST
+/prompt`, which fails **100%** of the time. No other endpoint failed once in
+either arm. The set of endpoints failing only in the derived stack is empty, so
+nothing in the derivation, not the stripped collector receivers, not the
+unpublished flag services, not the renamed networks, and not the CPU limits,
+broke anything.
+
+The cause is exact. Locust reports `gaierror(-2, 'Name or service not known')`,
+a DNS failure rather than an application error, and the load generator's
+`ask_agent` task posts to `http://agent:8010/prompt`. No `agent` service is
+declared in `compose.yaml`, `compose.full.yaml` or `compose.observability.yaml`.
+The service exists in the release's Helm chart but not in its Compose
+deployment, while the load generator baked into the Compose image calls it
+regardless. The task carries `@task(3)`, which is about the right share of the
+weighted total to produce the observed rate.
+
+This is the same family as the `firepit` exporter: a reference to a host that
+never exists in this deployment, retried for the whole of every measurement
+window. It is upstream behaviour, not ours, and the decision it needs is a
+fixture decision rather than a bug hunt. Leaving it costs a constant DNS
+failure on a known endpoint and a floor under every latency distribution that
+includes it. Removing it means setting `AGENT_ENDPOINT` at a host that exists
+or dropping the task, either of which is a fixture change that must be declared
+and re-fitted. **Nothing should be fitted until this is decided**, because the
+floor moves when it is.
+
+Two limits on the evidence, both recorded rather than worked around. Locust's
+own `Aggregated` row is returned alongside the per-endpoint rows, so the raw
+totals in the artifact double-count; the ratios are unaffected because
+numerator and denominator double together, and the per-endpoint figures above
+are the real ones. And the flag state could not be read in the upstream arm,
+because upstream hard-codes its network name, which is one of the three
+isolation defects the derivation exists to fix. The derived arm read all 18
+flags directly from flagd and every one was off. Both arms load the identical
+vendored flag file, so the upstream arm's flags are the same by construction,
+but that is an inference and the derived arm's reading is the measurement.
+
+### The load the tolerances assume
+
+On record, from the vendored release and the image, so the number behind every
+tolerance is not folklore:
+
+    users                 5          (LOCUST_USERS)
+    spawn rate            1/s        Locust's default, not set by the release
+    think time            between(1, 10) seconds per user
+    user mix              9 HTTP to 1 browser
+    autostart             true, web UI enabled (not headless)
+    locust                2.44.4
+    achieved rate         about 1.0 to 1.2 requests per second
+
+At roughly 350 requests in a 300 second window, Poisson counting alone
+contributes about 5% relative noise, which is the floor under how tight the
+offered-load band can be set. Raising the load is a pilot-calibration decision
+and a fixture change, so the release default stands until someone makes it.
