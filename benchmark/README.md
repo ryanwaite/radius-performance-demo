@@ -780,8 +780,18 @@ an earlier holdout's evidence was lost to a routine clean-up.
 Run the Docker-free tests with:
 
 ```bash
-cd /path/to/repo && python3.12 -m unittest discover -s benchmark/tests -t benchmark
+cd /path/to/repo/benchmark && uv run python -m pytest tests/
 ```
+
+Use `pytest`, not `unittest discover`. Seven of the eight test modules are
+written as bare `def test_*` functions rather than `unittest.TestCase`
+subclasses, and `unittest discover` collects **zero** tests from a module in
+that style. It does not error: it imports the module, finds no `TestCase`,
+collects nothing, and reports `OK` on whatever remains. On a machine with the
+SDK dependencies installed, the `unittest` command therefore ran one module of
+eight and printed a green result, which is the silent-omission failure this
+README warns about two paragraphs below. CI has always used `pytest`, so the
+defect was in this instruction rather than in the gate.
 
 ### What CI does and does not cover
 
@@ -907,6 +917,125 @@ nothing in the driver noticed. Note that AC power sets `sleep 0` while battery s
 `PreventSystemSleep`. A suite-level suspension figure is also reported, since the
 per-cycle measurement cannot see a host that slept in the gap between cycles.
 
+### The host class decides which tolerances apply
+
+Tolerances are numbers fitted by measurement on one machine. Applying them to a
+different machine is not a small approximation; it is a measurement of one thing
+reported as a measurement of another. So the driver reads the machine's own facts and
+refuses to give a verdict on a machine it has no frozen bounds for.
+
+`hostclass.observe_host` reads the operating system and release, architecture, CPU
+model and logical core count, physical memory, the Docker engine version, the
+container runtime's kernel, core count and memory ceiling, whether that runtime is
+virtualised, and the Python patch version. Nothing is passed in by a caller. A label
+supplied from outside would be the one fact nobody measured, and it is the fact
+everything else keys on.
+
+Those facts produce two identifiers, and the distinction between them matters.
+
+The **class id** is the performance envelope: operating system, architecture, CPU
+model, core count, memory, and the container runtime's own core count and memory
+ceiling. It keys the frozen tolerance sets. On this laptop it resolves to
+`darwin-arm64-apple-m5-10c-32.0gib-docker-vm-10c-7.7gib`.
+
+That last part is not a typo. The laptop has 32 GiB, but containers run inside the
+Docker Desktop virtual machine, which was given 7.7 GiB. The workload cannot reach the
+laptop's memory, so classifying by it would describe a resource that does not exist
+from the container's point of view. Both numbers are in the class id because both
+constrain something.
+
+The **fingerprint** is the class id plus every patch-level version: operating system
+release, Docker engine, Python. These move on their own and are not part of the
+envelope. Between the merged holdout and the check that followed it, the Docker engine
+went from 29.7.2 to 29.8.0 and Python from 3.12.13 to 3.12.14, and the measured
+numbers did not move. Voiding a frozen set on a patch bump would mean refitting
+tolerances every time Homebrew runs, which in practice means nobody refits them and
+the refusal gets switched off.
+
+If no frozen set exists for the observed class, `exitCriterionMet` is false and
+`hostQualification.refusal` names the class that was seen and the classes that would
+have been accepted. It does not warn and continue. Borrowed bounds fail silently and
+look exactly like success.
+
+### A changed fingerprint blocks scored trials until it is re-checked
+
+Recording an identifier and never acting on it is decoration. The fingerprint carries
+a specific consequence, and it is deliberately not the same consequence as an unknown
+class:
+
+- An unknown **class** means there is nothing to measure against, so there is no
+  verdict.
+- A changed **fingerprint** means the bounds still apply, so there is still a verdict,
+  but nobody has checked that the version bump left the numbers where they were. So
+  scored trials refuse to start until someone checks.
+
+The check is short: at least three cycles against the unchanged frozen bounds. Passing
+it writes a re-qualification record, and the next run on that fingerprint is allowed to
+start scored trials. It is deliberately too short to fit new bounds with. The question
+it answers is "do the existing bounds still hold", not "what should the bounds be".
+
+The gate is evaluated against the records that existed before the suite began, so a run
+cannot clear its own gate. A blocked run that then passes reports both facts: that it
+started blocked, and that the next one will not be.
+
+Records are machine-local, in `~/.radius-perf-eval/qualifications.json` by default and
+overridable with `RADIUS_PERF_EVAL_QUALIFICATION_STORE`. They are not committed. A
+record is a statement about one physical machine; in the repository it would accumulate
+one entry per developer laptop and mean nothing on any of them.
+
+The catalog app's frozen set declares its fitted fingerprint as unknown, and that is
+not an oversight. The holdout at `0407638` ran before the driver recorded host facts,
+so its report contains no fingerprint and there is nothing to reconstruct one from.
+An unknown fitted fingerprint is treated as a mismatch, never as a match, so scored
+trials on the catalog app stay blocked until a three-cycle re-qualification records the
+real one. Writing today's fingerprint into the source to make the gate pass would
+assert something no artifact supports, and a test fails if anyone does.
+
+### Freezing the versions a fingerprint is made of
+
+Detection is the guarantee that actually holds, and it is tested. Prevention is worth
+attempting anyway, so a campaign is not interrupted by an update it could have
+declined. What follows is what is available on each host, including where nothing is.
+
+**On this laptop, there is no supported way to freeze the Docker Desktop version.**
+Docker's documented mechanism is an administrator settings file at
+`/Library/Application Support/com.docker.docker/admin-settings.json`:
+
+```json
+{
+  "configurationFileVersion": 2,
+  "disableUpdate": { "value": true, "locked": true }
+}
+```
+
+Settings management is a Docker Business feature and requires enforced sign-in. The
+account on this machine reports `PlanName: personal` with no organisations, so the file
+would be written and ignored. It is documented here rather than run, because a command
+in a README that silently does nothing is worse than an absent one: it converts an
+unsolved problem into an apparently solved one. Docker Desktop on a personal plan does
+not install an update without someone clicking through it, so during the pilot the
+control is a human one, declining the prompt. The enforcement is the fingerprint gate
+above, which does not depend on anyone remembering.
+
+**On the Linux virtual machines,** where the scored campaign runs, the versions can
+actually be pinned. These have not been run, because no virtual machine exists yet;
+they are recorded now so the qualification run performs them rather than inventing them
+under time pressure:
+
+```sh
+# Pin the Docker engine at its qualified version.
+sudo apt-mark hold docker-ce docker-ce-cli containerd.io \
+  docker-buildx-plugin docker-compose-plugin
+apt-mark showhold            # positive control: the five packages must be listed
+
+# Stop unattended upgrades from moving anything underneath a run.
+sudo systemctl disable --now unattended-upgrades.service
+systemctl is-enabled unattended-upgrades.service   # must print "disabled"
+```
+
+Each has a read-back command alongside it, because "I ran the disable command" and "it
+is disabled" are different claims, and only the second one is the one that matters.
+
 ### Power state is recorded, not gated
 
 `hostPower` records AC or battery, battery percentage, and any CPU speed limit, at
@@ -927,3 +1056,499 @@ almost entirely. Valkey still runs and is still verified empty before load, and
 `cacheHitRatio` / `valkeyP95Seconds` are therefore legitimately `null` rather than `0`,
 per the telemetry contract. Incident variants that exercise the cache will want to flip
 this.
+
+## The Astronomy Shop
+
+Scored trials move from the catalog app to the OpenTelemetry Astronomy Shop.
+Upstream is vendored at release `3.1.0`, pinned to a commit, with every image
+resolved to a digest. The trial stack is *generated* from the vendored files by
+applying a declared list of transforms, rather than being layered with a Compose
+overlay, because Compose merges `volumes` and `ports` by appending: an overlay
+can add a mount but can never remove one, and most of what the shop needs is
+removal.
+
+### Status: what is built, and what is not
+
+The shop is **not** ready to run scored trials. The list below is the handover.
+It is deliberately specific about the unbuilt items, because each one has
+requirements that were settled in discussion and would otherwise survive only
+in a chat log.
+
+**Built and verified on this laptop**
+
+  - Host class derived from observed facts, with tolerances frozen per class,
+    and a refusal to give a verdict on an unknown class.
+  - Fingerprint recorded beside the qualification fingerprint, with a drift
+    gate: a changed fingerprint yields a verdict marked "not re-qualified" and
+    blocks a scored start until a 3-cycle re-check passes. A missing
+    fingerprint counts as a mismatch.
+  - Vendored upstream `3.1.0` at a pinned commit, all images resolved to
+    digests, with the manifest hash carried in provenance.
+  - Generated per-service checks, derived from the Compose file rather than
+    enumerated, covering image pinning, limits, environment, egress and
+    readiness. A service with no checks fails sign-off.
+  - The three upstream isolation defects fixed by transform, and a static check
+    on the rendered config for `container_name`, named networks, fixed host
+    ports, and socket or `/hostfs` mounts.
+  - Application-level readiness per service, including Kafka and the databases,
+    with ports rediscovered after every container recreation.
+  - Flag services unpublished, and a gate that reads every flag's resolved
+    variant from flagd itself and fails if any is not at its baseline variant
+    or if the state cannot be read.
+  - CPU limits on all 28 services, fitted from kernel `usage_usec` with limits
+    removed, applied as a uniform generous floor, and accepted only on zero
+    lifetime throttling across every service.
+  - The offered-load gate: achieved request rate measured per cycle from the
+    generator's own counter, scored only inside a frozen band.
+  - The `firepit` exporter stripped from the derived collector config.
+
+**Not built**
+
+  - **Grafana plugin vendoring.** Grafana is part of the agent's surface: the
+    agent may query it, and the plugin must be pinned in the repository rather
+    than downloaded at startup. Required: download
+    `grafana-opensearch-datasource` once at tooling time, at a version
+    compatible with the Grafana image pinned in `3.1.0`, and state how
+    compatibility was checked. Commit it under the vendored tree with its
+    version, source URL, SHA-256 and license. **Check the license before
+    committing; if it is anything other than a permissive license we can
+    redistribute, stop and report rather than commit it.** Mount it read-only
+    into Grafana's plugins directory and remove `GF_INSTALL_PLUGINS` from the
+    derived Compose. Put the plugin hash in the digest manifest beside the
+    image digests. Derivation must fail if the file is missing or its hash
+    differs, and must not let Docker create an empty mount in place of it.
+    Evidence required: Grafana starts on the internal network, stays healthy,
+    and makes **no outbound request** (check its logs for `grafana.com` or any
+    external host, not just `up --wait`); an OpenSearch-backed dashboard
+    returns data, proving the plugin loaded rather than merely being present on
+    disk; and a negative control in which the mount is removed, with
+    `GF_INSTALL_PLUGINS` still stripped, shows the datasource failing to load.
+    Grafana's dashboards and provisioning files join the fixture-file list for
+    the leakage scan: list any dashboard, panel or variable whose name refers
+    to a fault flag or to flagd, and do not change them yet. Upstream routes
+    Grafana through `frontend-proxy` at `/grafana`, so it should need no extra
+    route off the internal network; confirm that.
+  - **The ingress and internal network split.** `internal: true` was shown to
+    work and to cost all port publishing, so the intended shape is one routed
+    network carrying a single ingress container with the egress check applied
+    to the other 27. That split is not implemented, and the egress check is not
+    yet applied per service.
+  - **The incident-phase load gate.** The rate band is valid for healthy cycles
+    only, because Locust is closed-loop and a working incident legitimately
+    lowers the rate. Incident phases must instead gate on the cause: the load
+    generator's own lifetime throttled-period count must be zero, and it must
+    be in the running state with its configured user count. Load-surge
+    incidents declare their own expected rate.
+  - **The healthy failure rate** is explained and attributed, and needs a
+    decision rather than an investigation. See "Every healthy baseline failure
+    is one absent host" below.
+  - **The determinism fit and holdout.** Roughly three hours at about eight
+    minutes a cycle, fitting on one set of cycles and validating on a separate
+    holdout, following the catalog app's method. It needs the user's go-ahead
+    and a laptop kept awake and on power. Until it runs, the shop has no frozen
+    tolerance set and therefore cannot produce a verdict.
+  - **Host coverage.** Everything fitted here covers **this laptop only**. The
+    Linux VM host class has no frozen tolerances, and by the rule above the
+    suite will refuse to give a verdict there until it is qualified on that
+    class. Nothing measured on this laptop transfers.
+
+### It is 28 services, not 17
+
+The plan said about 17. The real count is 28: `compose.yaml` declares 20,
+`compose.full.yaml` adds 3, `compose.observability.yaml` adds 5.
+
+### Three isolation defects in upstream, all the same family
+
+Upstream is built to run once, on a developer's laptop, so it hard-codes
+identity in three places. Each would stop a second trial from starting or make
+two trials interfere:
+
+- an explicit `container_name` on all 28 services, so names carry no project
+  prefix and a second stack collides;
+- `networks.default.name: opentelemetry-demo`, so two trials share one bridge;
+- fixed published ports on `frontend-proxy` and `prometheus`.
+
+All three are removed by transforms. Because upstream sets `container_name`,
+anything that identifies containers by name prefix silently matches nothing;
+the footprint sampler selects on
+`label=com.docker.compose.project` instead and asserts it saw every expected
+service.
+
+### Removing a mount is not the same as removing what needs it
+
+The first transform pass removed the Docker socket and the `/hostfs` bind but
+left the `docker_stats` and `host_metrics` receivers that read them. The
+collector validates receivers at startup, so it crash-looped:
+`invalid root_path: stat /hostfs`. `up --wait` correctly refused to proceed,
+which is the gate doing its job.
+
+The collector configs are therefore *derived* at tooling time and committed, so
+the change is reviewable in a diff and the driver stays dependency-free. A
+missing derived config is a hard error rather than a fallback, because Docker
+would otherwise create an empty directory at the mount point and the collector
+would start against a config nobody reviewed.
+
+### Readiness is per service, at application level
+
+`up --wait` reports container health, and several shop services report healthy
+before they serve anything. All 28 have an application-level probe. Every probe
+below was corrected against a live stack rather than inferred from the Compose
+file:
+
+- `telemetry-docs` serves on 8000 and `quote` on 8090, not 8080;
+- `opamp-server` and `kafka` declare no ports, so they are probed by exec on
+  the internal listener; Kafka's CLI lives at `/opt/kafka/bin` and the broker
+  listens on `kafka:9092`, not `localhost`;
+- `image-provider` returns 403 on `/` because nginx denies directory listing;
+- `jaeger` is base-pathed, so `/api/services` is a 404 and the UI is under
+  `/jaeger/ui/`;
+- `flagd` and `flagd-ui` are distroless, so exec is impossible, and they are
+  unpublished, so the host cannot reach them. Both are probed from a throwaway
+  curl container on the project network, pinned by digest;
+- `accounting` and `fraud-detection` expose nothing at all, so readiness is
+  read from the broker's consumer-group list, which is an external fact rather
+  than a self-report.
+
+A probe that cannot be evaluated is recorded as not-ready with a reason. It is
+never skipped and never aborts the sweep, so "could not tell" stays distinct
+from "not ready".
+
+### The fault flags are read from flagd, not assumed
+
+The healthy baseline requires every fault flag off. The gate reads resolved
+state from flagd's OFREP endpoint and compares *variant* rather than value,
+because several flags carry numeric or duration payloads whose neutral setting
+is not boolean false. It fails closed: state it cannot read is not a clean
+baseline, and a flag missing from the response is unknown rather than off.
+
+The expected baseline is recorded from a verified-clean stack rather than
+derived from `defaultVariant`. `productCatalogFailure` is the only flag with
+targeting rules, and targeting bypasses the default, so a baseline derived from
+defaults would disagree with reality for that flag. On 3.1.0 the recorded state
+and the shipped defaults agree exactly, and a test pins that agreement so a
+newly targeted flag surfaces rather than quietly weakening the gate.
+
+### CPU limits are fitted, applied to every service, and verified by the kernel
+
+Upstream declares `deploy.resources.limits.memory` on all 28 services and
+`cpus` on none, so 28 services contend freely for the host's cores underneath
+every measurement.
+
+Limits are fitted as `max(2 x measured healthy peak, 8.0 cores)` and committed
+in `cpu-limits.json`. The rule is frozen in code and the loader refuses a
+manifest fitted under a different rule, so the committed numbers cannot drift
+away from a fitting anyone can reproduce. `tools/refit_cpu_limits.py` applies
+the rule to a recorded measurement, so the file is reproducible rather than
+hand-edited.
+
+On this host class no measured peak reaches half the floor, so every service
+receives the same 8.0 cores and the multiplier does not bind. The uniformity
+is wanted: the agent under test reads this Compose file, and limits fitted
+per service would tell it which service we expect to strain before it read any
+telemetry.
+
+**These limits are guard rails, not constraints, and that is deliberate.** The
+first two fits tried to be tight, and both were wrong in instructive ways.
+
+The first fitted `max(2 x peak, 0.25)` from `docker stats` peaks. The kernel
+then throttled 19 of 28 services. A `docker stats` percentage averages over a
+multi-second interval while a CPU quota binds within a 100ms scheduling
+period, so the peaks were understated by up to seventeenfold: `email` measured
+0.05 cores against a true peak of 0.87 and throttled 11% of its periods. The
+three worst-throttled services were exactly the three most understated.
+
+The failure of that fit's positive control mattered more than the fit. A
+service deliberately starved to a quarter of its measured peak throttled
+*zero* times. The quota had reached the daemon and the service was being
+measured, so the instrument was working.
+
+The first published explanation for that was wrong, and the correction is more
+useful than the original claim. It said the load generator had been throttled,
+so it offered less load, so downstream services saw lighter traffic. The load
+generator was throttled, but only for 2.3% of its periods, and that cannot take
+`product-catalog` from a 1.49-core peak to under 0.25 cores in every one of 906
+periods. A container capped at 0.25 cores cannot reach 1.49, so the only
+question is whether the demand existed and was suppressed, which shows as
+throttling, or never arrived, which does not. Zero throttled periods means it
+never arrived.
+
+What actually suppressed it was **`frontend`**, the direct caller of
+`product-catalog`, capped at 0.26 cores against a 0.52-core measured peak and
+throttled 9% of its periods. The mechanism is not a few percent of lost
+throughput, it is burst smoothing. During a burst `frontend` wants 0.52 cores
+and can have 0.26, so the burst is served at half rate over twice the time.
+`product-catalog` then sees a flattened arrival stream. It has a 35x
+peak-to-mean ratio, 1.49 cores against 0.042, and a service shaped like that is
+taken under quota by flattening alone while its total work barely moves.
+
+Two consequences follow, and both are larger than the corrected sentence.
+**A binding CPU limit does not merely add noise to a measurement; it suppresses
+the load that would have revealed the noise**, and it does so anywhere in the
+request path rather than only at the load generator. And because `frontend` was
+throttled in both arms of that experiment, the whole of the first fit's
+verification measured a stack that was already degraded. "This service is fine
+at its fitted quota" was true only of suppressed load. That is the real reason
+the first fit was discarded, and it is a stronger argument for a uniform floor
+than the original one: the only configuration that can be trusted is one where
+nothing binds anywhere in the path.
+
+The request path is load-generator, then `frontend-proxy`, then `frontend`,
+then the rest, so the zero-throttle check has to hold on every service in that
+chain on every cycle, not only at fit time. It covers all 28.
+
+Refitting from kernel counters at a 1.0 floor cleared the steady-state window
+but not the kernel's lifetime counters: kafka had spent 131 throttled periods
+starting up, ad 60, fraud-detection 39. A probe at uniform quotas then
+bracketed the floor. At 4.0 cores kafka still throttled one period during
+startup; at 8.0 every service was clean for its whole life. One period out of
+thousands means 4.0 sits on the edge, and a limit on the edge binds on some
+runs and not others, which is the run-to-run variance this driver exists to
+remove.
+
+The arithmetic is not the evidence. A limit is accepted only if the kernel
+reports **zero throttled periods over each container's whole life**, read from
+each container's cgroup `cpu.stat`:
+
+- **Lifetime, not a sampled window.** An earlier version subtracted window
+  open from window close on the reasoning that only throttling during
+  measurement can corrupt a measurement. Measurement disproved the premise:
+  throttling lengthens bring-up, so readiness timing becomes a function of
+  host contention, which is variance in the environment itself. The window
+  figures are still reported, because they localise *when* throttling
+  happened, which a lifetime total cannot.
+- **No tunable threshold.** The window criterion came with a budget
+  percentage. Periods throttled inside a window are a subset of those counted
+  since container start, so the lifetime criterion subsumes it entirely and
+  the budget could never decide a verdict. It was removed rather than left as
+  a knob that invites being turned until the gate passes.
+- **Every service, including the two we cannot exec into.** Readings come from
+  the host cgroup hierarchy through a sidecar run with `--cgroupns=host` and a
+  read-only bind of `/sys/fs/cgroup`. It needs no `--privileged` (verified) and
+  never receives the Docker socket. An exempt service is exactly where an
+  unnoticed throttle would hide.
+
+A window with no scheduling periods is recorded as unmeasured, not as clean,
+and a service absent from a reading fails the verdict rather than passing by
+omission.
+
+Two limits of this approach are worth stating plainly. A quota of 8.0 cores on
+a ten-core host does not meaningfully constrain a single container, and the
+limits sum to 224 cores on a ten-core machine. That sum is not a statement of
+demand and should never be read as one. A CPU limit is a ceiling, not a
+reservation, so nothing is set aside and the total is free to exceed the host.
+Actual demand is the measured column in the fit, and it totals well under one
+core at the mean. The limits do not protect against several services bursting
+at once and saturating the host; what covers that is the plan's rule of one
+trial at a time per machine, together with the offered-load gate, which
+refuses a verdict on any cycle whose achieved request rate left the frozen
+band whatever the cause. And the floor is fitted for this host class. A VM with
+fewer cores needs its own fit, and the loader will reject the committed file
+there rather than apply a number nobody measured on it.
+
+### Egress: `internal: true` works, and costs all port publishing
+
+Measured rather than assumed, with a control. On a routing bridge a probe
+container reached the internet (HTTP 301); on an `internal` network the same
+probe failed to connect (`curl` exit 7) while container-to-container DNS still
+resolved.
+
+Running the whole 28-service stack on an internal network seals egress and
+breaks the harness, and the split is total:
+
+| probe kind | ready | failed |
+| --- | --- | --- |
+| consumer-group | 2 | 0 |
+| exec | 5 | 0 |
+| internal-http | 2 | 0 |
+| http | 0 | 8 |
+| tcp | 0 | 11 |
+
+All 19 failures report `container port N is not published`. This is the same
+constraint the catalog app hit: **Docker publishes no host ports for a
+container that is only on an `internal` network.** The shop will need the same
+shape the catalog app uses, a routed network for the ingress container and an
+internal one for the rest.
+
+### Only one service reaches outside at startup, and it is a determinism problem
+
+Checked by reading all 28 service logs, not by watching for healthcheck
+failures, because a service that reaches out and then degrades quietly would
+never fail a healthcheck. Four services logged connection or DNS errors and
+three are false positives worth naming, since each would have been easy to
+misreport:
+
+- `frontend-proxy` to `www.envoyproxy.io` is a documentation link inside a
+  deprecation warning;
+- `otel-collector` to `github.com` is a README link inside a feature-gate
+  warning;
+- `jaeger` and `otel-collector` failing to resolve `prometheus` and
+  `otel-collector` are *internal* names during startup ordering. On an internal
+  network Docker's embedded DNS cannot forward, so a not-yet-registered
+  container returns "server misbehaving" rather than NXDOMAIN. Both recovered.
+
+The one real egress is **grafana to `grafana.com`**. `compose.observability.yaml`
+sets `GF_INSTALL_PLUGINS=grafana-opensearch-datasource`, so grafana downloads an
+unpinned plugin from a third party on every startup. That defeats the
+byte-identical environment premise on the routed network we use today, not only
+on an internal one, and the digest manifest does not cover it because the plugin
+arrives after the image.
+
+### A dangling exporter, now stripped
+
+The collector's observability config exports to `firepit:4317`. No Compose file
+in our set declares `firepit` and it is not among the 28, so the exporter
+retries against a host that will never exist for the whole of every measurement
+window. That burns CPU and fills the collector's logs during the exact window we
+are measuring, which is the reason it had to go rather than be tolerated.
+
+`derive_collector_config.py` now removes the exporter definition and its one
+pipeline entry, alongside the two receivers it already removed. The derived
+files are committed and hashed into the run record, so the removal is a recorded
+fixture change rather than a silent difference in what the collector was told to
+do.
+
+One asymmetry in that tool is worth knowing about, because getting it wrong
+would have been quiet and expensive. Receivers are matched on the part of the
+name before the slash, because that part names the receiver's type and every
+instance of the type is going. Exporters are matched on the **full** name. The
+exporter being removed is `otlp_grpc/firepit`, and `otlp_grpc` is also the type
+of `otlp_grpc/jaeger`, which carries every trace an agent under test would
+diagnose from. A type-level match would have deleted both, and the result would
+still have been valid YAML that started cleanly, so nothing would have failed
+until someone noticed the traces were missing. There is a test for the removal
+and a separate test asserting Jaeger survives it.
+
+A pipeline that would be left with no exporters at all is a hard error rather
+than something written out, since the collector rejects an empty exporter list
+at startup and the symptom would be an `up --wait` timeout well away from the
+cause.
+
+### The independent variable is measured, not assumed
+
+Every tolerance in this suite describes how the stack behaves *under a stated
+load*. That load is an assumption until someone measures it. If the load
+generator itself is starved, it offers fewer requests, the stack answers them
+comfortably, and the cycle records low, stable latencies. That cycle does not
+merely pass. It looks like the best result in the set, and it is the one a
+careless reader would hold up as the target. The failure is silent and it
+flatters itself, which is the combination worth engineering against.
+
+So each cycle records the generator's achieved request rate and is scored only
+if that rate falls inside a frozen band. Four details each change the number:
+
+  - **Attempts, not successes.** A fault that breaks responses must not void
+    the measurement built to observe it. Counting successes would make a
+    working incident indistinguishable from a broken measurement.
+  - **Read inside the container.** The counter is fetched by `exec`, so no port
+    has to be published. The stack runs on an internal network where Docker
+    publishes nothing, and a measurement that needed a published port would
+    have to punch a hole for itself.
+  - **The container's own clock, in the same call.** Timing the `docker exec`
+    round trip from the host would fold process startup, tens of milliseconds
+    and varying with host load, into the elapsed time and so into the rate.
+  - **Fitted on the median.** One bad cycle during fitting cannot widen the
+    band far enough to admit its own kind.
+
+The verdict is tri-state, not a boolean. Out of band is not a failed trial, it
+is a **failed measurement**: it yields no verdict and is counted rather than
+scored. Collapsing that into pass/fail is precisely what lets a bad measurement
+be read as a good result.
+
+The control was run live against the 28-service shop, one stack, one variable
+changed. The quota was applied with `docker update` rather than by editing the
+Compose file, because recreating the container would restart Locust and reset
+the counter the gate differences.
+
+    healthy                1.189 rps   scored
+    generator at 0.1 core  0.698 rps   no verdict   (41.3% drop)
+    band                   0.951 to 1.427 rps
+
+The starved arm was caught on rate alone. User count stayed at 5 and state
+stayed `running` in both arms, so no side channel did the work. Had it tripped
+on `state` instead, the band would still be untested and the control would have
+proved nothing about the thing it was built to check.
+
+Two limits are worth stating plainly, because neither is a property of the code
+and neither can be fixed by tightening a constant.
+
+**Counting noise sets a floor on the band.** At 1.189 rps over 300 s a cycle
+sees about 357 requests, so Poisson counting alone contributes about 5.3%
+relative noise. The band is ±20%, roughly 3.8 sigma, which is sound. But it
+cannot be tightened much further without longer windows or heavier load.
+
+**Locust is closed-loop, so offered load is not fully independent of health.**
+Each of the fixed five users waits for a response before issuing the next
+request, so a slow stack lowers the offered rate by construction. The band
+therefore describes the **healthy baseline only**. Applied to an incident
+phase it would refuse a verdict exactly when an incident worked. Incident
+phases need their own expectation, and this gate is not it.
+
+### Every healthy baseline failure is one absent host
+
+The healthy baseline failed about one request in fifteen. A floor that size
+cannot be fitted over, because an incident's signal has to clear it before it
+is visible, and an unexplained floor might have been our own derivation
+breaking something.
+
+It was measured per endpoint, with pristine upstream `3.1.0` as the control:
+same host, same load, same window, the vendored Compose files run unmodified
+from their own directory.
+
+    derived    21 failures / 313 requests    6.71%
+    upstream   24 failures / 340 requests    7.06%
+
+Two things settle it. The rates match, with the derived stack marginally
+*lower*, and in both arms every single failure is the same endpoint, `POST
+/prompt`, which fails **100%** of the time. No other endpoint failed once in
+either arm. The set of endpoints failing only in the derived stack is empty, so
+nothing in the derivation, not the stripped collector receivers, not the
+unpublished flag services, not the renamed networks, and not the CPU limits,
+broke anything.
+
+The cause is exact. Locust reports `gaierror(-2, 'Name or service not known')`,
+a DNS failure rather than an application error, and the load generator's
+`ask_agent` task posts to `http://agent:8010/prompt`. No `agent` service is
+declared in `compose.yaml`, `compose.full.yaml` or `compose.observability.yaml`.
+The service exists in the release's Helm chart but not in its Compose
+deployment, while the load generator baked into the Compose image calls it
+regardless. The task carries `@task(3)`, which is about the right share of the
+weighted total to produce the observed rate.
+
+This is the same family as the `firepit` exporter: a reference to a host that
+never exists in this deployment, retried for the whole of every measurement
+window. It is upstream behaviour, not ours, and the decision it needs is a
+fixture decision rather than a bug hunt. Leaving it costs a constant DNS
+failure on a known endpoint and a floor under every latency distribution that
+includes it. Removing it means setting `AGENT_ENDPOINT` at a host that exists
+or dropping the task, either of which is a fixture change that must be declared
+and re-fitted. **Nothing should be fitted until this is decided**, because the
+floor moves when it is.
+
+Two limits on the evidence, both recorded rather than worked around. Locust's
+own `Aggregated` row is returned alongside the per-endpoint rows, so the raw
+totals in the artifact double-count; the ratios are unaffected because
+numerator and denominator double together, and the per-endpoint figures above
+are the real ones. And the flag state could not be read in the upstream arm,
+because upstream hard-codes its network name, which is one of the three
+isolation defects the derivation exists to fix. The derived arm read all 18
+flags directly from flagd and every one was off. Both arms load the identical
+vendored flag file, so the upstream arm's flags are the same by construction,
+but that is an inference and the derived arm's reading is the measurement.
+
+### The load the tolerances assume
+
+On record, from the vendored release and the image, so the number behind every
+tolerance is not folklore:
+
+    users                 5          (LOCUST_USERS)
+    spawn rate            1/s        Locust's default, not set by the release
+    think time            between(1, 10) seconds per user
+    user mix              9 HTTP to 1 browser
+    autostart             true, web UI enabled (not headless)
+    locust                2.44.4
+    achieved rate         about 1.0 to 1.2 requests per second
+
+At roughly 350 requests in a 300 second window, Poisson counting alone
+contributes about 5% relative noise, which is the floor under how tight the
+offered-load band can be set. Raising the load is a pilot-calibration decision
+and a fixture change, so the release default stands until someone makes it.

@@ -24,8 +24,24 @@ from typing import Any, Sequence
 
 from .docker_cli import daemon_info
 from .environment import EnvironmentSpec, TrialEnvironment
+from .hostclass import (
+    HostClassError,
+    HostFacts,
+    derive_class_id,
+    derive_fingerprint,
+    observe_host,
+)
 from .incidents import MYSQL_POOL_DELAY_V1, IncidentVariant
 from .load import LoadProfile
+from .qualification import (
+    MIN_REQUALIFICATION_CYCLES,
+    QualificationError,
+    Requalification,
+    evaluate_scored_readiness,
+    load_requalifications,
+    record_requalification,
+)
+from .qualification import store_path as qualification_store_path
 
 HEALTHY_PROFILE = LoadProfile(
     name="healthy-baseline",
@@ -263,6 +279,142 @@ DECLARED_TOLERANCES: tuple[Tolerance, ...] = (
 # and loose enough not to be brittle. Any nonzero reading is worth investigating
 # even though it passes.
 MAX_ERROR_RATE = 0.005
+
+
+# ---------------------------------------------------------------------------
+# Tolerances are frozen per host class, and an unknown host class gets no
+# verdict.
+#
+# Every bound above was fitted by measuring one machine. None of them is a
+# statement about benchmarking in general; each is a statement about how much
+# that machine varies from run to run. Applying them to a cloud virtual
+# machine with a different core count, a different memory envelope and no
+# hypervisor in the middle would produce a verdict indistinguishable from a
+# real one and worth nothing.
+#
+# So the suite looks its tolerances up by the host class it observed. A class
+# with no frozen entry does not fall back to the nearest set, and does not
+# pass with a warning. It refuses to give a verdict, and the refusal is a
+# failure: `exitCriterionMet` is false and the reason is named. Refusing is
+# the only safe default, because the alternative -- reusing bounds fitted
+# elsewhere -- fails silently and looks like success.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ToleranceSet:
+    """Bounds fitted on one host class, and the provenance of that fitting.
+
+    `fitted_on` and `fitted_at_commit` are recorded because a tolerance whose
+    origin nobody can name is not frozen in any meaningful sense; it is just a
+    number in the source that someone can quietly adjust.
+    """
+
+    host_class: str
+    description: str
+    fitted_on: str
+    fitted_at_commit: str
+    tolerances: tuple[Tolerance, ...]
+    max_error_rate: float
+    max_stall_rate: float
+    # The fingerprint observed when these bounds were fitted. `None` means the
+    # fitting predates fingerprint capture, which is treated as a mismatch
+    # rather than a match: scored trials stay blocked until a short
+    # re-qualification run records the current fingerprint. See
+    # `qualification.compare_fingerprints`.
+    fitted_fingerprint: str | None = None
+
+
+# The machine the catalog-app bounds were fitted and held out on. Derived by
+# `hostclass.derive_class_id`, never typed in by a caller.
+LAPTOP_M5_CLASS_ID = "darwin-arm64-apple-m5-10c-32.0gib-docker-vm-10c-7.7gib"
+
+FROZEN_TOLERANCE_SETS: dict[str, ToleranceSet] = {
+    LAPTOP_M5_CLASS_ID: ToleranceSet(
+        host_class=LAPTOP_M5_CLASS_ID,
+        description=(
+            "Apple M5 laptop, 10 cores and 32 GiB, running containers inside "
+            "the Docker Desktop virtual machine with 10 cores and 7.7 GiB. "
+            "Note that the containers get the virtual machine's 7.7 GiB, not "
+            "the laptop's 32 GiB."
+        ),
+        fitted_on="10-cycle calibration, then a separate 10-cycle holdout",
+        fitted_at_commit="0407638",
+        tolerances=DECLARED_TOLERANCES,
+        max_error_rate=MAX_ERROR_RATE,
+        max_stall_rate=MAX_STALL_RATE,
+        # Deliberately unknown. The holdout at 0407638 ran before the driver
+        # recorded host facts, and its report carries no fingerprint, so there
+        # is nothing to reconstruct one from. Writing today's fingerprint here
+        # would assert something no artifact supports. Unknown is treated as
+        # drifted, so scored trials on the catalog app stay blocked until a
+        # three-cycle re-qualification records the real one.
+        fitted_fingerprint=None,
+    ),
+}
+
+
+def resolve_tolerance_set(
+    facts: "HostFacts | None",
+) -> tuple[ToleranceSet | None, dict[str, Any]]:
+    """Find the frozen bounds for the observed host, or refuse.
+
+    Returns the set and an audit block. The audit block is always written to
+    the report, including on refusal, so a run that gave no verdict still says
+    which machine it saw and which classes it would have accepted.
+    """
+    audit: dict[str, Any] = {
+        "knownHostClasses": sorted(FROZEN_TOLERANCE_SETS),
+        "note": (
+            "Tolerances are fitted per host class by measurement. A host class "
+            "with no frozen set gets no verdict rather than borrowed bounds, "
+            "because borrowed bounds fail silently and look like success."
+        ),
+    }
+
+    if facts is None:
+        audit.update(
+            observedClass=None,
+            fingerprint=None,
+            resolved=False,
+            refusal="the host was not observed, so no tolerances could be selected",
+        )
+        return None, audit
+
+    audit["facts"] = facts.to_dict()
+    audit["fingerprint"] = derive_fingerprint(facts)
+
+    try:
+        class_id = derive_class_id(facts)
+    except HostClassError as exc:
+        audit.update(
+            observedClass=None,
+            resolved=False,
+            refusal=f"the host could not be classified: {exc}",
+        )
+        return None, audit
+
+    audit["observedClass"] = class_id
+    resolved = FROZEN_TOLERANCE_SETS.get(class_id)
+    if resolved is None:
+        audit.update(
+            resolved=False,
+            refusal=(
+                f"no frozen tolerance set exists for host class {class_id!r}; "
+                "fit and freeze one on this host class before asking for a verdict"
+            ),
+        )
+        return None, audit
+
+    audit.update(
+        resolved=True,
+        refusal=None,
+        fittedOn=resolved.fitted_on,
+        fittedAtCommit=resolved.fitted_at_commit,
+        description=resolved.description,
+    )
+    return resolved, audit
+
 
 # The incident must demonstrably degrade performance, otherwise the environment
 # is not exercising the scenario at all.
@@ -604,6 +756,17 @@ def run_suite(
     suite_start_epoch = time.time()
     started_mono = time.monotonic()
     provenance = suite_provenance(repo_root, suite_id, suite_dir)
+    host_facts = observe_host()
+    provenance["host"] = host_facts.to_dict()
+    provenance["hostFingerprint"] = derive_fingerprint(host_facts)
+    # Read before the suite runs. The scored-start gate must describe the state
+    # the suite began in, otherwise a run that records its own re-qualification
+    # would report itself as already cleared.
+    prior_requalifications = load_requalifications()
+    provenance["qualificationStore"] = str(qualification_store_path())
+    provenance["priorRequalifications"] = [
+        record.to_dict() for record in prior_requalifications
+    ]
     power_before = host_power_state()
     _write_json(suite_dir / "provenance.json", provenance)
 
@@ -687,6 +850,8 @@ def run_suite(
         setup_cycles=setup_cycles,
         warmups=warmups,
         suite_start_epoch=suite_start_epoch,
+        host_facts=host_facts,
+        prior_requalifications=prior_requalifications,
     )
     report["provenance"] = provenance
     report["wallClockSeconds"] = round(time.time() - suite_start_epoch, 1)
@@ -700,12 +865,59 @@ def run_suite(
         3,
     )
     annotate_power(report, power_before, host_power_state())
+    _maybe_record_requalification(report, host_facts, provenance)
     # The README documents this path, and for a while the code did not
     # produce it: run_suite returned the report and only the CLI printed it,
     # mixed into progress output. The holdout's report survived because an
     # external harness wrote it, which is not a property to depend on.
     _write_json(suite_dir / "determinism-report.json", report)
     return report
+
+
+def _maybe_record_requalification(
+    report: dict[str, Any], host_facts: HostFacts, provenance: dict[str, Any]
+) -> None:
+    """Record a passing short check so the next run clears the scored gate.
+
+    Only writes when the suite met its exit criterion over at least the
+    minimum number of cycles, against bounds that actually resolved. A failing
+    or truncated suite records nothing, which is the point: the gate clears on
+    evidence that the frozen bounds still hold, not on having run at all.
+    """
+    qualification = report.get("hostQualification", {})
+    readiness = qualification.get("scoredTrials", {})
+    if not report.get("exitCriterionMet") or not qualification.get("verdictPossible"):
+        return
+    if readiness.get("allowed"):
+        return
+    fingerprint = (readiness.get("fingerprint") or {}).get("observed")
+    host_class = qualification.get("observedClass")
+    if not fingerprint or not host_class:
+        return
+    cycles = int(report.get("cycles", 0))
+    if cycles < MIN_REQUALIFICATION_CYCLES:
+        return
+    try:
+        record = record_requalification(
+            host_class=host_class,
+            fingerprint=fingerprint,
+            cycles=cycles,
+            suite_id=str(report.get("suiteId", "")),
+            driver_commit=str(provenance.get("commit", "")),
+            tolerances_fitted_at_commit=str(qualification.get("fittedAtCommit", "")),
+        )
+    except QualificationError as exc:
+        readiness["requalificationRecorded"] = False
+        readiness["requalificationError"] = str(exc)
+        return
+    readiness["requalificationRecorded"] = True
+    readiness["requalificationRecord"] = record.to_dict()
+    readiness["requalificationNote"] = (
+        "This suite was blocked from starting scored trials and has now "
+        "recorded a re-qualification for the observed fingerprint. The block "
+        "above describes the state this run began in; the next run on this "
+        "fingerprint is allowed."
+    )
 
 
 def annotate_power(
@@ -746,6 +958,8 @@ def build_report(
     setup_cycles: list[dict[str, Any]] | None = None,
     warmups: list[dict[str, Any]] | None = None,
     suite_start_epoch: float | None = None,
+    host_facts: HostFacts | None = None,
+    prior_requalifications: list[Requalification] | None = None,
 ) -> dict[str, Any]:
     """Assemble the determinism report from finished cycles.
 
@@ -755,9 +969,18 @@ def build_report(
     CycleResult, so any suite containing a stall raised AttributeError
     before writing anything. The unit tests all passed, because none of
     them ran this function with a nonzero stall count.
+
+    ``host_facts`` selects which frozen tolerance set applies. Passing None
+    means the host was never observed, which is a refusal to give a verdict
+    rather than a licence to use whichever bounds happen to be in the source.
     """
     setup_cycles = setup_cycles or []
     warmups = warmups or []
+
+    tolerance_set, host_qualification = resolve_tolerance_set(host_facts)
+    declared = tolerance_set.tolerances if tolerance_set else ()
+    max_error_rate = tolerance_set.max_error_rate if tolerance_set else MAX_ERROR_RATE
+    max_stall_rate = tolerance_set.max_stall_rate if tolerance_set else MAX_STALL_RATE
 
     successful = [c for c in cycle_results if c.ok]
     metric_names = sorted({name for c in successful for name in c.metrics})
@@ -767,7 +990,7 @@ def build_report(
     }
 
     tolerance_report = []
-    for tolerance in DECLARED_TOLERANCES:
+    for tolerance in declared:
         stats = variance.get(tolerance.metric, {"n": 0})
         observed_cv = stats.get("cvPercent", math.inf)
         tolerance_report.append(
@@ -872,7 +1095,7 @@ def build_report(
         for name in ("healthy.stallRate", "incident.stallRate")
     }
     stall_budget = {
-        "maxStallRate": MAX_STALL_RATE,
+        "maxStallRate": max_stall_rate,
         "observedMaxRate": stall_rates,
         "totalStalls": {
             name: sum(
@@ -884,7 +1107,7 @@ def build_report(
         "observations": stall_observations,
         "withinBudget": bool(
             all(
-                not math.isnan(value) and value <= MAX_STALL_RATE
+                not math.isnan(value) and value <= max_stall_rate
                 for value in stall_rates.values()
             )
         ),
@@ -923,11 +1146,11 @@ def build_report(
         for name in ("healthy.errorRate", "incident.errorRate")
     }
     error_budget = {
-        "maxErrorRate": MAX_ERROR_RATE,
+        "maxErrorRate": max_error_rate,
         "observedMax": error_rates,
         "withinBudget": bool(
             all(
-                not math.isnan(value) and value <= MAX_ERROR_RATE
+                not math.isnan(value) and value <= max_error_rate
                 for value in error_rates.values()
             )
         ),
@@ -959,8 +1182,48 @@ def build_report(
     }
     suspension_audit["hostAwakeThroughout"] = not suspension_audit["suspendedCycles"]
 
+    # A verdict is only possible if there is something to check. The tolerance
+    # report is empty in exactly two cases -- no frozen set resolved for this
+    # host class, or a set resolved but carries no bounds -- and both must
+    # refuse, because `all([])` is True and would otherwise report a clean
+    # pass having checked nothing.
+    #
+    # This was originally written as `tolerance_set is not None and
+    # bool(tolerance_report)`. Mutation testing showed the first conjunct was
+    # unreachable as a sole cause: when no set resolves, `declared` is empty,
+    # so the second conjunct already covers it. Deleting either half left all
+    # 166 tests green, which meant neither was pinned. The dead half is gone
+    # and the surviving one is pinned by
+    # `test_a_registered_class_with_no_bounds_still_refuses`.
+    verdict_possible = bool(tolerance_report)
+    host_qualification["verdictPossible"] = verdict_possible
+    if not verdict_possible and not host_qualification.get("refusal"):
+        host_qualification["refusal"] = (
+            f"host class {host_qualification.get('observedClass')!r} resolved to a "
+            "frozen set with no tolerances in it, so there is nothing to check"
+        )
+
+    # The fingerprint gate is separate from the verdict on purpose. A patch
+    # bump does not void bounds fitted on the same performance envelope, so a
+    # drifted host still gets a verdict against them. What it does not get is
+    # permission to run scored trials, until a short re-qualification confirms
+    # the bump did not move the numbers. Evaluated against the records that
+    # existed before this run, so a suite cannot clear its own gate.
+    scored_readiness = evaluate_scored_readiness(
+        host_facts,
+        fitted_fingerprint=tolerance_set.fitted_fingerprint if tolerance_set else None,
+        tolerances_resolved=verdict_possible,
+        records=prior_requalifications,
+    )
+    host_qualification["fingerprintComparison"] = scored_readiness.fingerprint.to_dict()
+    host_qualification["fingerprintDrift"] = [
+        dict(entry) for entry in scored_readiness.fingerprint.drift
+    ]
+    host_qualification["scoredTrials"] = scored_readiness.to_dict()
+
     exit_criterion_met = bool(
-        len(successful) == cycles
+        verdict_possible
+        and len(successful) == cycles
         and all(c.cleanup_verified for c in cycle_results)
         and all(c.incident_verified for c in successful)
         and all(entry["withinTolerance"] for entry in tolerance_report)
@@ -976,6 +1239,7 @@ def build_report(
         "cycles": cycles,
         "successfulCycles": len(successful),
         "exitCriterionMet": exit_criterion_met,
+        "hostQualification": host_qualification,
         "dockerVersions": _daemon_versions(),
         "suiteStartedAt": (
             None
