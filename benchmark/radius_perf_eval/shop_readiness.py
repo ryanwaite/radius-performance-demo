@@ -10,12 +10,9 @@ broker is up but the consumer group has not joined, the search cluster is red.
 So every service gets a probe that is evaluated from outside the service, and
 sign-off requires all of them. The probes fall into three groups.
 
-HTTP probes run from the host against the port Compose assigned. The
-`unpublish-fixed-ports` transform removes upstream's fixed host ports but
-leaves the container ports declared, so Compose still publishes each one on
-an ephemeral host port. Those ports change every time a container is
-recreated, so they are rediscovered rather than remembered; see
-`discover_ports`.
+Only the ingress HTTP probe uses an ephemeral host port. Other HTTP probes
+run on the internal bridge. TCP probes run from the Python load-generator
+container, which joins that same bridge.
 
 Exec probes run a command inside a container, for the services whose
 readiness is not an HTTP fact: the broker, the databases, the cache.
@@ -181,13 +178,17 @@ def _http_probe(
 
 def _tcp_probe(service: str, container_port: int) -> Probe:
     def evaluate(context: ProbeContext) -> ProbeResult:
-        port = context.host_port(service, container_port)
-        try:
-            with socket.create_connection(("127.0.0.1", port), context.timeout):
-                pass
-        except OSError as error:
-            return ProbeResult(service, "tcp", False, "", str(error))
-        return ProbeResult(service, "tcp", True, f"connected to 127.0.0.1:{port}")
+        code = (
+            "import socket;"
+            f"s=socket.create_connection(({service!r},{container_port}),{context.timeout!r});"
+            "s.close();print('TCP_OK')"
+        )
+        result = context.exec_in("load-generator", ["python", "-c", code])
+        return ProbeResult(
+            service, "tcp", result.returncode == 0 and result.stdout.strip() == "TCP_OK",
+            f"{service}:{container_port}: {result.stdout.strip()}",
+            result.stderr.strip()[:200],
+        )
 
     return Probe(service, "tcp", f"TCP connect to container port {container_port}", evaluate)
 
@@ -208,6 +209,7 @@ def _internal_http_probe(
         url = f"http://{service}:{container_port}{path}"
         result = subprocess.run(
             ["docker", "run", "--rm", "--network", f"{context.project}_default",
+             "--label", f"com.docker.compose.project={context.project}",
              PROBE_IMAGE, "-s", "-o", "/dev/null", "-w", "%{http_code}",
              "--max-time", str(int(context.timeout)), url],
             capture_output=True, text=True, timeout=context.timeout * 6,
@@ -293,15 +295,15 @@ def build_probes() -> tuple[Probe, ...]:
     probes: list[Probe] = [
         # Edge and application services.
         _http_probe("frontend-proxy", 8080, "/", expect=(200, 301, 302)),
-        _http_probe("frontend", 8080, "/", expect=(200, 301, 302)),
-        _http_probe("image-provider", 8081, "/Banner.png"),
-        _http_probe("telemetry-docs", 8000, "/", expect=(200, 301, 302)),
-        _http_probe("quote", 8090, "/", expect=(200, 404)),
+        _internal_http_probe("frontend", 8080, "/", expect=(200, 301, 302)),
+        _internal_http_probe("image-provider", 8081, "/Banner.png"),
+        _internal_http_probe("telemetry-docs", 8000, "/", expect=(200, 301, 302)),
+        _internal_http_probe("quote", 8090, "/", expect=(200, 404)),
 
         # Observability back ends, each asked the question that matters.
-        _http_probe("grafana", 3000, "/api/health"),
-        _http_probe("prometheus", 9090, "/-/ready"),
-        _http_probe("jaeger", 16686, "/jaeger/ui/api/services"),
+        _internal_http_probe("grafana", 3000, "/api/health"),
+        _internal_http_probe("prometheus", 9090, "/-/ready"),
+        _internal_http_probe("jaeger", 16686, "/jaeger/ui/api/services"),
 
         # opamp-server publishes no port, so its readiness is read by asking
         # it from inside its own network namespace rather than from the host.
@@ -410,7 +412,7 @@ def evaluate_all(context: ProbeContext) -> tuple[list[ProbeResult], bool]:
                     f"{type(error).__name__}: {error}",
                 )
             )
-    return results, all(result.ready for result in results)
+    return results, bool(results) and all(result.ready for result in results)
 
 
 # ---------------------------------------------------------------------------
@@ -442,7 +444,7 @@ class FlagState:
         those are the same only if you are willing to score a trial whose
         fault state you never checked.
         """
-        return self.readable and not self.unexpected_on and not self.missing
+        return bool(self.expected) and self.readable and not self.unexpected_on and not self.missing
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -469,7 +471,8 @@ def read_flag_state(project: str, timeout: float = 10.0) -> tuple[bool, dict[str
     setting is not the boolean false.
     """
     result = subprocess.run(
-        ["docker", "run", "--rm", "--network", f"{project}_default", PROBE_IMAGE,
+        ["docker", "run", "--rm", "--network", f"{project}_default",
+         "--label", f"com.docker.compose.project={project}", PROBE_IMAGE,
          "-s", "-X", "POST", "-H", "Content-Type: application/json", "-d", "{}",
          "--max-time", str(int(timeout)),
          f"http://flagd:{FLAGD_OFREP_PORT}{FLAGD_BULK_PATH}"],
@@ -503,7 +506,7 @@ def evaluate_flag_gate(project: str, expected: Mapping[str, str], timeout: float
         sorted(
             name
             for name, variant in resolved.items()
-            if name in expected and variant != expected[name]
+            if name not in expected or variant != expected[name]
         )
     )
     missing = tuple(sorted(set(expected) - set(resolved)))

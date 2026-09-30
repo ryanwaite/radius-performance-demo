@@ -118,6 +118,8 @@ def main() -> int:
     target = repo_root / MANIFEST_PATH
     if target.exists():
         existing = json.loads(target.read_text())
+        if "startupAssets" in existing:
+            payload["startupAssets"] = existing["startupAssets"]
         if existing.get("manifestHash") == payload["manifestHash"]:
             print(f"unchanged: {payload['manifestHash']}")
             return 0

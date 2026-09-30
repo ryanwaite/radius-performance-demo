@@ -16,6 +16,12 @@ not required for this finish line.
 
 ## Delivery sequence
 
+**Implementation progress:** the M1 environment driver and offline startup
+assets are implemented on this branch. Its live acceptance check currently
+stops at OpenSearch log ingestion; failed attempts preserve evidence and
+verify cleanup. M1 is not complete. The dashboard is implemented, but M2's
+graded records/exporter and the later campaign milestones remain unbuilt.
+
 Each milestone is a reviewable PR or small sequence of PRs. Dependencies below
 are explicit; environment work and answer/report contracts can proceed
 independently. No date or campaign cost is promised before the first integrated

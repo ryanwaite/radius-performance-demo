@@ -42,7 +42,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
+import shlex
 import subprocess
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -305,6 +308,8 @@ def _full_ids_by_service(
             full_id, service = line.split("\t", 1)
             if full_id.strip() and service.strip():
                 full[full_id.strip()] = service.strip()
+    if len(full) != len(short_ids) or len(set(full.values())) != len(full):
+        raise CpuLimitError("container inventory is incomplete or contains duplicate services")
     return full
 
 
@@ -315,6 +320,7 @@ def sample_cpu_demand(
     interval_seconds: float = 0.25,
     timeout: float | None = None,
     runner=subprocess.run,
+    raw_path: Path | None = None,
 ) -> dict[str, DemandSample]:
     """Sample per-service CPU demand from the kernel for a whole project.
 
@@ -332,10 +338,11 @@ def sample_cpu_demand(
         raise CpuLimitError("interval_seconds must be positive")
 
     full = _full_ids_by_service(project, timeout=timeout or 120.0, runner=runner)
+    paths = resolve_cgroup_paths(full, project=project, timeout=timeout or 120.0, runner=runner)
 
     reads = "; ".join(
         f'printf "%s " {full_id}; '
-        f'awk "/usage_usec/{{print \\$2}}" /hostcg/docker/{full_id}/cpu.stat '
+        f'awk "/usage_usec/{{print \\$2}}" {shlex.quote("/hostcg" + paths[full_id] + "/cpu.stat")} '
         f'2>/dev/null || echo'
         for full_id in full
     )
@@ -349,20 +356,27 @@ def sample_cpu_demand(
         f'sleep {interval_seconds}; done'
     )
 
-    result = runner(
-        [
-            "docker", "run", "--rm", "--cgroupns=host",
-            "-v", f"{_CGROUP_ROOT}:/hostcg:ro",
-            "--entrypoint", "sh", SIDECAR_IMAGE, "-c", script,
-        ],
-        capture_output=True, text=True,
-        timeout=timeout or (duration_seconds + 120.0),
-    )
+    with ExitStack() as stack:
+        output: dict[str, Any] = {"capture_output": True}
+        if raw_path is not None:
+            stream = stack.enter_context(raw_path.open("x"))
+            output = {"stdout": stream, "stderr": subprocess.PIPE}
+            raw_path.with_suffix(".inventory.json").write_text(json.dumps(full, indent=2) + "\n")
+        result = runner(
+            [
+                "docker", "run", "--rm", "--cgroupns=host", "--network=none",
+                "--label", f"com.docker.compose.project={project}",
+                "-v", f"{_CGROUP_ROOT}:/hostcg:ro",
+                "--entrypoint", "sh", SIDECAR_IMAGE, "-c", script,
+            ],
+            **output, text=True, timeout=timeout or (duration_seconds + 120.0),
+        )
     if result.returncode != 0:
         raise CpuLimitError(f"demand sidecar failed: {result.stderr.strip()[:400]}")
 
     samples = parse_demand_stream(
-        result.stdout, full, expected_interval=interval_seconds
+        raw_path.read_text() if raw_path is not None else result.stdout,
+        full, expected_interval=interval_seconds
     )
     missing = sorted(set(full.values()) - set(samples))
     if missing:
@@ -371,6 +385,61 @@ def sample_cpu_demand(
             "must not be fitted from a peak of zero"
         )
     return samples
+
+
+def resolve_cgroup_paths(
+    containers: Mapping[str, str], *, project: str, timeout: float, runner=subprocess.run
+) -> dict[str, str]:
+    """Resolve Docker processes in the daemon's PID and cgroup namespaces."""
+    if not containers or any(
+        re.fullmatch(r"[0-9a-f]{64}", container) is None for container in containers
+    ):
+        raise CpuLimitError("cgroup resolution requires a nonempty full container inventory")
+    inspected = runner(
+        ["docker", "inspect", "--format", "{{.Id}}\t{{.State.Pid}}\t{{.State.Running}}",
+         *containers],
+        capture_output=True, text=True, timeout=timeout,
+    )
+    if inspected.returncode != 0:
+        raise CpuLimitError(f"cannot resolve container processes: {inspected.stderr.strip()}")
+    processes: dict[str, int] = {}
+    for line in inspected.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) != 3 or parts[0] not in containers or parts[2] != "true":
+            raise CpuLimitError(f"invalid or stopped container in cgroup inventory: {line!r}")
+        if not parts[1].isdigit() or int(parts[1]) <= 0 or parts[0] in processes:
+            raise CpuLimitError(f"invalid or repeated container process: {line!r}")
+        processes[parts[0]] = int(parts[1])
+    if set(processes) != set(containers):
+        raise CpuLimitError("container process inventory is incomplete")
+    script = "; ".join(
+        f"printf '%s\\t' {container}; "
+        f"awk -F: '$1 == \"0\" && $2 == \"\" {{print $3}}' /proc/{pid}/cgroup"
+        for container, pid in processes.items()
+    )
+    result = runner(
+        ["docker", "run", "--rm", "--pid=host", "--cgroupns=host", "--network=none",
+         "--label", f"com.docker.compose.project={project}",
+         "--entrypoint", "sh", SIDECAR_IMAGE, "-c", script],
+        capture_output=True, text=True, timeout=timeout,
+    )
+    if result.returncode != 0:
+        raise CpuLimitError(f"cannot read process cgroups: {result.stderr.strip()}")
+    paths: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) != 2 or parts[0] not in containers or parts[0] in paths:
+            raise CpuLimitError(f"invalid cgroup response: {line!r}")
+        path = parts[1]
+        if (
+            re.fullmatch(r"/[A-Za-z0-9_.:/-]+", path) is None
+            or any(part in ("", ".", "..") for part in path.split("/")[1:])
+        ):
+            raise CpuLimitError(f"unsafe or root cgroup path: {path!r}")
+        paths[parts[0]] = path
+    if set(paths) != set(containers):
+        raise CpuLimitError("cgroup paths are missing; no fallback layout is assumed")
+    return paths
 
 
 def cpu_limits_path(repo_root: Path) -> Path:
@@ -602,18 +671,21 @@ def read_throttling(
     covered by the same mechanism as everything else.
     """
     full = _full_ids_by_service(project, timeout=timeout, runner=runner)
+    paths = resolve_cgroup_paths(full, project=project, timeout=timeout, runner=runner)
 
     script_lines = []
     for full_id in full:
+        directory = "/hostcg" + paths[full_id]
         script_lines.append(
             f'echo "==={full_id}"; '
-            f'cat /hostcg/docker/{full_id}/cpu.stat 2>/dev/null; '
+            f'cat {shlex.quote(directory + "/cpu.stat")} 2>/dev/null; '
             f'echo "---max"; '
-            f'cat /hostcg/docker/{full_id}/cpu.max 2>/dev/null'
+            f'cat {shlex.quote(directory + "/cpu.max")} 2>/dev/null'
         )
     result = runner(
         [
-            "docker", "run", "--rm", "--cgroupns=host",
+            "docker", "run", "--rm", "--cgroupns=host", "--network=none",
+            "--label", f"com.docker.compose.project={project}",
             "-v", f"{_CGROUP_ROOT}:/hostcg:ro",
             "--entrypoint", "sh", SIDECAR_IMAGE, "-c", "; ".join(script_lines),
         ],
@@ -635,13 +707,15 @@ def read_throttling(
         if not service:
             return
         values = _parse_cpu_stat("\n".join(stat_text))
-        if "nr_periods" not in values:
-            return
+        if not {"nr_periods", "nr_throttled", "throttled_usec"} <= values.keys():
+            raise CpuLimitError(f"incomplete throttling counters for {service}")
+        if any(value < 0 for value in values.values()):
+            raise CpuLimitError(f"negative throttling counter for {service}")
         readings[service] = ThrottleReading(
             service=service,
             nr_periods=values.get("nr_periods", 0),
-            nr_throttled=values.get("nr_throttled", 0),
-            throttled_usec=values.get("throttled_usec", 0),
+            nr_throttled=values["nr_throttled"],
+            throttled_usec=values["throttled_usec"],
             quota_cores=_parse_cpu_max(max_text),
         )
 
@@ -656,6 +730,8 @@ def read_throttling(
         else:
             stat_text.append(line)
     flush()
+    if set(readings) != set(full.values()):
+        raise CpuLimitError("throttling inventory is incomplete")
     return readings
 
 
@@ -669,12 +745,19 @@ def verdict_from_readings(
     unmeasured: list[str] = []
     missing: list[str] = []
     bound: list[str] = []
+    errors: list[str] = []
+    if not expected:
+        errors.append("no expected services; throttling cannot be verified")
 
     for name in sorted(expected):
         start, end = opened.get(name), closed.get(name)
         if start is None or end is None:
             missing.append(name)
             continue
+        if end.nr_throttled < start.nr_throttled or end.throttled_usec < start.throttled_usec:
+            errors.append(f"{name}: throttling counters decreased during the window")
+        if start.quota_cores != expected[name] or end.quota_cores != expected[name]:
+            errors.append(f"{name}: observed CPU quota differs from the fitted limit")
         entry = ServiceThrottle(
             service=name,
             periods=end.nr_periods - start.nr_periods,
@@ -703,4 +786,5 @@ def verdict_from_readings(
         unmeasured=tuple(unmeasured),
         missing=tuple(missing),
         lifetime_bound=tuple(bound),
+        error="; ".join(errors),
     )

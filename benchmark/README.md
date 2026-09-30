@@ -1155,43 +1155,48 @@ driver actually calls. Several are libraries with tests and no caller yet.
     generator's own counter, scored only inside a frozen band.
   - The `firepit` exporter stripped from the derived collector config.
 
-**Which of those the trial driver calls: none of the shop-specific ones.**
-`trials.py` contains no reference to the Astronomy Shop. It still drives the
-catalog app. Everything above that is shop-specific is reached from the tools
-under `tools/` and from the test suite, and nowhere else. Concretely,
-`evaluate_all`, `evaluate_flag_gate`, `read_throttling`, `verdict_from_readings`
-and `evaluate_offered_load` have no call site outside `tests/`, and no
-`offered-load.json` exists for `load_band` to read, so the frozen band it
-compares against has never been written. These gates are implemented, tested,
-and in three cases demonstrated live against a running stack with a positive
-control; they are **not** wired into a trial. Treat the list above as "the
-mechanism exists and does what it claims when called", not as "a trial enforces
-this". Wiring them is on the not-built list below. The one exception is the
-fingerprint drift gate, which `trials.py` does call, because it guards the
-catalog app's scored start as well.
+**Added on this branch:** `shop_environment.py` calls the deployment,
+readiness, flag, lifetime-throttling and phase-specific load checks. The
+catalogue runner in `trials.py` is unchanged. The Shop command is an
+environment check, not an agent trial or a qualified campaign.
 
-**Not built**
+The startup assets include the public upstream `.env`, a derived load script
+without `ask_agent`, a derived proxy template blocking flag and mutable control
+routes, and Linux ARM64/AMD64 archives of OpenSearch plugin `2.34.4`. The archives
+contain the Apache-2.0 license and Grafana signature. Their declared Grafana
+dependency includes the pinned Grafana version. `startup-assets.json` records
+source URLs and hashes, and `image-digests.json` links those pins. Rendering
+verifies the assets and mounts them read-only; Grafana startup downloads are
+disabled. Only ingress publishes a loopback port. Backend readiness runs on
+the internal network.
 
-  - **Wiring the shop gates into a trial driver.** There is no shop equivalent
-    of `trials.py`. The gates listed above have to be called in cycle order,
-    their results recorded in the run record, and their refusals made to stop a
-    trial rather than return a value nobody reads. This includes writing the
-    `offered-load.json` band file that `load_band` expects; until it exists the
-    offered-load gate cannot run outside a test or the ad-hoc harness.
-  - **Grafana plugin vendoring.** Grafana is part of the agent's surface: the
-    agent may query it, and the plugin must be pinned in the repository rather
-    than downloaded at startup. Required: download
-    `grafana-opensearch-datasource` once at tooling time, at a version
-    compatible with the Grafana image pinned in `3.1.0`, and state how
-    compatibility was checked. Commit it under the vendored tree with its
-    version, source URL, SHA-256 and license. **Check the license before
-    committing; if it is anything other than a permissive license we can
-    redistribute, stop and report rather than commit it.** Mount it read-only
-    into Grafana's plugins directory and remove `GF_INSTALL_PLUGINS` from the
-    derived Compose. Put the plugin hash in the digest manifest beside the
-    image digests. Derivation must fail if the file is missing or its hash
-    differs, and must not let Docker create an empty mount in place of it.
-    Evidence required: Grafana starts on the internal network, stays healthy,
+With the locked environment installed, the environment-only check is:
+
+```bash
+benchmark/.venv/bin/radius-perf-eval-env shop --calibrate --seconds 60
+```
+
+This command was run during implementation. It currently **fails**, correctly,
+at the OpenSearch datasource-health gate. The plugin loaded, but reported
+`Index not found: otel-logs-*`. Collector logs also show permanent field-mapping
+failures. Do not interpret container readiness as usable log telemetry.
+The failed attempts verified cleanup. The full healthy window has not passed.
+
+`--calibrate` records a fitting sample without claiming a frozen load-band
+verdict. Without it, the driver refuses a missing or wrong-host band.
+Artifacts go to the checkout's sibling `radius-perf-eval-artifacts` directory.
+Each run writes an incremental measurement journal, an environment record,
+rendered Compose, raw load readings when reached, and failure logs. The schema
+is `radius-shop-environment-v1`, not a dashboard comparison report. Runtime
+bind copies are removed only after verified container cleanup.
+
+**Remaining acceptance work**
+
+  - **Qualification and campaign integration.** There is still no frozen
+    `offered-load.json`, Shop determinism campaign, agent trial, or report
+    exporter. A successful environment sample will not qualify a host.
+  - **Grafana and log ingestion.** Resolve the live failure without bypassing
+    the datasource gate. Evidence still required: Grafana stays healthy,
     and makes **no outbound request** (check its logs for `grafana.com` or any
     external host, not just `up --wait`); an OpenSearch-backed dashboard
     returns data, proving the plugin loaded rather than merely being present on
@@ -1202,20 +1207,18 @@ catalog app's scored start as well.
     to a fault flag or to flagd, and do not change them yet. Upstream routes
     Grafana through `frontend-proxy` at `/grafana`, so it should need no extra
     route off the internal network; confirm that.
-  - **The ingress and internal network split.** `internal: true` was shown to
-    work and to cost all port publishing, so the intended shape is one routed
-    network carrying a single ingress container with the egress check applied
-    to the other 27. That split is not implemented, and the egress check is not
-    yet applied per service.
-  - **The incident-phase load gate.** The rate band is valid for healthy cycles
+  - **The incident-phase load gate integration.** The implemented gate checks
+    generator activity, both window-boundary states and user counts, and its
+    lifetime throttling. Wire it to actual incident activation in M5/M6.
+    The rate band is valid for healthy cycles
     only, because Locust is closed-loop and a working incident legitimately
     lowers the rate. Incident phases must instead gate on the cause: the load
     generator's own lifetime throttled-period count must be zero, and it must
     be in the running state with its configured user count. Load-surge
     incidents declare their own expected rate.
-  - **The healthy failure rate** is explained and attributed, and needs a
-    decision rather than an investigation. See "Every healthy baseline failure
-    is one absent host" below.
+  - **The healthy failure rate.** The derived load script removes the known
+    absent-host task. A healthy measured window still has to establish that
+    no unexplained endpoint failures remain.
   - **The determinism fit and holdout.** Roughly three hours at about eight
     minutes a cycle, fitting on one set of cycles and validating on a separate
     holdout, following the catalog app's method. It needs the user's go-ahead
@@ -1225,20 +1228,13 @@ catalog app's scored start as well.
     Linux VM host class has no frozen tolerances, and by the rule above the
     suite will refuse to give a verdict there until it is qualified on that
     class. Nothing measured on this laptop transfers.
-  - **A cgroup path that only holds under the cgroupfs driver — a blocker for
-    VM qualification.** `cpu_limits.py` builds the throttling path by assuming
-    containers sit directly under the cgroup root, as they do inside Docker
-    Desktop's VM. On Linux with the **systemd** cgroup driver, which is the
-    default on most distributions and so the likely VM case, they sit under
-    `system.slice/docker-<id>.scope` instead. Every read then misses, and
-    because the check treats an unreadable counter as a refusal rather than a
-    pass, CPU-limit verification can never succeed there. It fails closed, so
-    it is safe to leave: the consequence is a host that cannot be qualified,
-    not a host that is qualified wrongly. It must be fixed before the VM host
-    class is fitted. The suggested fix is to stop constructing the path and
-    read it instead: resolve each container's cgroup from `/proc/<pid>/cgroup`,
-    which is correct under either driver. The two sites are the per-container
-    path construction and the verification read.
+  - **Live cgroup and demand verification.** Both CPU readers now resolve
+    `/proc/<pid>/cgroup` in the daemon's PID namespace rather than constructing
+    a cgroupfs-only path. Missing process/path/counter evidence fails closed.
+    The footprint tool streams raw kernel readings and emits a demand report
+    containing the observed host class, sample coverage, load and services with quotas.
+    Exercise this producer live and confirm the resolver on the Linux VM
+    before fitting that host class.
 
 ### It is 28 services, not 17
 

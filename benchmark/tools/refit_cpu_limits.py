@@ -110,7 +110,7 @@ def main() -> int:
 
     # Reading it back exercises every guard in load_fitted_limits, so the
     # tool cannot leave behind a file the driver would reject at run time.
-    cpu_limits.load_fitted_limits(REPO)
+    cpu_limits.load_fitted_limits(REPO, payload["fittedFrom"]["hostClass"])
     print("load_fitted_limits: accepted")
     return 0
 

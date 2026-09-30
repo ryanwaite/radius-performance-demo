@@ -2577,11 +2577,12 @@ class AstronomyShopTransformTests(unittest.TestCase):
         self.assertNotIn("name", config["networks"]["default"])
         self.assertEqual(config["networks"]["default"]["driver"], "bridge")
 
-    def test_published_ports_are_dropped_but_container_ports_are_kept(self):
+    def test_only_proxy_application_port_is_published_on_loopback(self):
         config = _fake_config()
         astronomy_shop.apply_transforms(config, _fitted_class())
         proxy = config["services"]["frontend-proxy"]["ports"]
-        self.assertEqual([p["target"] for p in proxy], [8080, 10000])
+        self.assertEqual([p["target"] for p in proxy], [8080])
+        self.assertEqual(proxy[0]["host_ip"], "127.0.0.1")
         for port in proxy:
             self.assertNotIn("published", port)
 
@@ -2592,11 +2593,12 @@ class AstronomyShopTransformTests(unittest.TestCase):
         for name in astronomy_shop.FLAG_SERVICES:
             self.assertEqual(config["services"][name]["ports"], [])
 
-    def test_a_service_the_transforms_do_not_target_is_untouched(self):
+    def test_internal_services_have_no_published_ports(self):
         config = _fake_config()
-        before = json.dumps(config["services"]["cart"]["ports"])
         astronomy_shop.apply_transforms(config, _fitted_class())
-        self.assertEqual(json.dumps(config["services"]["cart"]["ports"]), before)
+        self.assertEqual(config["services"]["cart"]["ports"], [])
+        self.assertEqual(config["services"]["cart"]["networks"], {"default": {}})
+        self.assertTrue(config["networks"]["default"]["internal"])
 
     def test_a_transform_with_nothing_to_remove_reports_an_empty_list(self):
         """An upstream bump that drops the socket mount itself must show up as

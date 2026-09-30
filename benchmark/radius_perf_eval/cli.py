@@ -33,6 +33,17 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_shop(args: argparse.Namespace) -> int:
+    from .shop_environment import ShopEnvironment
+
+    results = args.results_dir or args.repo_root.resolve().parent / "radius-perf-eval-artifacts"
+    environment = ShopEnvironment(args.repo_root, results)
+    print(f"artifacts: {environment.run_dir}", file=sys.stderr, flush=True)
+    record = environment.run_healthy(args.seconds, calibrate=args.calibrate)
+    print(json.dumps(record, indent=2))
+    return 0
+
+
 def cmd_trial(args: argparse.Namespace) -> int:
     incident = INCIDENTS[args.scenario]
     environment = TrialEnvironment(
@@ -117,6 +128,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = subparsers.add_parser("doctor", help="check that the Docker daemon is reachable")
     doctor.set_defaults(func=cmd_doctor)
+
+    shop = subparsers.add_parser("shop", help="measure a healthy Astronomy Shop; no agent or model calls")
+    shop.add_argument("--repo-root", type=Path, default=DEFAULT_REPO_ROOT)
+    shop.add_argument("--results-dir", type=Path, default=None)
+    shop.add_argument("--seconds", type=float, default=60.0)
+    shop.add_argument("--calibrate", action="store_true",
+                      help="record a fitting sample without a frozen load band; never a scored verdict")
+    shop.set_defaults(func=cmd_shop)
 
     trial = subparsers.add_parser("trial", help="run one create/inject/load/measure/destroy cycle")
     _add_common(trial)

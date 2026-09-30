@@ -57,6 +57,10 @@ SUPPORTING_PATHS = (
     "src/otel-collector",
     "src/postgresql",
     "src/prometheus",
+    "src/load-generator/locustfile.py",
+    "src/load-generator/Dockerfile",
+    "src/frontend-proxy/envoy.tmpl.yaml",
+    "src/frontend-proxy/Dockerfile",
 )
 
 VENDOR_DIR = Path("benchmark/apps/astronomy-shop/upstream")
