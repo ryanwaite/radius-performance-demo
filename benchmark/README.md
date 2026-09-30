@@ -1190,6 +1190,12 @@ This does not resolve the collector's separate attribute-mapping failures.
 The full healthy application window has not passed. Do not interpret
 container readiness or the synthetic control as application-ingestion
 acceptance. The failed attempts and isolated controls verified cleanup.
+An exploratory run with a typed attribute-mapping template returned real
+Shop logs through Grafana, then failed the CPU gate on checkout throttling.
+That template is not installed by the shipped driver. Its exporter-metric
+query returned no series, so loss-free ingestion remains unproven. See the
+canonical plan's current-state section for the artifact identifiers and
+the candidate's nested-attribute limitation.
 
 `--calibrate` records a fitting sample without claiming a frozen load-band
 verdict. Without it, the driver refuses a missing or wrong-host band.
@@ -1209,8 +1215,9 @@ bind copies are removed only after verified container cleanup.
     and makes **no outbound request** (check its logs for `grafana.com` or any
     external host, not just `up --wait`); an OpenSearch-backed dashboard
     returns data, proving the plugin loaded rather than merely being present on
-    disk; and a negative control in which the mount is removed, with
-    `GF_INSTALL_PLUGINS` still stripped, shows the datasource failing to load.
+    disk. The isolated missing-plugin control removed the mount with
+    `GF_INSTALL_PLUGINS` still stripped and received `plugin.notRegistered`;
+    retain this control when completing the full application acceptance.
     Grafana's dashboards and provisioning files join the fixture-file list for
     the leakage scan: list any dashboard, panel or variable whose name refers
     to a fault flag or to flagd, and do not change them yet. Upstream routes
