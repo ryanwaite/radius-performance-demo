@@ -27,6 +27,8 @@ This section is the handoff point. Update it in the same pull request as the wor
 
 The owner's approved local check exposed an unset-variable comparison bug, which is fixed, then stopped at Grafana's datasource-health gate. The plugin loaded, but reported `Index not found: otel-logs-*`; the collector also logged permanent OpenSearch mapping failures involving `attributes.http` and `http.request.method`. These are measurements, not a diagnosis of the full ingestion failure. Cleanup succeeded on the failed attempts. M1 remains open until shared telemetry works, the plugin's live negative control passes, and a healthy load window passes. No comparison, model call, qualification campaign, or cloud provisioning has run.
 
+**Owner decision, September 30, 2026:** repair the shared telemetry configuration rather than change the pinned container versions. Apply the repair identically to all three arms and preserve the telemetry available for diagnosis. Derive changes from the vendored inputs, record their hashes, and demonstrate ingestion and Grafana queries with actual application logs. Do not hide the failure by dropping conflicting attributes, relaxing the datasource gate, or counting an empty index as evidence. This decision does not authorize model calls, a multi-hour qualification run, or cloud provisioning.
+
 **Implemented on `main`:**
 
 - The Go catalogue application with MySQL and Valkey paths, Prometheus metrics, a Compose stack, k6 load, and Kubernetes manifests. It is the harness development fixture, not the scored application.
