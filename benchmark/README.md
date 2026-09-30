@@ -1,5 +1,46 @@
 # `radius_perf_eval` — benchmark control plane
 
+The benchmark compares the **combined Radius repository experience** against
+native and architecture-document repositories. It does not test graphs and
+skills separately. Follow the [completion plan](../docs/specs/benchmark-completion-plan.md)
+for the remaining work; the Astronomy Shop campaign is not yet runnable end to end.
+
+## Local results dashboard
+
+Open [`dashboard.html`](dashboard.html) directly in a local browser, then choose
+**Import campaign JSON**. The page starts empty. It accepts only the versioned
+[comparison report contract](../docs/specs/benchmark-completion-plan.md#results-dashboard-and-download-contract),
+not the historical smoke evidence or catalogue determinism reports. There is no
+campaign exporter yet; wiring canonical records to this contract is part of the
+completion plan.
+
+Model and incident filters affect descriptive comparisons, trial rows, and
+**Download filtered CSV**. **Download full JSON** always preserves the complete
+imported report and its provenance. JSON is lossless; CSV flattens declared
+fields and neutralizes spreadsheet formulas. Neither includes raw transcripts
+or telemetry files referenced by a digest. Those need the future redacted
+campaign artifact export.
+
+The dashboard reports per-model pass rates and matched differences without
+claiming significance. It labels pilot/smoke data as non-findings and hides
+outcome comparisons while a scored campaign is running. Exclusions, missing
+metrics, and missing healthy answers stay visible rather than becoming zeros
+or successes. Source evidence and hashes are not authenticated in the browser.
+
+The dashboard needs no dependencies or server. Its automated checks need Python
+and Node.js, use the standard libraries only, and run from the repository root:
+
+```bash
+DOCKER_HOST=unix:///nonexistent/docker.sock python3 -m unittest discover -s benchmark/tests -p test_dashboard.py -v
+```
+
+The checks run the actual embedded JavaScript, import positive and negative
+controls, exercise UI events and downloads through DOM doubles, and mutate
+validation and denominator guards in memory. The same test module is discovered
+by CI. Synthetic inputs are test fixtures, never published benchmark findings.
+
+## Harness increments
+
 Two increments share this package:
 
 - **Copilot SDK instrumentation** (Increment 1) — documented below.

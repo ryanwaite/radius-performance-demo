@@ -4,6 +4,17 @@ A benchmark project asking whether the **combined Radius repository experience**
 
 The runnable Go catalogue lab below is the harness development fixture and human-demo foundation. The scored application is the OpenTelemetry Astronomy Shop. The three-arm campaign is not yet runnable end to end. See the [current state](docs/specs/copilot-radius-experiment-plan.md#current-state-and-next-steps) and [completion and reporting plan](docs/specs/benchmark-completion-plan.md).
 
+## Results dashboard
+
+Open [`benchmark/dashboard.html`](benchmark/dashboard.html) locally in a browser.
+It imports a versioned campaign report, shows per-model pass rates, matched
+Radius comparisons, efficiency measurements, healthy controls, and exclusions,
+and downloads full JSON or filtered CSV. It needs no server and sends no data.
+It starts empty because scored comparison results do not exist yet.
+The campaign exporter and statistical analysis are still planned; the
+[report contract](docs/specs/benchmark-completion-plan.md#results-dashboard-and-download-contract)
+defines their integration boundary.
+
 ## Architecture
 
 Baseline:

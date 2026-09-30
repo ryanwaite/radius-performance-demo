@@ -69,6 +69,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Positive control -- pip rejects a file whose hash differs
         # The install below claims hash checking is enforced. That claim is
         # worth something only if a wrong hash actually fails, so prove it

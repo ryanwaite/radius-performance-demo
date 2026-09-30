@@ -19,7 +19,9 @@ Operating rules for anyone working in this repository, human or agent, are in [`
 
 This section is the handoff point. Update it in the same pull request as the work it describes.
 
-**Scope decision, September 30, 2026:** evaluate the combined Radius repository experience. The owner removed separate graph-only, skills-only, and factorial experiments. The native and architecture-document controls remain. [Completion and reporting plan](benchmark-completion-plan.md) defines the delivery sequence and the approved local HTML dashboard with JSON/CSV downloads. The dashboard is planned until explicitly marked implemented; it does not make the campaign runner complete.
+**Scope decision, September 30, 2026:** evaluate the combined Radius repository experience. The owner removed separate graph-only, skills-only, and factorial experiments. The native and architecture-document controls remain. [Completion and reporting plan](benchmark-completion-plan.md) defines the delivery sequence and the approved local HTML dashboard with JSON/CSV downloads.
+
+**Added on this branch, pending merge:** the [offline dashboard](../../benchmark/dashboard.html) imports `radius-comparison-v1` reports, displays descriptive per-model comparisons and exclusions, and downloads full JSON or filtered CSV. It has an empty initial state, rejects inconsistent reports, and hides interim scored-arm results. It is not connected to a campaign runner yet. The exporter, source-artifact verification, and pre-registered analysis remain M2/M5/M8 work in the completion plan.
 
 **Implemented on `main`:**
 
@@ -37,8 +39,8 @@ This section is the handoff point. Update it in the same pull request as the wor
 2. **Finish the answer contract.** Add the `connection` field to the submit tool, align the code's terminal classes with [Trial outcomes and retries](#trial-outcomes-and-retries), and implement the retry policy. *Exit:* planted wrong answers for the component and the connection each fail, and a correct answer passes.
 3. **Fit and hold out the determinism suite on the laptop.** It takes about three hours and needs the user's approval before it starts. *Exit:* the holdout passes with tolerances frozen before it ran.
 4. **Build the three Astronomy Shop fixtures** under Phase 0: fault-flag code removed from the agent-visible source, a neutral README, a validated `app.bicep`, the arm C document, two difference manifests, and a leakage scan that covers Grafana dashboards and provisioning. *Exit:* the Phase 0 exit criteria.
-5. **Run one incident end to end.** Inspect AI task integration, standalone workspace creation, one ported AIOpsLab incident with its hidden validator, and randomized sets of all three arms. *Exit:* the Phase 2 exit criteria, on the Astronomy Shop.
-6. **Re-verify the sandbox** on the locked SDK and CLI pair and on each pilot model, and run the forced-compaction control. This needs a premium-request allowance from the user. Build the probe session that runs before each campaign batch. *Exit:* every escape probe is denied with `sandboxApplied: "true"`, and the in-workspace control succeeds.
+5. **Re-verify the sandbox** on the locked SDK and CLI pair and on each pilot model, and run the forced-compaction control. This needs a premium-request allowance from the user. Build the probe session that runs before each campaign batch. *Exit:* every escape probe is denied with `sandboxApplied: "true"`, and the in-workspace control succeeds.
+6. **Run one incident end to end.** Inspect AI task integration, standalone workspace creation, one ported AIOpsLab incident with its hidden validator, a healthy control, and randomized sets of all three arms. Export the report to the dashboard. *Exit:* the Phase 2 exit criteria, on the Astronomy Shop.
 7. **Build the incident set:** at least 20 incidents with validators, planted wrong answers, and no-fault controls. *Exit:* Phase 3 stage 1 incident criteria.
 8. **Pilot, calibrate, and pre-register.** This needs the user's approval for its cost. *Exit:* the analysis plan and sample size are committed.
 9. **Provision and qualify the Azure VMs.** This needs the user's approval. First, make the throttling reader resolve each container's cgroup path instead of assuming the cgroupfs layout, because Docker on a systemd Linux host places containers elsewhere. *Exit:* each VM passes a determinism holdout on its own host class.
@@ -1051,7 +1053,7 @@ Exit criteria:
 | Scored application | OpenTelemetry Astronomy Shop; catalog application for harness development only | Decided |
 | Primary arms | Native, native with architecture document (written by a fresh Copilot session without the plan), fully Radius-enabled | Decided |
 | Treatment scope | Combined Radius repository experience only; no graph-only, skills-only, or factorial experiments | Owner decision, September 30, 2026 |
-| Results UI | Self-contained local HTML dashboard importing versioned campaign JSON, with JSON and CSV downloads | Owner approved; see completion plan |
+| Results UI | Self-contained local HTML dashboard importing versioned campaign JSON, with JSON and CSV downloads | Implemented on this branch; campaign exporter and inferential analysis not built |
 | Incident set | 20-50 distinct incidents, misleading-symptom incidents, and 10-15 percent no-fault controls, drawn from AIOpsLab and external injectors; flag fault code removed from agent-visible source, flag faults diagnosis-only | Decided; not built |
 | Smallest effect worth detecting | 15 percentage points | Decided; sets the campaign size |
 | Analysis plan | Pre-registered before the scored campaign; incident-clustered model; Holm correction across co-primary contrasts | Decided; plan not yet written |

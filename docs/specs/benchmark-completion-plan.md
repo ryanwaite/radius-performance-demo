@@ -66,6 +66,14 @@ picker. No data leaves the browser. No model calls, registry requests, telemetry
 or cloud resources are required. The initial screen says no campaign is loaded;
 it never displays fabricated benchmark results.
 
+**Implemented on this branch:** the dashboard, import consistency checks,
+descriptive summaries, model/incident filters, trial details, and JSON/CSV
+downloads. Open the HTML file directly in a browser. Automated checks exercise
+the shipped JavaScript, UI event wiring, exports, and guard mutations without
+third-party JavaScript packages. CI runs those checks through the Python suite
+with Node.js available. The campaign exporter and source-artifact verification
+are not implemented; historical run JSON cannot be imported as comparison data.
+
 This is a reporting boundary, not a replacement for Inspect, canonical run
 records, or the pre-registered analysis. The first dashboard shows descriptive
 results only. M8 must add the reviewed analysis export and clustered intervals;

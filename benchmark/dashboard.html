@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Radius repository comparison</title>
+  <script>
+    (() => {
+      const param = new URLSearchParams(window.location.search).get("scoutTheme");
+      const theme =
+        param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <style>
+    :root {
+      color-scheme: light;
+      --cp-bg: #f7f4ef;
+      --cp-bg-elevated: #fcfbf8;
+      --cp-surface: #ffffff;
+      --cp-surface-soft: #f5f5f5;
+      --cp-border: #dedede;
+      --cp-border-strong: #919191;
+      --cp-text: #242424;
+      --cp-text-muted: #5c5c5c;
+      --cp-text-soft: #6f6f6f;
+      --cp-accent: #b11f4b;
+      --cp-accent-hover: #9a1a41;
+      --cp-accent-soft: rgba(177, 31, 75, 0.08);
+      --cp-accent-fg: #ffffff;
+      --cp-success: #16a34a;
+      --cp-danger: #dc2626;
+      --cp-warning: #f59e0b;
+      --cp-link: #0078d4;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+      --cp-overlay: rgba(255, 255, 255, 0.8);
+      --cp-panel: rgba(255, 255, 255, 0.86);
+      --cp-panel-strong: rgba(255, 255, 255, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.55);
+      --cp-highlight: rgba(177, 31, 75, 0.12);
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --cp-bg: #3d3b3a;
+      --cp-bg-elevated: #343231;
+      --cp-surface: #292929;
+      --cp-surface-soft: #2e2e2e;
+      --cp-border: #474747;
+      --cp-border-strong: #5f5f5f;
+      --cp-text: #dedede;
+      --cp-text-muted: #919191;
+      --cp-text-soft: #b0b0b0;
+      --cp-accent: #fd8ea1;
+      --cp-accent-hover: #fb7b91;
+      --cp-accent-soft: rgba(253, 142, 161, 0.14);
+      --cp-accent-fg: #1a1a1a;
+      --cp-success: #4ade80;
+      --cp-danger: #f87171;
+      --cp-warning: #fbbf24;
+      --cp-link: #4da6ff;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+      --cp-overlay: rgba(41, 41, 41, 0.88);
+      --cp-panel: rgba(41, 41, 41, 0.72);
+      --cp-panel-strong: rgba(41, 41, 41, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.04);
+      --cp-highlight: rgba(253, 142, 161, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--cp-bg); color: var(--cp-text); font: 16px/1.5 "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif; }
+    main { max-width: 1360px; margin: auto; padding: 40px 24px; }
+    h1 { font-size: clamp(28px, 4vw, 40px); letter-spacing: -1px; margin: 8px 0; }
+    h2 { font-size: 22px; margin: 0 0 12px; }
+    h3 { font-size: 18px; margin: 20px 0 8px; overflow-wrap: anywhere; }
+    p { margin: 8px 0 16px; }
+    .eyebrow { color: var(--cp-accent); text-transform: uppercase; font-size: 12px; font-weight: 700; letter-spacing: 2px; }
+    .muted, small { color: var(--cp-text-muted); }
+    .card { background: var(--cp-surface); border: 1px solid var(--cp-border); border-radius: 16px; padding: 24px; margin-top: 24px; }
+    .toolbar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+    button, select, input::file-selector-button { font: inherit; border: 1px solid var(--cp-border-strong); border-radius: 0.625rem; padding: 8px 12px; background: var(--cp-surface); color: var(--cp-text); }
+    button, input::file-selector-button { cursor: pointer; }
+    button:hover { border-color: var(--cp-accent); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    :focus-visible { outline: 3px solid var(--cp-accent); outline-offset: 3px; }
+    input[type="file"] { max-width: 100%; }
+    label { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    select { max-width: 320px; }
+    .notice { padding: 12px 16px; border-left: 4px solid var(--cp-accent); background: var(--cp-accent-soft); margin-top: 16px; }
+    #error { border-color: var(--cp-danger); color: var(--cp-danger); }
+    .empty { padding: 48px 24px; text-align: center; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; margin-top: 20px; }
+    .stat { background: var(--cp-surface-soft); border: 1px solid var(--cp-border); border-radius: 0.625rem; padding: 16px; }
+    .stat strong { display: block; font-size: 28px; font-variant-numeric: tabular-nums; }
+    .scroll { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { padding: 12px; border-bottom: 1px solid var(--cp-border); text-align: left; vertical-align: top; }
+    th { background: var(--cp-surface-soft); white-space: nowrap; }
+    td { overflow-wrap: anywhere; min-width: 90px; }
+    progress { width: 120px; height: 12px; display: block; accent-color: var(--cp-accent); margin-top: 8px; }
+    .positive { color: var(--cp-success); }
+    .negative { color: var(--cp-danger); }
+    .delta { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .contrasts { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+    .contrast { border: 1px solid var(--cp-border); border-radius: 0.625rem; padding: 16px; }
+    #identity, code, pre { font-family: Consolas, "Courier New", Courier, monospace; overflow-wrap: anywhere; white-space: pre-wrap; }
+    #identity { font-size: 13px; }
+    details { max-width: 420px; }
+    summary { cursor: pointer; }
+    footer { padding-top: 24px; font-size: 13px; color: var(--cp-text-muted); }
+    [hidden] { display: none !important; }
+    @media (max-width: 600px) { main { padding: 24px 12px; } .card { padding: 16px; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">Performance diagnosis benchmark</div>
+    <h1>Does the Radius repository experience help?</h1>
+    <p class="muted">Native vs. architecture documentation vs. the combined Radius model, graph, configuration, tools, and skills.</p>
+  </header>
+  <section class="card" aria-label="Import and export">
+    <div class="toolbar">
+      <label for="file">Import campaign JSON <input id="file" type="file" accept=".json,application/json"></label>
+      <button id="json" disabled>Download full JSON</button>
+      <button id="csv" disabled>Download filtered CSV</button>
+    </div>
+    <p class="muted">Offline and private: files stay in this browser tab. JSON preserves the full report; CSV contains only the selected trial rows. Neither download includes external raw artifacts.</p>
+    <div id="error" class="notice" role="alert" hidden></div>
+    <div id="loaded" role="status" aria-live="polite"></div>
+    <details>
+      <summary>Input contract and interpretation</summary>
+      <p>Import <code>radius-comparison-v1</code> reports. Historical smoke logs and environment measurements are not comparison reports. The complete field contract is in <code>docs/specs/benchmark-completion-plan.md</code>.</p>
+      <p>The dashboard checks consistency, not the authenticity of grades or record hashes. The future exporter must verify and redact the source evidence.</p>
+      <p>This initial dashboard shows descriptive results, not statistical significance. Incident-clustered intervals and the pre-registered analysis are still required before reporting uplift.</p>
+    </details>
+  </section>
+  <section id="empty" class="card empty">
+    <div class="eyebrow">No campaign loaded</div>
+    <h2>No comparison results yet</h2>
+    <p>Import a report when the campaign runner produces one.<br>No synthetic wins, zero-valued placeholders, or smoke-test results are shown as findings.</p>
+  </section>
+  <section id="overview" class="card" hidden>
+    <h2 id="campaign-title"></h2>
+    <div id="identity"></div>
+    <div id="phase" class="notice"></div>
+    <div id="stats" class="stats"></div>
+  </section>
+  <section id="filters" class="card" hidden>
+    <div class="toolbar">
+      <label for="model">Model <select id="model"></select></label>
+      <label for="incident">Incident <select id="incident"></select></label>
+      <button id="reset">Reset filters</button>
+    </div>
+    <p id="selection" class="muted" aria-live="polite"></p>
+  </section>
+  <section id="results" class="card" hidden>
+    <h2>Results by model</h2>
+    <p class="muted">Arm totals are descriptive and may be unpaired. Exclusions and unfinished work do not enter the scored denominator. Missing measurements are not zeros. Metrics cover final attempts, not total campaign cost.</p>
+    <div id="summaries"></div>
+  </section>
+  <section id="trials" class="card" hidden>
+    <h2>Trial records</h2>
+    <div class="scroll">
+      <table>
+        <caption id="trial-caption">Selected logical assignments, not individual attempts</caption>
+        <thead><tr><th>Run</th><th>Model / incident</th><th>Arm</th><th>Outcome</th><th>Attempts / harness failures</th><th>Evidence reference</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <p id="row-limit" class="muted"></p>
+  </section>
+  <footer>Compare the combined experience only. Graph and skill usage cannot establish separate feature effects. Scored campaigns in progress expose overall progress only; downloads remain available for audit, not interim analysis.</footer>
+</main>
+<script id="results-core">
+"use strict";
+(() => {
+  const ARMS = ["native", "architecture", "radius"];
+  const LABELS = {native: "Native", architecture: "Architecture document", radius: "Combined Radius"};
+  const SCORED = ["validated_success", "diagnosis_failure", "budget_exhaustion",
+    "no_submission", "invalid_structured_output", "refusal", "isolation_violation_attempt"];
+  const STATUSES = [...SCORED, "pending", "running", "excluded"];
+  const GATES = ["diagnosis", "evidence", "scope", "safety", "cleanup"];
+  const METRICS = ["agentSeconds", "toolCalls", "aiCredits"];
+  const MATCH = ["model", "incident", "seed", "configurationId", "expectedFault"];
+  const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
+  const text = value => typeof value === "string" && value.trim().length > 0;
+  const scored = run => SCORED.includes(run.status);
+  const finished = run => scored(run) || run.status === "excluded";
+  const success = run => run.status === "validated_success";
+  const embargoed = report => report.campaign.phase === "scored" && report.campaign.status !== "complete";
+  function requireValue(condition, message) {
+    if (!condition) throw new Error(message);
+  }
+  function validate(report) {
+    requireValue(object(report) && report.schemaVersion === "radius-comparison-v1", "Expected a radius-comparison-v1 report, not a smoke or environment record.");
+    const c = report.campaign;
+    requireValue(object(c), "campaign must be an object.");
+    for (const key of ["id", "benchmarkCommit", "analysisPlan"]) requireValue(text(c[key]), `campaign.${key} is required.`);
+    requireValue(["smoke", "pilot", "scored"].includes(c.phase), "Unknown campaign phase.");
+    requireValue(["running", "complete"].includes(c.status), "Unknown campaign status.");
+    requireValue(c.phase !== "scored" || /^[a-f0-9]{40}$/i.test(c.analysisPlan), "A scored campaign requires the analysis-plan commit hash.");
+    requireValue(Array.isArray(report.runs) && report.runs.length > 0, "The complete assignment roster must be nonempty.");
+    const ids = new Set();
+    const pairs = new Map();
+    for (const [index, run] of report.runs.entries()) {
+      const where = `runs[${index}]`;
+      requireValue(object(run), `${where} must be an object.`);
+      for (const key of ["runId", "pairId", "model", "incident", "seed", "configurationId"]) requireValue(text(run[key]), `${where}.${key} is required.`);
+      requireValue(!ids.has(run.runId), `Duplicate runId: ${run.runId}`);
+      ids.add(run.runId);
+      requireValue(ARMS.includes(run.arm), `${where}: unknown arm.`);
+      requireValue(STATUSES.includes(run.status), `${where}: unknown status.`);
+      requireValue(typeof run.expectedFault === "boolean", `${where}.expectedFault must be boolean.`);
+      requireValue(run.reportedFault === null || typeof run.reportedFault === "boolean", `${where}.reportedFault must be boolean or null.`);
+      requireValue(typeof run.reason === "string" && (run.status !== "excluded" || text(run.reason)), `${where}: exclusions require a reason.`);
+      requireValue(Number.isInteger(run.attempts) && Number.isInteger(run.harnessFailures), `${where}: attempt counts must be integers.`);
+      const attemptsOK = run.status === "pending"
+        ? run.attempts === 0 && run.harnessFailures === 0
+        : run.status === "excluded"
+          ? run.attempts === 2 && run.harnessFailures === 2
+          : [1, 2].includes(run.attempts) && run.harnessFailures === run.attempts - 1;
+      requireValue(attemptsOK, `${where}: counts violate the one-retry policy.`);
+      requireValue(finished(run)
+        ? typeof run.recordDigest === "string" && /^sha256:[a-f0-9]{64}$/.test(run.recordDigest)
+        : run.recordDigest === null, `${where}: terminal records require a SHA-256 digest; unfinished records require null.`);
+      requireValue(finished(run) || run.reportedFault === null, `${where}: unfinished work cannot have a final answer.`);
+      requireValue(object(run.validators), `${where}.validators must be an object.`);
+      requireValue(!success(run) || GATES.every(gate => run.validators[gate] === "pass"), `${where}: success requires every diagnosis, evidence, scope, safety and cleanup gate to pass.`);
+      requireValue(!success(run) || run.reportedFault === run.expectedFault, `${where}: success contradicts the fault answer.`);
+      for (const key of METRICS) {
+        const value = run[key];
+        requireValue(value === null || (typeof value === "number" && Number.isFinite(value) && value >= 0 && (key !== "toolCalls" || Number.isInteger(value))), `${where}.${key} must be nonnegative, finite, or null; toolCalls must be an integer.`);
+        requireValue(run.status !== "pending" || value === null, `${where}: pending metrics must be null.`);
+      }
+      if (!pairs.has(run.pairId)) pairs.set(run.pairId, []);
+      const peers = pairs.get(run.pairId);
+      requireValue(!peers.some(peer => peer.arm === run.arm), `${where}: duplicate arm in matched set.`);
+      requireValue(peers.length === 0 || MATCH.every(key => peers[0][key] === run[key]), `${where}: matched-set inputs disagree.`);
+      peers.push(run);
+    }
+    requireValue([...pairs.values()].every(rows => rows.length === ARMS.length), "Every matched set must declare all three arms, including pending assignments.");
+    requireValue(c.status !== "complete" || report.runs.every(finished), "A complete campaign cannot contain unfinished runs.");
+    return report;
+  }
+  function select(report, model = "", incident = "") {
+    return report.runs.filter(run => (!model || run.model === model) && (!incident || run.incident === incident));
+  }
+  function metric(rows, key) {
+    const values = rows.map(run => run[key]).filter(value => value !== null).sort((a, b) => a - b);
+    const middle = Math.floor(values.length / 2);
+    return {n: values.length, median: values.length === 0 ? null
+      : values.length % 2 ? values[middle] : values[middle - 1] / 2 + values[middle] / 2};
+  }
+  function armSummary(rows, arm) {
+    const assigned = rows.filter(run => run.arm === arm);
+    const valid = assigned.filter(scored);
+    const healthy = valid.filter(run => !run.expectedFault);
+    const passed = valid.filter(success).length;
+    return {
+      arm, planned: assigned.length, scored: valid.length, passed,
+      passRate: valid.length ? passed / valid.length : null,
+      excluded: assigned.filter(run => run.status === "excluded").length,
+      unfinished: assigned.filter(run => !finished(run)).length,
+      healthy: healthy.length,
+      falseAlarms: healthy.filter(run => run.reportedFault === true).length,
+      missingHealthyAnswers: healthy.filter(run => run.reportedFault === null).length,
+      metrics: Object.fromEntries(METRICS.map(key => [key, metric(valid, key)]))
+    };
+  }
+  function contrast(rows, control) {
+    const pairs = new Map();
+    for (const run of rows) {
+      if (!pairs.has(run.pairId)) pairs.set(run.pairId, new Map());
+      pairs.get(run.pairId).set(run.arm, run);
+    }
+    const deltas = [];
+    for (const pair of pairs.values()) {
+      const radius = pair.get("radius");
+      const baseline = pair.get(control);
+      if (radius && baseline && scored(radius) && scored(baseline)) deltas.push(Number(success(radius)) - Number(success(baseline)));
+    }
+    return {control, n: deltas.length, omitted: pairs.size - deltas.length,
+      delta: deltas.length ? deltas.reduce((sum, value) => sum + value, 0) / deltas.length : null};
+  }
+  function summarize(report, model = "", incident = "") {
+    const rows = select(report, model, incident);
+    const progress = {planned: rows.length, completed: rows.filter(finished).length,
+      scored: rows.filter(scored).length, excluded: rows.filter(run => run.status === "excluded").length,
+      harnessFailures: rows.reduce((sum, run) => sum + run.harnessFailures, 0)};
+    const hidden = embargoed(report);
+    const models = hidden ? [] : [...new Set(rows.map(run => run.model))].sort().map(name => {
+      const group = rows.filter(run => run.model === name);
+      return {name, arms: ARMS.map(arm => armSummary(group, arm)),
+        contrasts: ["native", "architecture"].map(arm => contrast(group, arm))};
+    });
+    return {progress, embargoed: hidden, models, rows: hidden ? [] : rows};
+  }
+  function csvCell(value) {
+    let text = value === null || value === undefined ? "" : String(value);
+    // Quoting alone does not stop spreadsheet formula evaluation.
+    if (/^[\s\u0000-\u001f]*[=+\-@]/.test(text) || /^[\t\r\n]/.test(text)) text = "'" + text;
+    return '"' + text.replace(/"/g, '""') + '"';
+  }
+  function toCSV(report, model = "", incident = "") {
+    const columns = ["runId", "pairId", "arm", "model", "incident", "seed", "configurationId",
+      "expectedFault", "status", "attempts", "harnessFailures", "reportedFault",
+      ...METRICS, ...GATES.map(gate => `validator_${gate}`), "recordDigest", "reason"];
+    const header = ["campaignId", "phase", "campaignStatus", "benchmarkCommit", "analysisPlan", ...columns];
+    const c = report.campaign;
+    const rows = select(report, model, incident).map(run => [
+      c.id, c.phase, c.status, c.benchmarkCommit, c.analysisPlan,
+      ...columns.map(key => key.startsWith("validator_") ? run.validators[key.slice(10)] : run[key])
+    ]);
+    return [header, ...rows].map(row => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
+  }
+  globalThis.RadiusResults = Object.freeze({validate, select, summarize, toCSV, ARMS, LABELS});
+})();
+</script>
+<script id="results-ui">
+"use strict";
+(() => {
+  const api = globalThis.RadiusResults;
+  const $ = id => document.getElementById(id);
+  let report = null;
+  let loadSequence = 0;
+  const number = value => value.toLocaleString(undefined, {maximumFractionDigits: 2});
+  function node(tag, text, className) {
+    const element = document.createElement(tag);
+    if (text !== undefined) element.textContent = text;
+    if (className) element.className = className;
+    return element;
+  }
+  function options(id, values) {
+    $(id).replaceChildren();
+    for (const value of ["", ...new Set(values)]) {
+      const option = node("option", value || "All");
+      option.value = value;
+      $(id).append(option);
+    }
+    $(id).value = "";
+  }
+  function metricText(metric, unit = "") {
+    return metric.median === null ? "Unavailable (n=0)" : `${number(metric.median)}${unit} (n=${metric.n})`;
+  }
+  function renderModels(models) {
+    $("summaries").replaceChildren();
+    if (!models.length) $("summaries").append(node("p", "No runs match these filters. No verdict is available."));
+    for (const model of models) {
+      $("summaries").append(node("h3", model.name));
+      const scroll = node("div", undefined, "scroll");
+      const table = node("table");
+      const head = node("thead");
+      const headings = node("tr");
+      for (const title of ["Repository", "Validated success", "Excluded / unfinished", "Agent seconds, median", "Tool calls, median", "AI credits, median", "Healthy controls"]) headings.append(node("th", title));
+      head.append(headings);
+      const body = node("tbody");
+      for (const arm of model.arms) {
+        const row = node("tr");
+        row.append(node("td", api.LABELS[arm.arm]));
+        const rate = node("td", arm.passRate === null ? "No scored evidence" : `${number(arm.passRate * 100)}% (${arm.passed}/${arm.scored})`);
+        if (arm.passRate !== null) {
+          const bar = node("progress");
+          bar.max = 100;
+          bar.value = arm.passRate * 100;
+          bar.setAttribute("aria-label", `${api.LABELS[arm.arm]} validated success`);
+          rate.append(bar);
+        }
+        row.append(rate, node("td", `${arm.excluded} / ${arm.unfinished}`),
+          node("td", metricText(arm.metrics.agentSeconds, " s")),
+          node("td", metricText(arm.metrics.toolCalls)),
+          node("td", metricText(arm.metrics.aiCredits)),
+          node("td", arm.healthy ? `Observed false alarms: ${arm.falseAlarms}/${arm.healthy}; missing answers: ${arm.missingHealthyAnswers}.`
+            : "No scored healthy controls"));
+        body.append(row);
+      }
+      table.append(head, body);
+      scroll.append(table);
+      $("summaries").append(scroll, node("p", "False alarms count explicit fault reports on healthy trials. Missing answers are not correct diagnoses; when present, the observed false-alarm fraction is incomplete.", "muted"));
+      const cards = node("div", undefined, "contrasts");
+      for (const comparison of model.contrasts) {
+        const card = node("div", undefined, "contrast");
+        card.append(node("strong", `Radius minus ${api.LABELS[comparison.control]}`));
+        const delta = comparison.delta;
+        card.append(node("div", delta === null ? "Unavailable" : `${delta > 0 ? "+" : ""}${number(delta * 100)} pp`,
+          `delta ${delta > 0 ? "positive" : delta < 0 ? "negative" : ""}`));
+        card.append(node("small", `${comparison.n} scored matched pairs; ${comparison.omitted} omitted. Descriptive only, no confidence interval or significance claim.`));
+        cards.append(card);
+      }
+      $("summaries").append(cards);
+    }
+  }
+  function render() {
+    const summary = api.summarize(report, $("model").value, $("incident").value);
+    $("campaign-title").textContent = report.campaign.id;
+    $("identity").textContent = `Benchmark: ${report.campaign.benchmarkCommit}\nAnalysis plan: ${report.campaign.analysisPlan}`;
+    $("phase").textContent = summary.embargoed
+      ? "SCORED CAMPAIGN IN PROGRESS. Overall progress only. Arm comparisons and trial outcomes remain hidden until completion. Downloads are for audit, not interim analysis."
+      : report.campaign.phase !== "scored"
+        ? `${report.campaign.phase.toUpperCase()} / ${report.campaign.status.toUpperCase()}. Non-findings: these runs exercise or calibrate the benchmark, not establish uplift.`
+        : "SCORED / COMPLETE. Descriptive view only. Consult the pre-registered, incident-clustered analysis before drawing a conclusion.";
+    $("stats").replaceChildren();
+    const full = api.summarize(report).progress;
+    for (const [key, label] of [["planned", "Planned runs"], ["completed", "Terminal records"], ["scored", "Scored runs"], ["excluded", "Excluded runs"], ["harnessFailures", "Failed harness attempts"]]) {
+      const card = node("div", undefined, "stat");
+      card.append(node("strong", String(full[key])), node("span", label));
+      $("stats").append(card);
+    }
+    $("selection").textContent = `${summary.progress.planned} of ${full.planned} assignments selected. Filters apply to comparisons, trial rows, and CSV only. Full JSON and progress totals are unfiltered.`;
+    $("filters").hidden = summary.embargoed;
+    $("results").hidden = summary.embargoed;
+    $("trials").hidden = summary.embargoed;
+    renderModels(summary.models);
+    $("rows").replaceChildren();
+    for (const run of summary.rows.slice(0, 500)) {
+      const row = node("tr");
+      row.append(node("td", run.runId), node("td", `${run.model} / ${run.incident}`),
+        node("td", api.LABELS[run.arm]), node("td", run.status),
+        node("td", `${run.attempts} / ${run.harnessFailures}`));
+      const detail = node("details");
+      detail.append(node("summary", "Inspect record"),
+        node("pre", JSON.stringify({pairId: run.pairId, configurationId: run.configurationId,
+          recordDigest: run.recordDigest, reason: run.reason, validators: run.validators}, null, 2)));
+      const cell = node("td");
+      cell.append(detail);
+      row.append(cell);
+      $("rows").append(row);
+    }
+    $("row-limit").textContent = summary.rows.length > 500
+      ? "Showing the first 500 selected records. Download filtered CSV for all selected rows."
+      : `${summary.rows.length} selected records shown.`;
+  }
+  $("file").addEventListener("change", async event => {
+    const sequence = ++loadSequence;
+    report = null;
+    for (const id of ["overview", "filters", "results", "trials", "error"]) $(id).hidden = true;
+    for (const id of ["summaries", "rows", "stats", "identity", "campaign-title", "selection", "phase", "row-limit"]) $(id).replaceChildren();
+    $("empty").hidden = false;
+    $("json").disabled = $("csv").disabled = true;
+    $("loaded").textContent = "";
+    const file = event.target.files[0];
+    if (!file) return;
+    try {
+      if (file.size > 10 * 1024 * 1024) throw new Error("Report exceeds the 10 MiB import limit. Export a smaller campaign report.");
+      const raw = await file.text();
+      if (sequence !== loadSequence) return;
+      const candidate = api.validate(JSON.parse(raw));
+      report = candidate;
+      options("model", report.runs.map(run => run.model).sort());
+      options("incident", report.runs.map(run => run.incident).sort());
+      render();
+      $("empty").hidden = true;
+      $("overview").hidden = false;
+      $("json").disabled = $("csv").disabled = false;
+      $("loaded").textContent = `Loaded ${file.name}. Report consistency checked; source evidence is not authenticated by this dashboard.`;
+    } catch (error) {
+      if (sequence !== loadSequence) return;
+      report = null;
+      $("error").textContent = `Import rejected: ${error.message}`;
+      $("error").hidden = false;
+    }
+  });
+  for (const id of ["model", "incident"]) $(id).addEventListener("change", () => { if (report) render(); });
+  $("reset").addEventListener("click", () => {
+    $("model").value = $("incident").value = "";
+    if (report) render();
+  });
+  function download(content, type, suffix) {
+    const blob = new Blob([content], {type});
+    const url = URL.createObjectURL(blob);
+    const link = node("a");
+    link.href = url;
+    link.download = `radius-comparison-${suffix}`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  $("json").addEventListener("click", () => {
+    if (report) download(JSON.stringify(report, null, 2) + "\n", "application/json", "full.json");
+  });
+  $("csv").addEventListener("click", () => {
+    if (report) download(api.toCSV(report, $("model").value, $("incident").value), "text/csv;charset=utf-8", "filtered.csv");
+  });
+})();
+</script>
+</body>
+</html>

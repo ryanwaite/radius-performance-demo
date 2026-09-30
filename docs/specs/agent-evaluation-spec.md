@@ -56,7 +56,7 @@ flowchart LR
 - Infrastructure failures are classified separately and retried; they do not count as agent failures.
 - The same scenario definition can target Compose and Kubernetes, with environment-specific implementation details hidden behind a driver.
 
-The benchmark should prefer Compose for the MVP because it is faster and cheaper. Kubernetes becomes required for resource-throttling fidelity, deployment-state evaluation, and Radius integration.
+The diagnosis comparison uses Compose. Kubernetes execution and additional deployment-state evaluation are optional later extensions, not prerequisites for the combined Radius repository treatment.
 
 ## Scenario catalog
 
