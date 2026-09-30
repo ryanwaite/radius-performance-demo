@@ -1,8 +1,8 @@
 # Radius Performance Demo
 
-A small, self-contained catalogue performance lab for demonstrating how GitHub Copilot and the Radius Canvas can diagnose a slow service-to-database dependency, introduce a Valkey cache, visualize the graph change, deploy it to Kubernetes, and verify recovery.
+A benchmark project asking whether the **combined Radius repository experience** helps GitHub Copilot diagnose performance incidents. It compares a native repository, a native repository with architecture documentation, and a Radius-enabled repository containing the application model, graph, configuration, tools, and skills. It does not test graphs and skills separately.
 
-Phase 1 implements the runnable Go, MySQL, Valkey, Prometheus, Docker Compose, and Kubernetes foundation. Radius Canvas telemetry overlays, automated deployment orchestration, and the graph-effectiveness agent benchmark are specified but intentionally not presented as existing features.
+The runnable Go catalogue lab below is the harness development fixture and human-demo foundation. The scored application is the OpenTelemetry Astronomy Shop. The three-arm campaign is not yet runnable end to end. See the [current state](docs/specs/copilot-radius-experiment-plan.md#current-state-and-next-steps) and [completion and reporting plan](docs/specs/benchmark-completion-plan.md).
 
 ## Architecture
 
@@ -107,6 +107,6 @@ docs/specs/                       demo, implementation, and telemetry contracts
 - [Agent graph evaluation specification](docs/specs/agent-evaluation-spec.md)
 - [Security policy](SECURITY.md)
 
-The polished Canvas flow and the unattended benchmark serve different purposes. The demo explains one end-to-end story to a human audience; the benchmark measures whether graph access improves agent diagnosis and remediation under controlled, repeated incidents.
+The polished Canvas flow and the unattended benchmark serve different purposes. The demo explains one end-to-end story to a human audience; the benchmark measures whether the combined Radius repository experience improves performance diagnosis under controlled, repeated incidents. Remediation and Canvas telemetry overlays are optional later work.
 
 This project is original sample code released under the [MIT License](LICENSE). OpenTelemetry Demo is recognizable storefront inspiration for a later integration, not a source for this implementation.

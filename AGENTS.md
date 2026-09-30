@@ -1,6 +1,6 @@
 # Working in this repository
 
-This repository holds a benchmark. It asks whether a Radius-enabled repository, with `app.bicep`, an application graph, and Radius skills, makes the GitHub Copilot agent better at diagnosing performance incidents in the OpenTelemetry Astronomy Shop. The agent is compared across three arms: the native repository, the native repository with an architecture document, and the Radius-enabled repository.
+This repository holds a benchmark. It asks whether the combined Radius repository experience, with `app.bicep`, an application graph, configuration, tools, and Radius skills, makes the GitHub Copilot agent better at diagnosing performance incidents in the OpenTelemetry Astronomy Shop. The agent is compared across three arms: the native repository, the native repository with an architecture document, and the Radius-enabled repository. Separate graph-only, skills-only, and factorial experiments are out of scope.
 
 ## Where to start
 

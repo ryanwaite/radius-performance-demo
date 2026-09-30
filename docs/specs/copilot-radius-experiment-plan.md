@@ -19,6 +19,8 @@ Operating rules for anyone working in this repository, human or agent, are in [`
 
 This section is the handoff point. Update it in the same pull request as the work it describes.
 
+**Scope decision, September 30, 2026:** evaluate the combined Radius repository experience. The owner removed separate graph-only, skills-only, and factorial experiments. The native and architecture-document controls remain. [Completion and reporting plan](benchmark-completion-plan.md) defines the delivery sequence and the approved local HTML dashboard with JSON/CSV downloads. The dashboard is planned until explicitly marked implemented; it does not make the campaign runner complete.
+
 **Implemented on `main`:**
 
 - The Go catalogue application with MySQL and Valkey paths, Prometheus metrics, a Compose stack, k6 load, and Kubernetes manifests. It is the harness development fixture, not the scored application.
@@ -40,7 +42,7 @@ This section is the handoff point. Update it in the same pull request as the wor
 7. **Build the incident set:** at least 20 incidents with validators, planted wrong answers, and no-fault controls. *Exit:* Phase 3 stage 1 incident criteria.
 8. **Pilot, calibrate, and pre-register.** This needs the user's approval for its cost. *Exit:* the analysis plan and sample size are committed.
 9. **Provision and qualify the Azure VMs.** This needs the user's approval. First, make the throttling reader resolve each container's cgroup path instead of assuming the cgroupfs layout, because Docker on a systemd Linux host places containers elsewhere. *Exit:* each VM passes a determinism holdout on its own host class.
-10. **Run the scored campaign.** *Exit:* Phase 3 stage 2 criteria.
+10. **Run the scored campaign and publish the comparison.** Integrate the results exporter and dashboard described in the [completion plan](benchmark-completion-plan.md). *Exit:* Phase 3 stage 2 criteria, reproducible downloadable results, and a dashboard whose denominators agree with the run records.
 
 ## Purpose and research questions
 
@@ -48,24 +50,23 @@ The experimental unit is the **complete GitHub Copilot harness plus a selected m
 
 ### Primary product question
 
-Does Radius-enabling a repository make GitHub Copilot more successful, efficient, and safe when diagnosing and changing a cloud-native application on behalf of a developer?
+Does the combined Radius repository experience make GitHub Copilot more successful and efficient at diagnosing performance incidents than a native repository or a native repository with architecture documentation?
 
 The primary treatment is the complete repository experience that a developer would adopt. It includes the Radius application model, graph access, stable identifiers and source references, repository configuration, and generic Radius skills.
 
 ### Secondary questions
 
-- Where does any uplift come from: application graph, Radius skills, or their interaction?
 - How much one-time effort is required to Radius-enable the repository?
 - After how many tasks does operational benefit plausibly amortize that preparation cost?
 - On which incident and task classes does Radius help, have no effect, or hurt?
-- Does Radius improve diagnosis only, or also improve remediation correctness, recovery, and safety?
+- Does the combined experience improve remediation correctness, recovery, and safety in a separately approved later extension?
 - Does an agent use the available graph and skills, and does use correlate with outcome?
 
-### Product-treatment claims versus causal graph claims
+### Combined-treatment scope
 
 The primary campaign's Radius-versus-native contrast estimates the effect of the **fully Radius-enabled repository treatment**. It cannot attribute the result to the graph alone because the treatment also changes repository files, instructions, skills, identifiers, and tool affordances.
 
-Causal claims about graph access require the later graph-by-skills factorial ablation. Even then, conclusions apply to the pinned Copilot harness, models, tasks, fixtures, and benchmark version. They do not establish general LLM intelligence or universal benefit for every repository.
+Separate graph effects, skill effects, and their interaction are out of scope. No graph-only, skills-only, or factorial campaign is required to complete this project. Conclusions apply to the pinned Copilot harness, models, tasks, fixtures, and benchmark version, not to universal benefit for every repository.
 
 ## Primary conditions
 
@@ -86,7 +87,7 @@ Arm C is an active control. It answers the first question a skeptic will ask: do
 
 The Radius-enabled fixture must describe the deployed application and how to use Radius. It must not encode incident answers, expected root causes, scenario thresholds, or scenario-specific remediation.
 
-Radius setup occurs before timed trials. Both fixtures are frozen and hashed. `app.bicep` is not regenerated per trial, because generation time and variability would confound task execution. One-time setup cost is recorded separately.
+Radius setup occurs before timed trials. All three fixtures are frozen and hashed. `app.bicep` is not regenerated per trial, because generation time and variability would confound task execution. One-time setup cost is recorded separately.
 
 ### Variables held constant
 
@@ -123,31 +124,11 @@ The agent answers by calling a submit tool with fixed fields:
 
 A trial that ends without a valid call to the submit tool scores as a failure.
 
-## Follow-up factorial ablations
+## Completion boundary
 
-Run the primary three-arm campaign first. If it produces a stable signal and the harness passes integrity checks, run a 2x2 graph-by-skills campaign:
+Completion means a reproducible three-arm diagnosis campaign on the Astronomy Shop, a pre-registered analysis of the combined Radius treatment, and downloadable results with a local dashboard. The architecture-document arm tests whether Radius adds value beyond comparable prose; it does not isolate graph or skill effects.
 
-| Condition | Graph / `app.bicep` | Radius skills |
-|---|---:|---:|
-| Native | No | No |
-| Skills only | No | Yes |
-| Graph only | Yes | No |
-| Fully Radius-enabled | Yes | Yes |
-
-The factorial model estimates:
-
-- **Graph main effect:** average difference between graph-present and graph-absent conditions.
-- **Skills main effect:** average difference between skills-present and skills-absent conditions.
-- **Graph x skills interaction:** whether the combined effect differs from the sum of their separate effects.
-
-A positive interaction would suggest that procedural skills help Copilot exploit the graph. A negative interaction could indicate redundant context, conflicting instructions, or added tool overhead. Do not infer these effects from the primary campaign. Arm C answers a different question: whether the graph and skills together beat prose that carries the same facts.
-
-A later graph-content ablation compares:
-
-1. Static graph and deployment state.
-2. Static graph plus telemetry overlay defined by the [telemetry contract](telemetry-contract.md).
-
-Raw traces and metrics remain identical across arms unless their availability is itself the explicit treatment.
+Remediation, Kubernetes execution, interactive Canvas work, and telemetry overlays are optional later extensions, not prerequisites for this diagnosis comparison. Graph and skill usage remain descriptive instrumentation, never separate treatment arms or a basis for causal attribution.
 
 ## Harness and environment
 
@@ -817,7 +798,6 @@ Any departure from the plan is reported as a departure.
 
 - **Primary product estimand:** intention-to-treat difference between fully Radius-enabled and native repository fixtures.
 - **Scenario-specific estimand:** primary treatment difference within each incident/task class.
-- **Graph and skills effects:** factorial main effects and interaction from the later four-condition campaign.
 - **Treatment-use association:** outcome difference by observed graph/skill use; secondary and non-causal because use is self-selected.
 - **Amortization estimate:** one-time Radius preparation cost divided by observed per-task time/value uplift under explicit assumptions.
 
@@ -837,6 +817,7 @@ Each run stores:
 - graph payload/snapshot for graph-enabled conditions;
 - fixture, prompt, skill, graph, image, SDK/CLI, Inspect, scenario, and validator hashes;
 - suite summary CSV and Markdown report;
+- versioned campaign-results JSON and local HTML dashboard, as defined in the [completion plan](benchmark-completion-plan.md#results-dashboard-and-download-contract);
 - redaction and cleanup-verification results.
 
 Run-record excerpt:
@@ -1029,7 +1010,7 @@ Exit criteria, stage 2:
 - Every planned run completes or has an explicit terminal classification.
 - The report gives the co-primary contrasts with clustered intervals, per-model results, the no-fault false-alarm rate, and reviewer agreement, and labels secondary measures as exploratory.
 
-### Phase 4: Remediation trials
+### Phase 4: Optional later remediation trials
 
 Work:
 
@@ -1045,22 +1026,19 @@ Exit criteria:
 - Cache remediation retains MySQL and Valkey edges.
 - Every trial destroys or quarantines its environment with evidence.
 
-### Phase 5: Factorial ablations, telemetry overlay, and Kubernetes
+### Phase 5: Optional later telemetry overlay and Kubernetes
 
 Work:
 
-- Run native, skills-only, graph-only, and full Radius conditions.
-- Estimate graph, skills, and interaction effects.
-- Compare static graph with graph plus telemetry overlay.
+- Require a separate owner-approved plan before extending the combined Radius treatment with telemetry overlays or Kubernetes execution.
 - Validate access to `ryanw-aks` in `ryanw-rg` under the Test account.
 - Add isolated namespace driver and Radius deployment-state collection.
 - Deploy the Astronomy Shop from its Helm chart, which makes AIOpsLab's Kubernetes-level injectors available.
 
 Exit criteria:
 
-- Four fixtures pass leakage and parity checks.
-- Factorial analysis reports main effects and interaction with uncertainty.
-- Telemetry-overlay treatment is isolated from static graph.
+- The three repository fixtures pass leakage and parity checks on the new environment.
+- Any changed treatment is versioned and is not pooled with the original diagnosis campaign.
 - Azure access, Radius setup, namespace isolation, quotas, network policy, image pulls, and cleanup are verified before scored runs.
 
 ## Recommended defaults and unresolved decisions
@@ -1072,6 +1050,8 @@ Exit criteria:
 | Environment | Docker Compose | Decided |
 | Scored application | OpenTelemetry Astronomy Shop; catalog application for harness development only | Decided |
 | Primary arms | Native, native with architecture document (written by a fresh Copilot session without the plan), fully Radius-enabled | Decided |
+| Treatment scope | Combined Radius repository experience only; no graph-only, skills-only, or factorial experiments | Owner decision, September 30, 2026 |
+| Results UI | Self-contained local HTML dashboard importing versioned campaign JSON, with JSON and CSV downloads | Owner approved; see completion plan |
 | Incident set | 20-50 distinct incidents, misleading-symptom incidents, and 10-15 percent no-fault controls, drawn from AIOpsLab and external injectors; flag fault code removed from agent-visible source, flag faults diagnosis-only | Decided; not built |
 | Smallest effect worth detecting | 15 percentage points | Decided; sets the campaign size |
 | Analysis plan | Pre-registered before the scored campaign; incident-clustered model; Holm correction across co-primary contrasts | Decided; plan not yet written |
@@ -1111,13 +1091,12 @@ Models, budgets, and the output schema are decided above. The Copilot SDK drives
 - The intention-to-treat effect of a frozen fully Radius-enabled repository versus a frozen native repository, and versus a native repository with a hand-written architecture document, for the tested Copilot model/runtime and incident set.
 - Per-scenario differences in validated success, efficiency, recovery, and safety.
 - The observed one-time Radius preparation cost and a transparent amortization estimate.
-- After factorial ablations, benchmark-specific graph, skills, and interaction effects.
 - Whether Copilot used graph or skills, reported as secondary behavior and association.
 
 ### It cannot claim
 
 - Isolated raw LLM quality independent of the Copilot harness.
-- A graph-only causal effect from the primary campaign.
+- Separate graph or skill effects, or their interaction.
 - Results for applications much smaller or larger than the Astronomy Shop, or for incident classes outside the tested set.
 - General intelligence, universal cloud-debugging ability, or benefit for all repositories.
 - Provider superiority from incomparable token/cost accounting.

@@ -1,0 +1,149 @@
+# Completing the Radius repository comparison
+
+## Scope and finish line
+
+Owner decision, September 30, 2026: compare the **combined Radius repository
+experience** against native and architecture-document repositories. Keep the
+three arms. Do not build graph-only, skills-only, factorial, or telemetry-overlay
+experiments. The [canonical plan](copilot-radius-experiment-plan.md) governs
+protocol, budgets, grading, and analysis.
+
+The project is complete when an operator can build sealed fixtures, qualify a
+host, run a resumable diagnosis campaign, reproduce its analysis, inspect the
+comparison in a local dashboard, and download the results. A working pilot is
+not evidence of uplift. Remediation, Kubernetes, and the human Canvas demo are
+not required for this finish line.
+
+## Delivery sequence
+
+Each milestone is a reviewable PR or small sequence of PRs. Dependencies below
+are explicit; environment work and answer/report contracts can proceed
+independently. No date or campaign cost is promised before the first integrated
+trial measures runtime and usage.
+
+| Milestone | Work and dependencies | Exit criterion |
+|---|---|---|
+| M1. Reliable Shop environment | Derive the load script without the absent `ask_agent` endpoint; pin and vendor the Grafana plugin; split ingress/internal networks; resolve cgroups portably; include observed host class in footprint records; connect Shop readiness, flag state, throttling, and phase-specific load checks to the driver. | Healthy control has no unexplained endpoint failure or outbound request. Planted failures stop the trial. Records preserve measurements and verified cleanup. |
+| M2. Answer and result contracts | Add directed `connection` answers, canonical naming, exact terminal classes, causal/evidence grading, and retry/exclusion rules. Define campaign assignments before execution and preserve every attempt. Build the report export boundary below. Independent of M1. | Correct answers pass; wrong component, edge, mechanism, correlated symptom, fabricated evidence, and wrong healthy/fault assertions fail. Empty evidence cannot pass. Duplicate attempts cannot inflate denominators. |
+| M3. Sealed repository treatments | Build all three fixtures from one source snapshot; remove visible fault-flag code for diagnosis-only flag incidents; neutralize documentation; validate/freeze `app.bicep`, graph, source references, config, tools, and generic skills; generate the architecture document. Depends on the M1 deployment topology. | Difference manifests explain every treatment change. Leakage controls reject planted answers. Repeated standalone workspace creation is identical. Radius tools and skills are usable only in their assigned fixture, with no ambient host configuration. |
+| M4. Qualification and confinement | Fit and hold out Shop tolerances; re-verify the locked SDK/CLI sandbox, diagnosis-only write prohibition, telemetry access, and compaction accounting. Depends on M1 and M3. | Frozen tolerances pass an independent holdout. Escape probes fail at the real boundary, a legitimate workspace control succeeds, and ordinary diagnosis tools work in every arm. The campaign refuses an unqualified host or unverified sandbox. |
+| M5. First complete comparison | Wire Inspect scheduling, the SDK adapter, fixtures, environment, hidden validators, and append-only attempts. Run one incident and a healthy control across randomized three-arm sets. Depends on M2-M4. | One operator invocation produces validated terminal records, verified cleanup, report JSON/CSV, and a dashboard. Interrupt/resume and injected infrastructure failures preserve assignments and retry once without double counting. Label these runs smoke, not findings. |
+| M6. Incident library and pilot | Expand to the canonical incident target with external faults, hidden variants, misleading symptoms, and healthy controls. Run pilot and scored-model calibration on disjoint seeds. Depends on M5. | Each retained incident passes independent activation and grader controls, native difficulty lies in the planned band, and blinded reviewer agreement meets the plan. Record measured runtime and cost per run. |
+| M7. Freeze campaign and hosts | Use pilot variance to power the specified effect; commit sample size, seeds, analysis and failure policy. Build a pinned harness image, then provision and qualify approved Linux VM hosts. Depends on M6. | Pre-registration and all input hashes are frozen. Each host passes its own holdout; model availability, budget allowance, redaction, and recovery procedures are confirmed. |
+| M8. Execute and publish | Run the scheduled campaign without interim arm comparisons. Resolve or explicitly exclude every assignment, reproduce incident-clustered inference, and publish redacted artifacts. Depends on M7. | Dashboard and downloads reconcile with canonical records. Report both Radius contrasts, clustered uncertainty, multiplicity correction, per-model results, healthy false alarms, exclusions, review agreement, and exploratory efficiency measures. |
+
+### Operator workflow to implement
+
+The future command surface must cover fixture build/verification, host
+qualification, campaign preparation, run/resume, analysis, and export. These
+are requirements, not commands that work today. Configuration must pin model,
+runtime, fixtures, incident versions, seeds, host class, tool policy and budget.
+A prepared campaign contains its entire assignment roster, including runs not
+yet started. Resume uses that roster and never silently creates new trials.
+
+The first end-to-end run is the integration checkpoint. Do not expand the
+incident library or provision scored hosts until it establishes that the agent
+can actually use the Radius additions and that the same graders work for all
+arms. Do not count synthetic dashboard fixtures or catalogue determinism runs
+as Astronomy Shop comparison evidence.
+
+### Approval and cost gates
+
+Ask the owner before any model call, naming the expected requests and allowance.
+This includes Radius/document authoring, sandbox registration, smoke runs,
+calibration, and the pilot. Model calls and billable requests are different;
+report both measured quantities rather than assuming one request per tool call.
+Before M4's laptop fit/holdout, request approval for approximately three hours.
+Other runs expected to exceed an hour need a separate estimate and approval.
+Before M7, request VM and storage cost approval using measured Shop/harness
+demand. This plan and dashboard work authorize none of those live operations.
+
+## Results dashboard and download contract
+
+**Approved delivery:** a self-contained `benchmark/dashboard.html`, opened
+locally without a server or dependencies. Import a JSON report through a file
+picker. No data leaves the browser. No model calls, registry requests, telemetry,
+or cloud resources are required. The initial screen says no campaign is loaded;
+it never displays fabricated benchmark results.
+
+This is a reporting boundary, not a replacement for Inspect, canonical run
+records, or the pre-registered analysis. The first dashboard shows descriptive
+results only. M8 must add the reviewed analysis export and clustered intervals;
+the initial UI must not invent confidence intervals or significance.
+
+### Versioned input
+
+`schemaVersion` is `radius-comparison-v1`, distinct from historical smoke and
+environment records. The root contains `campaign` and `runs`.
+
+`campaign` contains nonempty `id`, `benchmarkCommit`, and `analysisPlan` strings,
+`phase` (`smoke`, `pilot`, or `scored`), and `status` (`running` or `complete`).
+For smoke/pilot work, `analysisPlan` may explicitly say `not-preregistered`.
+A scored campaign requires a Git commit hash for `analysisPlan`.
+
+`runs` is the complete, nonempty assignment roster. Each row contains:
+
+| Field | Contract |
+|---|---|
+| `runId`, `pairId` | Unique logical assignment ID; matched-set ID shared across arms. |
+| `arm` | `native`, `architecture`, or `radius`. |
+| `model`, `incident`, `seed`, `configurationId` | Nonempty strings. Model includes its pinned version. Configuration identifies the immutable non-treatment configuration. Rows in a matched set must agree on these fields. |
+| `expectedFault` | Boolean, including false for healthy controls; constant within a matched set. |
+| `status` | `pending`, `running`, `excluded`, or one of `validated_success`, `diagnosis_failure`, `budget_exhaustion`, `no_submission`, `invalid_structured_output`, `refusal`, `isolation_violation_attempt`. |
+| `attempts`, `harnessFailures` | Integers. Pending has zero of both; running has one or two attempts; an agent result has one or two attempts and exactly `attempts - 1` harness failures. Excluded has two attempts and two harness failures, per retry policy. |
+| `recordDigest` | SHA-256 reference to the canonical terminal record; null while pending/running. |
+| `reason` | Nonempty for exclusions; string otherwise. No secret-bearing logs. |
+| `validators` | Object. A validated success requires `diagnosis`, `evidence`, `scope`, `safety`, and `cleanup` all equal to `pass`. Other rows may carry their actual results or an empty object, not assumed passes. |
+| `reportedFault` | Boolean or null if no valid answer exists. Success must agree with `expectedFault`. |
+| `agentSeconds`, `toolCalls`, `aiCredits` | Nonnegative finite numbers or null when unavailable; tool calls are integers. Final-attempt metrics, not retry-inclusive campaign cost. Pending metrics are null. |
+
+Every matched set declares each arm exactly once, including pending assignments.
+The dashboard rejects unknown schemas/statuses, duplicate assignments,
+inconsistent matching, malformed numeric values, and a complete campaign with
+unfinished runs. It validates report consistency, not the truth of a claimed
+digest or grade. The future exporter must verify these against actual artifacts,
+redact before export, and retain every underlying attempt separately.
+
+### Views and denominators
+
+Show campaign identity, phase, benchmark revision, analysis-plan reference,
+planned/completed/scored/excluded runs and failed-attempt counts. Filter by
+model and incident. Never silently pool model-specific treatment effects.
+
+For each arm, show successful/scored runs, a pass-rate bar, exclusions, pending
+work, and medians with available-sample counts for final-attempt time, tools and
+AI credits. Missing data renders unavailable, not zero. Healthy controls show
+false alarms over scored healthy runs, with missing valid answers separately
+counted, not silently treated as correct healthy diagnoses.
+
+For each model, show Radius-minus-native and Radius-minus-architecture
+pass-rate differences using only complete, scored matched pairs for that
+contrast, with the matched denominator and omitted-pair count. These are
+descriptive percentage-point differences, not confidence intervals, significance,
+or a graph/skill attribution. Unpaired arm summaries are labeled descriptive.
+Trial rows expose statuses, validator results, record digest, and exclusion
+reason as text, never executable HTML.
+
+For an in-progress scored campaign, show only overall progress. Hide arm
+comparisons and outcome rows until completion, consistent with no interim
+looks. Smoke and pilot screens are prominently labeled non-findings.
+
+### Downloads and checks
+
+Download the full validated campaign JSON, preserving the roster and provenance,
+regardless of filters. Download a filtered trial-level CSV with explicit
+headers, arm/model/incident/status, attempt counts, metrics, validator fields,
+digest, and reasons. Label download scope; JSON is the lossless format.
+CSV must quote values and neutralize spreadsheet formula prefixes. A future
+M8 exporter also packages redacted raw records, telemetry, transcripts, checksums,
+and the analysis report; the initial dashboard does not claim to download
+artifacts it has not received.
+
+Use synthetic fixtures only inside automated tests. Demonstrate that empty
+data, a corrupted schema, duplicate/retried assignments, a forged success
+without passing gates, unmatched pairs, missing metrics, hostile text and
+spreadsheet formulas cannot silently produce a valid result. Mutation checks
+must show the schema, roster, success, and denominator guards are exercised.
+Exercise import, filtering, download contents, and the scored-campaign embargo.
+Test offline with `DOCKER_HOST=unix:///nonexistent/docker.sock`; no live
+benchmark is needed to verify reporting logic.
