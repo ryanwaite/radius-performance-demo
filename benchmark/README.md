@@ -1162,7 +1162,8 @@ environment check, not an agent trial or a qualified campaign.
 
 The startup assets include the public upstream `.env`, a derived load script
 without `ask_agent`, a derived proxy template blocking flag and mutable control
-routes, and Linux ARM64/AMD64 archives of OpenSearch plugin `2.34.4`. The archives
+routes, a derived daily-index Grafana datasource, and Linux ARM64/AMD64
+archives of OpenSearch plugin `2.34.4`. The archives
 contain the Apache-2.0 license and Grafana signature. Their declared Grafana
 dependency includes the pinned Grafana version. `startup-assets.json` records
 source URLs and hashes, and `image-digests.json` links those pins. Rendering
@@ -1176,11 +1177,19 @@ With the locked environment installed, the environment-only check is:
 benchmark/.venv/bin/radius-perf-eval-env shop --calibrate --seconds 60
 ```
 
-This command was run during implementation. It currently **fails**, correctly,
-at the OpenSearch datasource-health gate. The plugin loaded, but reported
-`Index not found: otel-logs-*`. Collector logs also show permanent field-mapping
-failures. Do not interpret container readiness as usable log telemetry.
-The failed attempts verified cleanup. The full healthy window has not passed.
+Earlier executions failed at the OpenSearch datasource-health gate with
+`Index not found: otel-logs-*`. A follow-up inspection found a nonempty dated
+index: the pinned plugin was looking up the literal wildcard in a response
+keyed by concrete index names. The derived datasource now uses
+`[otel-logs-]YYYY-MM-DD` and `interval: daily`. An isolated live control passed
+health and a Grafana PPL query over synthetic records; missing-index and
+missing-plugin controls failed. The driver requires the timestamp field to
+exist with date type, not merely a plugin status of `OK`.
+
+This does not resolve the collector's separate attribute-mapping failures.
+The full healthy application window has not passed. Do not interpret
+container readiness or the synthetic control as application-ingestion
+acceptance. The failed attempts and isolated controls verified cleanup.
 
 `--calibrate` records a fitting sample without claiming a frozen load-band
 verdict. Without it, the driver refuses a missing or wrong-host band.

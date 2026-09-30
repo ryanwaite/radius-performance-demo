@@ -213,8 +213,28 @@ class ShopEnvironment:
             payload = json.loads(result.stdout)
         except json.JSONDecodeError:
             payload = {"error": result.stderr or result.stdout}
-        self.gate("opensearch-plugin",
-                  result.returncode == 0 and isinstance(payload, dict) and payload.get("status") == "OK", payload)
+        healthy = (
+            result.returncode == 0 and isinstance(payload, dict)
+            and payload.get("status") == "OK"
+            and payload.get("message") == "Index OK. Time field name OK."
+        )
+        if not healthy:
+            for name, path in (
+                ("indices", "_cat/indices?format=json"),
+                ("mapping", "otel*/_mapping"),
+                ("templates", "_index_template"),
+            ):
+                diagnostic = docker(
+                    "run", "--rm", "--network", f"{self.run_id}_default",
+                    "--label", f"com.docker.compose.project={self.run_id}",
+                    shop_readiness.PROBE_IMAGE, "--fail-with-body", "--silent",
+                    "--show-error", "--max-time", "10", f"http://opensearch:9200/{path}",
+                    check=False,
+                )
+                self.evidence(f"opensearch-{name}", {
+                    "exitCode": diagnostic.returncode, "stdout": diagnostic.stdout, "stderr": diagnostic.stderr,
+                })
+        self.gate("opensearch-plugin", healthy, payload)
 
     def measure(self, seconds: float, *, calibrate: bool = False) -> dict[str, Any]:
         if not math.isfinite(seconds) or seconds < offered_load.MIN_WINDOW_SECONDS:

@@ -14,6 +14,8 @@ from typing import Any
 PLUGIN_ID = "grafana-opensearch-datasource"
 PLUGIN_VERSION = "2.34.4"
 PLATFORMS = ("linux_amd64", "linux_arm64")
+DATASOURCE_SOURCE = "upstream/src/grafana/provisioning/datasources/opensearch.yaml"
+DATASOURCE_DERIVED = "derived/grafana/opensearch.yaml"
 
 
 class AssetError(ValueError):
@@ -44,6 +46,14 @@ def derive_load_script(source: str) -> str:
 
 def asset_root(repo_root: Path) -> Path:
     return repo_root / "benchmark/apps/astronomy-shop"
+
+
+def derive_opensearch_datasource(source: str) -> str:
+    """Use concrete daily indices for plugin health and Lucene queries."""
+    original = "      database: otel-logs-*\n"
+    if source.count(original) != 1 or re.search(r"^\s*interval:", source, re.M):
+        raise AssetError("expected one wildcard database and no existing index interval")
+    return source.replace(original, "      database: '[otel-logs-]YYYY-MM-DD'\n      interval: daily\n")
 
 
 def derive_proxy_template(source: str) -> str:
@@ -82,6 +92,7 @@ def verify_assets(repo_root: Path) -> dict[str, Any]:
         "upstream/src/load-generator/Dockerfile", "derived/load-generator/locustfile.py",
         "upstream/src/frontend-proxy/Dockerfile", "upstream/src/frontend-proxy/envoy.tmpl.yaml",
         "derived/frontend-proxy/envoy.tmpl.yaml",
+        DATASOURCE_SOURCE, DATASOURCE_DERIVED,
         *(f"plugins/{PLUGIN_ID}-{PLUGIN_VERSION}.{platform}.zip" for platform in PLATFORMS),
     }
     if set(files) != required:
@@ -104,6 +115,9 @@ def verify_assets(repo_root: Path) -> dict[str, Any]:
     proxy = (root / "upstream/src/frontend-proxy/envoy.tmpl.yaml").read_text()
     if (root / "derived/frontend-proxy/envoy.tmpl.yaml").read_text() != derive_proxy_template(proxy):
         raise AssetError("derived proxy template differs from the declared route restrictions")
+    datasource = (root / DATASOURCE_SOURCE).read_text()
+    if (root / DATASOURCE_DERIVED).read_text() != derive_opensearch_datasource(datasource):
+        raise AssetError("derived OpenSearch datasource differs from the declared daily index pattern")
     return manifest
 
 
@@ -154,6 +168,7 @@ def mount_assets(config: dict[str, Any], repo_root: Path, runtime_dir: Path, arc
     plugin = extract_plugin(archive, runtime_dir / "plugins")
     for service, source, target in (
         ("grafana", plugin, f"/var/lib/grafana/plugins/{PLUGIN_ID}"),
+        ("grafana", root / DATASOURCE_DERIVED, "/etc/grafana/provisioning/datasources/opensearch.yaml"),
         ("load-generator", root / "derived/load-generator/locustfile.py", "/usr/src/app/locustfile.py"),
         ("frontend-proxy", root / "derived/frontend-proxy/envoy.tmpl.yaml", "/home/envoy/envoy.tmpl.yaml"),
     ):

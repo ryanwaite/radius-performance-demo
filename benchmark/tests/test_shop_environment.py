@@ -29,6 +29,18 @@ def completed(text="", code=0):
 
 
 class StartupAssetTests(unittest.TestCase):
+    def test_daily_datasource_preserves_every_other_setting(self):
+        source = (assets.asset_root(ROOT) / assets.DATASOURCE_SOURCE).read_text()
+        derived = assets.derive_opensearch_datasource(source)
+        self.assertIn("      database: '[otel-logs-]YYYY-MM-DD'\n      interval: daily\n", derived)
+        self.assertEqual(derived.replace(
+            "      database: '[otel-logs-]YYYY-MM-DD'\n      interval: daily\n",
+            "      database: otel-logs-*\n",
+        ), source)
+        for invalid in ("", source * 2, derived, source + "      interval: hourly\n"):
+            with self.subTest(source=invalid), self.assertRaises(assets.AssetError):
+                assets.derive_opensearch_datasource(invalid)
+
     def test_committed_assets_are_complete_and_derived(self):
         manifest = assets.verify_assets(ROOT)
         self.assertEqual(manifest["upstreamCommit"], environment.shop.UPSTREAM_COMMIT)
@@ -55,13 +67,15 @@ class StartupAssetTests(unittest.TestCase):
     def test_missing_or_modified_asset_is_rejected(self):
         assets.verify_assets(ROOT)
         original = Path.read_bytes
-        with patch.object(Path, "read_bytes", lambda path:
-                          b"altered" if path.name == ".env" else original(path)):
-            with self.assertRaisesRegex(assets.AssetError, "hash mismatch"):
-                assets.verify_assets(ROOT)
-        with patch.object(Path, "is_file", lambda path: False if path.name == ".env" else True):
-            with self.assertRaisesRegex(assets.AssetError, "missing"):
-                assets.verify_assets(ROOT)
+        for name in ("upstream/.env", assets.DATASOURCE_SOURCE, assets.DATASOURCE_DERIVED):
+            target = assets.asset_root(ROOT) / name
+            with self.subTest(name=name), patch.object(Path, "read_bytes", lambda path:
+                              b"altered" if path == target else original(path)):
+                with self.assertRaisesRegex(assets.AssetError, "hash mismatch"):
+                    assets.verify_assets(ROOT)
+            with patch.object(Path, "is_file", lambda path: path != target):
+                with self.assertRaisesRegex(assets.AssetError, "missing"):
+                    assets.verify_assets(ROOT)
 
     def test_real_compose_renders_offline_with_both_plugin_architectures(self):
         # config reads files but does not contact the daemon.
@@ -90,12 +104,18 @@ class StartupAssetTests(unittest.TestCase):
                 self.assertTrue((plugin / f"gpx_opensearch-datasource_linux_{architecture}").stat().st_mode & 0o111)
                 for service, target in (
                     ("grafana", f"/var/lib/grafana/plugins/{assets.PLUGIN_ID}"),
+                    ("grafana", "/etc/grafana/provisioning/datasources/opensearch.yaml"),
                     ("load-generator", "/usr/src/app/locustfile.py"),
                     ("frontend-proxy", "/home/envoy/envoy.tmpl.yaml"),
                 ):
                     mount = next(volume for volume in config["services"][service]["volumes"] if volume["target"] == target)
                     self.assertTrue(mount["read_only"])
                     self.assertFalse(mount["bind"]["create_host_path"])
+                    if target.endswith("/opensearch.yaml"):
+                        self.assertEqual(Path(mount["source"]), assets.asset_root(ROOT) / assets.DATASOURCE_DERIVED)
+                        self.assertEqual(Path(mount["source"]).read_text(), assets.derive_opensearch_datasource(
+                            (assets.asset_root(ROOT) / assets.DATASOURCE_SOURCE).read_text(),
+                        ))
                 self.assertTrue((runtime / "flags/demo.flagd.json").is_file())
 
     def test_wrong_platform_fails_before_extraction(self):
@@ -113,7 +133,7 @@ class StartupAssetTests(unittest.TestCase):
                               json.dumps(value) if path.name == "startup-assets.json" else original(path, *a, **kw)):
                 with self.assertRaises(assets.AssetError):
                     assets.verify_assets(ROOT)
-        for derivation in ("derive_load_script", "derive_proxy_template"):
+        for derivation in ("derive_load_script", "derive_proxy_template", "derive_opensearch_datasource"):
             with patch.object(assets, derivation, return_value="different derived source"):
                     with self.assertRaisesRegex(assets.AssetError, "derived"):
                         assets.verify_assets(ROOT)
@@ -427,19 +447,34 @@ class ShopLifecycleTests(unittest.TestCase):
             env.project.destroy.assert_not_called()
 
     def test_plugin_health_requires_actual_success(self):
+        success = '{"status":"OK","message":"Index OK. Time field name OK."}'
         for text, code, passing in (
-            ('{"status":"OK"}', 0, True), ('{"status":"ERROR"}', 0, False),
-            ('{"status":"OK"}', 1, False), ('{"message":"Plugin not found"}', 0, False),
+            (success, 0, True), (success, 1, False),
+            ('{"status":"ERROR","message":"Index OK. Time field name OK."}', 0, False),
+            ('{"status":"OK"}', 0, False),
+            ('{"status":"OK","message":"Index OK. Note: No field named observedTimestamp found"}', 0, False),
+            ('{"status":"OK","message":"Index OK. Note: observedTimestamp is not a date field"}', 0, False),
+            ('{"message":"Plugin not found"}', 0, False),
             ("", 0, False), ("[]", 0, False),
         ):
             with tempfile.TemporaryDirectory() as temp:
                 env = environment.ShopEnvironment(ROOT, Path(temp))
-                with patch.object(environment, "docker", return_value=completed(text, code)):
+                with patch.object(environment, "docker", return_value=completed(text, code)) as runner:
                     if passing:
                         env.check_plugin()
                     else:
                         with self.assertRaises(environment.ShopEnvironmentError):
                             env.check_plugin()
+                requests = [call.args[-1] for call in runner.call_args_list]
+                self.assertEqual(requests[1:], [] if passing else [
+                    "http://opensearch:9200/_cat/indices?format=json",
+                    "http://opensearch:9200/otel*/_mapping",
+                    "http://opensearch:9200/_index_template",
+                ])
+                journal = [json.loads(line) for line in (env.run_dir / "measurements.jsonl").read_text().splitlines()]
+                self.assertEqual([entry["name"] for entry in journal], (
+                    [] if passing else ["opensearch-indices", "opensearch-mapping", "opensearch-templates"]
+                ) + ["opensearch-plugin"])
                 env.destroy()
 
     def test_measurement_positive_and_negative_controls(self):

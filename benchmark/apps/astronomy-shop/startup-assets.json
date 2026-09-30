@@ -27,6 +27,10 @@
       "source": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-demo/dedc0178918e260823323b8d95005a8cb924b007/src/frontend-proxy/envoy.tmpl.yaml",
       "sha256": "sha256:9bd67a05b9d68e64735363e845c24d1d9a3e095370622142334ca85d4ab52849"
     },
+    "upstream/src/grafana/provisioning/datasources/opensearch.yaml": {
+      "source": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-demo/dedc0178918e260823323b8d95005a8cb924b007/src/grafana/provisioning/datasources/opensearch.yaml",
+      "sha256": "sha256:cfa6f1e23bd59d4b78c90d09f827e00a495b60d6be048c86c48d24784134bd25"
+    },
     "derived/load-generator/locustfile.py": {
       "source": "upstream/src/load-generator/locustfile.py minus WebsiteUser.ask_agent",
       "sha256": "sha256:b1adcc6ce5537f7813e2c7204ce8350e1e9cebb1bbc80ae12e349b42ee1751d5"
@@ -34,6 +38,10 @@
     "derived/frontend-proxy/envoy.tmpl.yaml": {
       "source": "upstream/src/frontend-proxy/envoy.tmpl.yaml with flag and control routes blocked",
       "sha256": "sha256:e419d4707fe15249ce3871ac80251f388dff45a26c976d8eba363f3e4b6b2c6c"
+    },
+    "derived/grafana/opensearch.yaml": {
+      "source": "upstream/src/grafana/provisioning/datasources/opensearch.yaml with a daily index pattern",
+      "sha256": "sha256:e2825a66d7c8068d6c0f5695b52761a56ea66432ebd87e481cff64ca1a856b51"
     },
     "plugins/grafana-opensearch-datasource-2.34.4.linux_amd64.zip": {
       "source": "https://github.com/grafana/opensearch-datasource/releases/download/v2.34.4/grafana-opensearch-datasource-2.34.4.linux_amd64.zip",

@@ -13,6 +13,7 @@ sys.path.insert(0, str(REPO / "benchmark"))
 
 from radius_perf_eval.astronomy_shop import UPSTREAM_COMMIT, UPSTREAM_REPO
 from radius_perf_eval.shop_assets import (
+    DATASOURCE_DERIVED, DATASOURCE_SOURCE, derive_opensearch_datasource,
     PLATFORMS, PLUGIN_ID, PLUGIN_VERSION, asset_root, derive_load_script, derive_proxy_template, digest,
     extract_plugin, verify_assets,
 )
@@ -29,6 +30,7 @@ def main() -> None:
     for name in (
         ".env", "src/load-generator/locustfile.py", "src/load-generator/Dockerfile",
         "src/frontend-proxy/Dockerfile", "src/frontend-proxy/envoy.tmpl.yaml",
+        "src/grafana/provisioning/datasources/opensearch.yaml",
     ):
         url = f"https://raw.githubusercontent.com/{UPSTREAM_REPO}/{UPSTREAM_COMMIT}/{name}"
         data = fetch(url)
@@ -52,6 +54,14 @@ def main() -> None:
     target.write_bytes(derived)
     files[str(target.relative_to(root))] = {
         "source": "upstream/src/frontend-proxy/envoy.tmpl.yaml with flag and control routes blocked",
+        "sha256": digest(derived),
+    }
+    derived = derive_opensearch_datasource((root / DATASOURCE_SOURCE).read_text()).encode()
+    target = root / DATASOURCE_DERIVED
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(derived)
+    files[DATASOURCE_DERIVED] = {
+        "source": DATASOURCE_SOURCE + " with a daily index pattern",
         "sha256": digest(derived),
     }
     for platform in PLATFORMS:

@@ -17,9 +17,12 @@ not required for this finish line.
 ## Delivery sequence
 
 **Implementation progress:** the M1 environment driver and offline startup
-assets are implemented on this branch. Its live acceptance check currently
-stops at OpenSearch log ingestion; failed attempts preserve evidence and
-verify cleanup. M1 is not complete. The dashboard is implemented, but M2's
+assets are implemented on this branch. The Grafana wildcard-health defect is
+fixed with a derived daily index pattern; isolated live controls exercised
+queries and missing-index/plugin failures. OpenSearch attribute collisions
+remain under investigation, and healthy application acceptance is incomplete.
+Failed attempts preserve evidence and verify cleanup. M1 is not complete.
+The dashboard is implemented, but M2's
 graded records/exporter and the later campaign milestones remain unbuilt.
 
 Each milestone is a reviewable PR or small sequence of PRs. Dependencies below

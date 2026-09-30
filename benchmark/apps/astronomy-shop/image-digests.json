@@ -68,7 +68,7 @@
   "manifestHash": "sha256:efebfca32bef55b54ae827872cccad22e51bc89cadf2a0519df8faca252ad850",
   "startupAssets": {
     "manifest": "startup-assets.json",
-    "sha256": "sha256:fdae76926eef04a1ecd0bfb1e6d0c2501ffae1f11aa59c81500745be14df5c67",
+    "sha256": "sha256:a6c7fbf612ca1493c43b2d3c89dcbb85f888bd86b192471f310240e8b8483fb6",
     "plugins": {
       "plugins/grafana-opensearch-datasource-2.34.4.linux_amd64.zip": {
         "source": "https://github.com/grafana/opensearch-datasource/releases/download/v2.34.4/grafana-opensearch-datasource-2.34.4.linux_amd64.zip",
