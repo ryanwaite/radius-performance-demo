@@ -26,6 +26,8 @@ go.work.sum
 
 # env file
 .env
+# Public upstream sample configuration, required to render the pinned Shop.
+!benchmark/apps/astronomy-shop/upstream/.env
 
 # Editor/IDE
 # .idea/

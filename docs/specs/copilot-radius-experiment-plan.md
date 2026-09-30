@@ -19,6 +19,22 @@ Operating rules for anyone working in this repository, human or agent, are in [`
 
 This section is the handoff point. Update it in the same pull request as the work it describes.
 
+**Scope decision, September 30, 2026:** evaluate the combined Radius repository experience. The owner removed separate graph-only, skills-only, and factorial experiments. The native and architecture-document controls remain. [Completion and reporting plan](benchmark-completion-plan.md) defines the delivery sequence and the approved local HTML dashboard with JSON/CSV downloads.
+
+**Added on this branch, pending merge:** the [offline dashboard](../../benchmark/dashboard.html) imports `radius-comparison-v1` reports, displays descriptive per-model comparisons and exclusions, and downloads full JSON or filtered CSV. It has an empty initial state, rejects inconsistent reports, and hides interim scored-arm results. It is not connected to a campaign runner yet. The exporter, source-artifact verification, and pre-registered analysis remain M2/M5/M8 work in the completion plan.
+
+**M1 implementation, not yet accepted:** a `shop` driver command now renders the pinned Shop with offline startup assets, an internal backend network, a loopback ingress, and blocked flag/control routes. It calls deployment, readiness, flag, CPU and load gates, saves evidence before judging it, and verifies cleanup. The public upstream `.env` is now tracked. The load script omits only `ask_agent`; the Apache-2.0 OpenSearch plugin is pinned for Linux ARM64 and AMD64. CPU readers resolve actual cgroup paths through host PIDs. The footprint tool emits a host-labelled kernel-demand report.
+
+The owner's approved local check exposed an unset-variable comparison bug, which is fixed, then stopped at Grafana's datasource-health gate. The plugin loaded, but reported `Index not found: otel-logs-*`; the collector also logged permanent OpenSearch mapping failures involving `attributes.http` and `http.request.method`. These are measurements, not a diagnosis of the full ingestion failure. Cleanup succeeded on the failed attempts. M1 remains open until shared telemetry works, the plugin's live negative control passes, and a healthy load window passes. No comparison, model call, qualification campaign, or cloud provisioning has run.
+
+**Telemetry investigation correction:** the follow-up run `radius-eval-shop-cfa0b4b8433f` found a nonempty dated log index with a valid timestamp mapping. The missing-index message did not prove absent ingestion. The pinned plugin's health implementation looks up the literal wildcard in a response keyed by concrete index names. A derived Grafana datasource now uses `[otel-logs-]YYYY-MM-DD` with `interval: daily`, without changing container or plugin versions. Its input and output are hashed with the startup assets. The driver also rejects the plugin's nominally successful responses for missing or mistyped timestamp fields.
+
+The isolated live control `radius-eval-shop-9b17c82ee06f` demonstrated daily-pattern health and a Grafana PPL query over synthetic records. An absent index and a removed plugin both failed; teardown left no resources. This is not application-ingestion acceptance. A separate mapping experiment found that OpenSearch 3.7's `disable_objects` preserves scalar and dotted attribute fields and their numeric queries, but still rejects a nested object sharing a scalar field's name. That candidate is not part of the shipped configuration. No `flat_object` conversion or reduction in typed query capabilities has been approved or applied.
+
+The application experiment `radius-eval-shop-6dbbb5769f15` installed that candidate template before starting the collector. Grafana returned log data, and the saved OpenSearch sample contains actual Shop service logs, including both `http` and `http.request.method` attributes. The captured collector log tail had no mapping/export error, but the exporter-metric query returned an empty vector, so zero data loss is **not established**. The measurement reached the CPU gate and failed on checkout throttling. Raw load boundaries and cgroup counters were saved, and cleanup succeeded. Do not promote the mapping candidate or refit CPU limits from this observation alone; complete the ingestion controls and demand measurement first. Docker allocation, service limits, and version pins were unchanged.
+
+**Owner decision, September 30, 2026:** repair the shared telemetry configuration rather than change the pinned container versions. Apply the repair identically to all three arms and preserve the telemetry available for diagnosis. Derive changes from the vendored inputs, record their hashes, and demonstrate ingestion and Grafana queries with actual application logs. Do not hide the failure by dropping conflicting attributes, relaxing the datasource gate, or counting an empty index as evidence. This decision does not authorize model calls, a multi-hour qualification run, or cloud provisioning.
+
 **Implemented on `main`:**
 
 - The Go catalogue application with MySQL and Valkey paths, Prometheus metrics, a Compose stack, k6 load, and Kubernetes manifests. It is the harness development fixture, not the scored application.
@@ -27,20 +43,20 @@ This section is the handoff point. Update it in the same pull request as the wor
 - CI that installs Python dependencies by hash from PyPI, checks the export against `uv.lock`, discovers every test module from disk, and runs the whole suite with the Docker daemon unreachable (PR #7).
 - The runtime sandbox, applied before the first prompt and verified on every tool execution including unfinished ones; the static screen off inside the sandbox; trial budgets; the submit tool with ten defined causal categories; and trial outcome records (PR #9).
 - Host qualification by observed class and fingerprint; the Astronomy Shop 3.1.0 vendored with its isolation defects removed; uniform CPU limits verified by zero lifetime throttling; per-service readiness; the flag-off gate; and the offered-load gate on healthy cycles (PR #11). Six defects from review of #11 are fixed (PR #12): the CPU limits refuse to load on a host class other than the one they were fitted on, and the class is inside the verified hash; a requalification record counts only against the tolerance set it was made for; each trial gets its own copy of the flag file; the footprint tool tears the stack down when interrupted.
-- The readiness, flag, throttling, and offered-load gates are implemented and tested, but nothing outside the tests calls them. The trial driver still drives the catalogue application and does not reference the Astronomy Shop. The fingerprint gate is the exception: the driver calls it.
+- On `main`, the Shop gates are libraries rather than an integrated driver. This branch adds the environment-only Shop driver described above. The catalogue determinism runner remains separate.
 
 **Next, in order.** Each step lists its exit criterion. Steps 1 and 2 are independent and can run in parallel.
 
-1. **Finish the Astronomy Shop environment.** Mount a derived load-generator script without the `ask_agent` task; vendor Grafana's OpenSearch plugin; split the network so only the ingress container is routed and the other 27 services are internal; add the incident-phase load gate; make the footprint tool record the observed host class in its demand report, because the CPU-limit refit refuses a report that names none; point the trial driver at the Astronomy Shop; and wire the readiness, flag, throttling, and offered-load gates into it. The requirements are in `benchmark/README.md`. *Exit:* a healthy stack on the internal network has no failing endpoint, makes no outbound request, and passes every generated check.
+1. **Finish the Astronomy Shop environment.** Resolve the live log-ingestion failure without weakening the datasource gate. Verify plugin-backed data through Grafana, run its missing-plugin negative control, inspect outbound attempts and dashboard leakage, and obtain a healthy load measurement. Finish exercising the footprint demand producer and incident-phase integration. The new driver and asset derivation are implemented, but their acceptance evidence is incomplete. The requirements are in `benchmark/README.md`. *Exit:* a healthy stack on the internal network has no failing endpoint, makes no unexplained outbound request, and passes every generated check.
 2. **Finish the answer contract.** Add the `connection` field to the submit tool, align the code's terminal classes with [Trial outcomes and retries](#trial-outcomes-and-retries), and implement the retry policy. *Exit:* planted wrong answers for the component and the connection each fail, and a correct answer passes.
 3. **Fit and hold out the determinism suite on the laptop.** It takes about three hours and needs the user's approval before it starts. *Exit:* the holdout passes with tolerances frozen before it ran.
 4. **Build the three Astronomy Shop fixtures** under Phase 0: fault-flag code removed from the agent-visible source, a neutral README, a validated `app.bicep`, the arm C document, two difference manifests, and a leakage scan that covers Grafana dashboards and provisioning. *Exit:* the Phase 0 exit criteria.
-5. **Run one incident end to end.** Inspect AI task integration, standalone workspace creation, one ported AIOpsLab incident with its hidden validator, and randomized sets of all three arms. *Exit:* the Phase 2 exit criteria, on the Astronomy Shop.
-6. **Re-verify the sandbox** on the locked SDK and CLI pair and on each pilot model, and run the forced-compaction control. This needs a premium-request allowance from the user. Build the probe session that runs before each campaign batch. *Exit:* every escape probe is denied with `sandboxApplied: "true"`, and the in-workspace control succeeds.
+5. **Re-verify the sandbox** on the locked SDK and CLI pair and on each pilot model, and run the forced-compaction control. This needs a premium-request allowance from the user. Build the probe session that runs before each campaign batch. *Exit:* every escape probe is denied with `sandboxApplied: "true"`, and the in-workspace control succeeds.
+6. **Run one incident end to end.** Inspect AI task integration, standalone workspace creation, one ported AIOpsLab incident with its hidden validator, a healthy control, and randomized sets of all three arms. Export the report to the dashboard. *Exit:* the Phase 2 exit criteria, on the Astronomy Shop.
 7. **Build the incident set:** at least 20 incidents with validators, planted wrong answers, and no-fault controls. *Exit:* Phase 3 stage 1 incident criteria.
 8. **Pilot, calibrate, and pre-register.** This needs the user's approval for its cost. *Exit:* the analysis plan and sample size are committed.
-9. **Provision and qualify the Azure VMs.** This needs the user's approval. First, make the throttling reader resolve each container's cgroup path instead of assuming the cgroupfs layout, because Docker on a systemd Linux host places containers elsewhere. *Exit:* each VM passes a determinism holdout on its own host class.
-10. **Run the scored campaign.** *Exit:* Phase 3 stage 2 criteria.
+9. **Provision and qualify the Azure VMs.** This needs the user's approval. The portable cgroup resolver has offline controls for cgroupfs and systemd layouts; confirm it on the real VM before qualification. *Exit:* each VM passes a determinism holdout on its own host class.
+10. **Run the scored campaign and publish the comparison.** Integrate the results exporter and dashboard described in the [completion plan](benchmark-completion-plan.md). *Exit:* Phase 3 stage 2 criteria, reproducible downloadable results, and a dashboard whose denominators agree with the run records.
 
 ## Purpose and research questions
 
@@ -48,24 +64,23 @@ The experimental unit is the **complete GitHub Copilot harness plus a selected m
 
 ### Primary product question
 
-Does Radius-enabling a repository make GitHub Copilot more successful, efficient, and safe when diagnosing and changing a cloud-native application on behalf of a developer?
+Does the combined Radius repository experience make GitHub Copilot more successful and efficient at diagnosing performance incidents than a native repository or a native repository with architecture documentation?
 
 The primary treatment is the complete repository experience that a developer would adopt. It includes the Radius application model, graph access, stable identifiers and source references, repository configuration, and generic Radius skills.
 
 ### Secondary questions
 
-- Where does any uplift come from: application graph, Radius skills, or their interaction?
 - How much one-time effort is required to Radius-enable the repository?
 - After how many tasks does operational benefit plausibly amortize that preparation cost?
 - On which incident and task classes does Radius help, have no effect, or hurt?
-- Does Radius improve diagnosis only, or also improve remediation correctness, recovery, and safety?
+- Does the combined experience improve remediation correctness, recovery, and safety in a separately approved later extension?
 - Does an agent use the available graph and skills, and does use correlate with outcome?
 
-### Product-treatment claims versus causal graph claims
+### Combined-treatment scope
 
 The primary campaign's Radius-versus-native contrast estimates the effect of the **fully Radius-enabled repository treatment**. It cannot attribute the result to the graph alone because the treatment also changes repository files, instructions, skills, identifiers, and tool affordances.
 
-Causal claims about graph access require the later graph-by-skills factorial ablation. Even then, conclusions apply to the pinned Copilot harness, models, tasks, fixtures, and benchmark version. They do not establish general LLM intelligence or universal benefit for every repository.
+Separate graph effects, skill effects, and their interaction are out of scope. No graph-only, skills-only, or factorial campaign is required to complete this project. Conclusions apply to the pinned Copilot harness, models, tasks, fixtures, and benchmark version, not to universal benefit for every repository.
 
 ## Primary conditions
 
@@ -86,7 +101,7 @@ Arm C is an active control. It answers the first question a skeptic will ask: do
 
 The Radius-enabled fixture must describe the deployed application and how to use Radius. It must not encode incident answers, expected root causes, scenario thresholds, or scenario-specific remediation.
 
-Radius setup occurs before timed trials. Both fixtures are frozen and hashed. `app.bicep` is not regenerated per trial, because generation time and variability would confound task execution. One-time setup cost is recorded separately.
+Radius setup occurs before timed trials. All three fixtures are frozen and hashed. `app.bicep` is not regenerated per trial, because generation time and variability would confound task execution. One-time setup cost is recorded separately.
 
 ### Variables held constant
 
@@ -123,31 +138,11 @@ The agent answers by calling a submit tool with fixed fields:
 
 A trial that ends without a valid call to the submit tool scores as a failure.
 
-## Follow-up factorial ablations
+## Completion boundary
 
-Run the primary three-arm campaign first. If it produces a stable signal and the harness passes integrity checks, run a 2x2 graph-by-skills campaign:
+Completion means a reproducible three-arm diagnosis campaign on the Astronomy Shop, a pre-registered analysis of the combined Radius treatment, and downloadable results with a local dashboard. The architecture-document arm tests whether Radius adds value beyond comparable prose; it does not isolate graph or skill effects.
 
-| Condition | Graph / `app.bicep` | Radius skills |
-|---|---:|---:|
-| Native | No | No |
-| Skills only | No | Yes |
-| Graph only | Yes | No |
-| Fully Radius-enabled | Yes | Yes |
-
-The factorial model estimates:
-
-- **Graph main effect:** average difference between graph-present and graph-absent conditions.
-- **Skills main effect:** average difference between skills-present and skills-absent conditions.
-- **Graph x skills interaction:** whether the combined effect differs from the sum of their separate effects.
-
-A positive interaction would suggest that procedural skills help Copilot exploit the graph. A negative interaction could indicate redundant context, conflicting instructions, or added tool overhead. Do not infer these effects from the primary campaign. Arm C answers a different question: whether the graph and skills together beat prose that carries the same facts.
-
-A later graph-content ablation compares:
-
-1. Static graph and deployment state.
-2. Static graph plus telemetry overlay defined by the [telemetry contract](telemetry-contract.md).
-
-Raw traces and metrics remain identical across arms unless their availability is itself the explicit treatment.
+Remediation, Kubernetes execution, interactive Canvas work, and telemetry overlays are optional later extensions, not prerequisites for this diagnosis comparison. Graph and skill usage remain descriptive instrumentation, never separate treatment arms or a basis for causal attribution.
 
 ## Harness and environment
 
@@ -817,7 +812,6 @@ Any departure from the plan is reported as a departure.
 
 - **Primary product estimand:** intention-to-treat difference between fully Radius-enabled and native repository fixtures.
 - **Scenario-specific estimand:** primary treatment difference within each incident/task class.
-- **Graph and skills effects:** factorial main effects and interaction from the later four-condition campaign.
 - **Treatment-use association:** outcome difference by observed graph/skill use; secondary and non-causal because use is self-selected.
 - **Amortization estimate:** one-time Radius preparation cost divided by observed per-task time/value uplift under explicit assumptions.
 
@@ -837,6 +831,7 @@ Each run stores:
 - graph payload/snapshot for graph-enabled conditions;
 - fixture, prompt, skill, graph, image, SDK/CLI, Inspect, scenario, and validator hashes;
 - suite summary CSV and Markdown report;
+- versioned campaign-results JSON and local HTML dashboard, as defined in the [completion plan](benchmark-completion-plan.md#results-dashboard-and-download-contract);
 - redaction and cleanup-verification results.
 
 Run-record excerpt:
@@ -1029,7 +1024,7 @@ Exit criteria, stage 2:
 - Every planned run completes or has an explicit terminal classification.
 - The report gives the co-primary contrasts with clustered intervals, per-model results, the no-fault false-alarm rate, and reviewer agreement, and labels secondary measures as exploratory.
 
-### Phase 4: Remediation trials
+### Phase 4: Optional later remediation trials
 
 Work:
 
@@ -1045,22 +1040,19 @@ Exit criteria:
 - Cache remediation retains MySQL and Valkey edges.
 - Every trial destroys or quarantines its environment with evidence.
 
-### Phase 5: Factorial ablations, telemetry overlay, and Kubernetes
+### Phase 5: Optional later telemetry overlay and Kubernetes
 
 Work:
 
-- Run native, skills-only, graph-only, and full Radius conditions.
-- Estimate graph, skills, and interaction effects.
-- Compare static graph with graph plus telemetry overlay.
+- Require a separate owner-approved plan before extending the combined Radius treatment with telemetry overlays or Kubernetes execution.
 - Validate access to `ryanw-aks` in `ryanw-rg` under the Test account.
 - Add isolated namespace driver and Radius deployment-state collection.
 - Deploy the Astronomy Shop from its Helm chart, which makes AIOpsLab's Kubernetes-level injectors available.
 
 Exit criteria:
 
-- Four fixtures pass leakage and parity checks.
-- Factorial analysis reports main effects and interaction with uncertainty.
-- Telemetry-overlay treatment is isolated from static graph.
+- The three repository fixtures pass leakage and parity checks on the new environment.
+- Any changed treatment is versioned and is not pooled with the original diagnosis campaign.
 - Azure access, Radius setup, namespace isolation, quotas, network policy, image pulls, and cleanup are verified before scored runs.
 
 ## Recommended defaults and unresolved decisions
@@ -1072,6 +1064,8 @@ Exit criteria:
 | Environment | Docker Compose | Decided |
 | Scored application | OpenTelemetry Astronomy Shop; catalog application for harness development only | Decided |
 | Primary arms | Native, native with architecture document (written by a fresh Copilot session without the plan), fully Radius-enabled | Decided |
+| Treatment scope | Combined Radius repository experience only; no graph-only, skills-only, or factorial experiments | Owner decision, September 30, 2026 |
+| Results UI | Self-contained local HTML dashboard importing versioned campaign JSON, with JSON and CSV downloads | Implemented on this branch; campaign exporter and inferential analysis not built |
 | Incident set | 20-50 distinct incidents, misleading-symptom incidents, and 10-15 percent no-fault controls, drawn from AIOpsLab and external injectors; flag fault code removed from agent-visible source, flag faults diagnosis-only | Decided; not built |
 | Smallest effect worth detecting | 15 percentage points | Decided; sets the campaign size |
 | Analysis plan | Pre-registered before the scored campaign; incident-clustered model; Holm correction across co-primary contrasts | Decided; plan not yet written |
@@ -1111,13 +1105,12 @@ Models, budgets, and the output schema are decided above. The Copilot SDK drives
 - The intention-to-treat effect of a frozen fully Radius-enabled repository versus a frozen native repository, and versus a native repository with a hand-written architecture document, for the tested Copilot model/runtime and incident set.
 - Per-scenario differences in validated success, efficiency, recovery, and safety.
 - The observed one-time Radius preparation cost and a transparent amortization estimate.
-- After factorial ablations, benchmark-specific graph, skills, and interaction effects.
 - Whether Copilot used graph or skills, reported as secondary behavior and association.
 
 ### It cannot claim
 
 - Isolated raw LLM quality independent of the Copilot harness.
-- A graph-only causal effect from the primary campaign.
+- Separate graph or skill effects, or their interaction.
 - Results for applications much smaller or larger than the Astronomy Shop, or for incident classes outside the tested set.
 - General intelligence, universal cloud-debugging ability, or benefit for all repositories.
 - Provider superiority from incomparable token/cost accounting.

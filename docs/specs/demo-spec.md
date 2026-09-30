@@ -6,13 +6,13 @@ This demo shows a credible performance-diagnosis loop: catalogue read traffic ri
 
 Phase 1 in this repository implements the isolated performance lab and both Kubernetes graph states. The Radius Canvas already has graph, planned, graph-diff, deploying, and deployed views. Live telemetry in those views is new work: it must be delivered as an adapter/overlay using the contract in [telemetry-contract.md](telemetry-contract.md), not described as a current Canvas capability.
 
-This document describes the polished human-facing story. A separate, planned [agent graph evaluation](agent-evaluation-spec.md) will measure agents with and without Radius graph access under controlled incidents. A successful presentation is not benchmark evidence, and benchmark trials must not depend on the interactive Canvas UI.
+This document describes the polished human-facing story. A separate, planned [combined Radius repository evaluation](agent-evaluation-spec.md) compares native, architecture-document, and fully Radius-enabled repositories under controlled incidents. Graphs and skills are not tested separately. A successful presentation is not benchmark evidence, and benchmark trials must not depend on the interactive Canvas UI.
 
 ## Human demo mode versus benchmark mode
 
 | Property | Human demo mode | Benchmark mode |
 |---|---|---|
-| Purpose | Explain the diagnosis, graph diff, deployment, and recovery story | Measure the causal value of graph access |
+| Purpose | Explain the diagnosis, graph diff, deployment, and recovery story | Measure the benefit of the combined Radius repository experience |
 | Operation | Presenter-guided and interactive | Unattended and repeatable |
 | Primary scenario | MySQL read latency remediated with cache-aside | Versioned catalog of diagnosis and remediation incidents |
 | Radius Canvas | Central presentation surface | Not required; graph data is delivered through a stable machine interface |

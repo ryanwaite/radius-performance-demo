@@ -254,6 +254,22 @@ def _hide_flag_services(config: dict[str, Any]) -> list[str]:
     return changed
 
 
+def _split_networks(config: dict[str, Any]) -> list[str]:
+    services = config.get("services") or {}
+    if "frontend-proxy" not in services:
+        raise AstronomyShopError("internal network requires the frontend-proxy ingress")
+    config["networks"] = {"default": {"driver": "bridge", "internal": True}, "ingress": {}}
+    for name, service in services.items():
+        service["networks"] = {"default": {}}
+        if name == "frontend-proxy":
+            service["networks"]["ingress"] = {}
+            service["ports"] = [
+                {"target": 8080, "host_ip": "127.0.0.1", "protocol": "tcp"}
+            ]
+        else:
+            service["ports"] = []
+    return sorted(services)
+
 
 def _bind_source(mount: Any) -> tuple[str | None, str]:
     """Read a bind mount's source and target in either compose syntax.
@@ -280,7 +296,7 @@ def _bind_source(mount: Any) -> tuple[str | None, str]:
     return None, ""
 
 
-def _isolate_flag_file(config: dict[str, Any]) -> list[str]:
+def _isolate_flag_file(config: dict[str, Any], runtime_dir: Path | None = None) -> list[str]:
     """Give each rendered stack its own copy of the flag definitions.
 
     Upstream binds the vendored ``src/flagd`` directory into both flagd and
@@ -333,8 +349,12 @@ def _isolate_flag_file(config: dict[str, Any]) -> list[str]:
             "and flagd would start with no flags defined"
         )
 
-    private = Path(tempfile.mkdtemp(prefix="radius-eval-flagd-"))
-    shutil.copytree(vendored, private, dirs_exist_ok=True)
+    if runtime_dir is None:
+        private = Path(tempfile.mkdtemp(prefix="radius-eval-flagd-"))
+        shutil.copytree(vendored, private, dirs_exist_ok=True)
+    else:
+        private = runtime_dir / "flags"
+        shutil.copytree(vendored, private)
 
     for name in mounted:
         service = config["services"][name]
@@ -532,6 +552,15 @@ TRANSFORMS: tuple[Transform, ...] = (
         ),
         apply=_hide_flag_services,
     ),
+    Transform(
+        name="split-ingress-network",
+        rationale=(
+            "Only frontend-proxy joins the routed ingress bridge and publishes "
+            "a loopback port. All other services remain on the internal bridge. "
+            "The driver probes those services from the internal network."
+        ),
+        apply=_split_networks,
+    ),
 )
 
 
@@ -549,7 +578,8 @@ class TransformReport:
 
 
 def apply_transforms(
-    config: dict[str, Any], host_class: str | None = None
+    config: dict[str, Any], host_class: str | None = None, *,
+    runtime_dir: Path | None = None,
 ) -> TransformReport:
     """Apply every declared transform in order, recording what each touched.
 
@@ -571,6 +601,9 @@ def apply_transforms(
         host_class = derive_class_id(observe_host())
     report = TransformReport()
     for transform in TRANSFORMS:
+        if transform.name == "isolate-flag-file":
+            report.applied[transform.name] = _isolate_flag_file(config, runtime_dir)
+            continue
         report.applied[transform.name] = (
             transform.apply(config, host_class)
             if transform.needs_host_class

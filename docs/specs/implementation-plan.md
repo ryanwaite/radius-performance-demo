@@ -3,7 +3,7 @@
 > [!IMPORTANT]
 > Superseded in part. The [experiment plan](copilot-radius-experiment-plan.md) now scores on the OpenTelemetry Astronomy Shop with three arms (native, architecture document, Radius), budgets of 30 minutes and 100 tool calls, and the submit-tool answer contract. Where this document disagrees with the plan, the plan wins. Its current state and next steps are in [Current state and next steps](copilot-radius-experiment-plan.md#current-state-and-next-steps).
 
-The canonical experiment design, treatment definitions, Copilot harness, measures, and research roadmap are in the [Copilot + Radius experiment plan](copilot-radius-experiment-plan.md). This document tracks repository implementation surfaces.
+The canonical experiment design, treatment definitions, Copilot harness, measures, and research roadmap are in the [Copilot + Radius experiment plan](copilot-radius-experiment-plan.md). The active delivery sequence is the [completion and reporting plan](benchmark-completion-plan.md). The phases below describe historical catalogue/demo surfaces, not prerequisites for the Astronomy Shop comparison. The benchmark evaluates the combined Radius repository experience; separate graph and skill experiments are out of scope.
 
 ## Phase 1: Runnable performance lab
 
@@ -82,13 +82,13 @@ Work:
 
 Milestone exit criteria:
 
-- Every paired trial starts from an identical seeded incident and differs only in graph access.
+- Every matched trial starts from an identical seeded incident and differs only by its declared repository treatment.
 - Condition order is randomized and all model/configuration/budget fields are captured.
 - Deterministic pass/fail validators run without human interpretation.
 - The orchestrator can resume after infrastructure failure without reusing a contaminated environment.
 - Pilot results are labeled as benchmark-specific and are not generalized from tiny samples.
 
-## Phase 4: Telemetry adapter, graph ablations, and Canvas overlays
+## Phase 4: Optional telemetry adapter and Canvas overlays
 
 **Status:** planned.
 
@@ -98,7 +98,7 @@ Work:
 - Add explicit Radius resource/connection mapping configuration.
 - Add current, baseline, severity, stale, and unavailable rendering states.
 - Expose the same structured evidence to Copilot diagnosis tools and the benchmark graph payload.
-- Add benchmark conditions for static graph only, graph plus telemetry overlay, and raw Kubernetes manifests.
+- Keep overlay work outside the diagnosis campaign unless the owner approves a new version of the combined treatment.
 - Ensure traces and raw metrics are either available to every compared arm or excluded from every arm.
 - Persist before/after measurement windows for graph-diff narration and benchmark validation.
 - Add adapter contract tests with recorded Prometheus responses.
@@ -108,8 +108,8 @@ Milestone exit criteria:
 - A degraded baseline marks the API and MySQL connection with correct evidence.
 - A cache-enabled run displays Valkey metrics and a recovered API while retaining the MySQL connection.
 - Missing or stale data is visible and never converted into a healthy state.
-- Ablation payloads are versioned and do not leak graph-derived conclusions into control prompts.
-- Benchmark records can attribute gains to static topology versus telemetry overlay.
+- Overlay payloads are versioned and do not leak incident conclusions into control prompts.
+- Benchmark records do not attribute combined-treatment gains to individual Radius features.
 
 ## Phase 5: Canvas demo hardening and benchmark expansion
 
@@ -150,7 +150,7 @@ Milestone exit criteria:
 | Cache warm-up makes comparisons misleading | Separate warm-up and measurement windows |
 | Cache addition is incorrectly shown as replacing MySQL | Contract, graph, and validator assertions require both edges |
 | Graph conclusions leak into the control arm | Generate control prompts independently and test payloads for graph-derived identifiers/summaries |
-| Provider differences overwhelm the graph comparison | Pair conditions within model/version/configuration and report per-model effects |
+| Provider differences overwhelm the Radius comparison | Pair conditions within model/version/configuration and report per-model effects |
 | Agent changes contaminate later trials | Use ephemeral containers or namespaces and reset from immutable scenario state |
 | Metrics and Radius topology drift | Use stable IDs, explicit mapping validation, and versioned graph snapshots |
 | Prometheus or telemetry adapter is unavailable | Surface unavailable state; retry infrastructure failures rather than score them as agent failures |

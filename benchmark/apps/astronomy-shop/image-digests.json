@@ -65,5 +65,21 @@
     "telemetry-docs": "ghcr.io/open-telemetry/demo:latest-telemetry-docs",
     "valkey-cart": "ghcr.io/valkey-io/valkey:9.0.4-alpine3.23"
   },
-  "manifestHash": "sha256:efebfca32bef55b54ae827872cccad22e51bc89cadf2a0519df8faca252ad850"
+  "manifestHash": "sha256:efebfca32bef55b54ae827872cccad22e51bc89cadf2a0519df8faca252ad850",
+  "startupAssets": {
+    "manifest": "startup-assets.json",
+    "sha256": "sha256:a6c7fbf612ca1493c43b2d3c89dcbb85f888bd86b192471f310240e8b8483fb6",
+    "plugins": {
+      "plugins/grafana-opensearch-datasource-2.34.4.linux_amd64.zip": {
+        "source": "https://github.com/grafana/opensearch-datasource/releases/download/v2.34.4/grafana-opensearch-datasource-2.34.4.linux_amd64.zip",
+        "sha256": "sha256:eb50df848115d95124674726e74fa876dc36c155cedec22f227b19714ceb1867",
+        "license": "Apache-2.0"
+      },
+      "plugins/grafana-opensearch-datasource-2.34.4.linux_arm64.zip": {
+        "source": "https://github.com/grafana/opensearch-datasource/releases/download/v2.34.4/grafana-opensearch-datasource-2.34.4.linux_arm64.zip",
+        "sha256": "sha256:25f60e8b5dc2ff29c1fabe9aabf7654667a85828181dfdb02545c1f576bb495a",
+        "license": "Apache-2.0"
+      }
+    }
+  }
 }

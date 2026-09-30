@@ -46,11 +46,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import statistics
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
+
+from .cpu_limits import ThrottleVerdict
 
 LOAD_SERVICE = "load-generator"
 LOCUST_PORT = 8089
@@ -158,8 +161,15 @@ def parse_reading(payload: str) -> LoadReading:
         )
 
     clock = document.get("clock")
-    if not isinstance(clock, (int, float)):
+    if isinstance(clock, bool) or not isinstance(clock, (int, float)) or not math.isfinite(clock):
         raise OfferedLoadError("offered-load probe returned no clock")
+    for key, value in (
+        ("num_requests", aggregate.get("num_requests")),
+        ("num_failures", aggregate.get("num_failures")),
+        ("user_count", stats.get("user_count")),
+    ):
+        if type(value) is not int or value < 0:
+            raise OfferedLoadError(f"offered-load probe returned invalid {key}")
 
     return LoadReading(
         clock=float(clock),
@@ -177,6 +187,7 @@ def read_offered_load(
     service: str = LOAD_SERVICE,
     runner=subprocess.run,
     timeout: float = 60.0,
+    raw_path: Path | None = None,
 ) -> LoadReading:
     """Read the generator's counters once."""
     result = runner(
@@ -188,6 +199,8 @@ def read_offered_load(
         text=True,
         timeout=timeout,
     )
+    if raw_path is not None:
+        raw_path.write_text(result.stdout)
     if result.returncode != 0:
         raise OfferedLoadError(
             f"offered-load probe failed in {service}: "
@@ -240,7 +253,9 @@ def achieved_between(first: LoadReading, second: LoadReading) -> AchievedLoad:
             "the generator's request counter decreased, so it restarted "
             "mid-window and the two readings describe different runs"
         )
-    failures = max(0, second.failures - first.failures)
+    failures = second.failures - first.failures
+    if failures < 0:
+        raise OfferedLoadError("the generator's failure counter decreased mid-window")
     return AchievedLoad(
         requests=delta,
         failures=failures,
@@ -250,6 +265,29 @@ def achieved_between(first: LoadReading, second: LoadReading) -> AchievedLoad:
         users=second.users,
         state=second.state,
     )
+
+
+def evaluate_incident_load(
+    first: LoadReading, second: LoadReading, *, expected_users: int,
+    generator_throttle: ThrottleVerdict,
+) -> tuple[AchievedLoad, tuple[str, ...]]:
+    """Check load production without rejecting an incident's throughput drop."""
+    achieved = achieved_between(first, second)
+    reasons = []
+    if expected_users <= 0 or first.users != expected_users or second.users != expected_users:
+        reasons.append("generator user count differs from the incident declaration")
+    if first.state != "running" or second.state != "running":
+        reasons.append("generator was not running at both window boundaries")
+    if achieved.elapsed_seconds < MIN_WINDOW_SECONDS:
+        reasons.append("incident load window is too short")
+    if achieved.requests <= 0:
+        reasons.append("generator produced no measured activity")
+    if (
+        not generator_throttle.accepted
+        or {reading.service for reading in generator_throttle.services} != {LOAD_SERVICE}
+    ):
+        reasons.append("generator lacks a clean measured lifetime-throttling verdict")
+    return achieved, tuple(reasons)
 
 
 @dataclass(frozen=True)

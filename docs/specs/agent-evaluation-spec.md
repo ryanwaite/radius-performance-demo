@@ -1,4 +1,4 @@
-# Agent Graph Evaluation Specification
+# Agent Radius Repository Evaluation Specification
 
 ## Purpose and status
 
@@ -9,9 +9,11 @@
 
 The canonical product-treatment design is the [Copilot + Radius experiment plan](copilot-radius-experiment-plan.md). It defines the primary native-versus-fully-Radius conditions, Inspect AI orchestration, GitHub Copilot SDK harness, usage capture, estimands, and phased decisions. This focused specification supplies scenario, validator, scoring, and artifact detail.
 
-Graph-enabled versus graph-disabled is a follow-up causal ablation, not the primary product treatment. The benchmark measures the complete pinned Copilot harness plus selected model on this versioned task suite, not raw LLM quality, general intelligence, or universal agent quality. The existing [human demo](demo-spec.md) remains a polished explanatory experience. Benchmark mode is unattended, repeatable, headless, and independent of the interactive Radius Canvas UI.
+The treatment is the combined Radius repository experience. Separate graph-only, skills-only, and factorial experiments are out of scope. The benchmark measures the complete pinned Copilot harness plus selected model on this versioned task suite, not raw LLM quality, general intelligence, or universal agent quality. The existing [human demo](demo-spec.md) remains a polished explanatory experience. Benchmark mode is unattended, repeatable, headless, and independent of the interactive Radius Canvas UI.
 
-## MVP recommendation
+## Historical harness-development recommendation
+
+The catalogue sequence below is historical, not the remaining delivery plan. Use the [completion plan](benchmark-completion-plan.md) for the Astronomy Shop diagnosis comparison.
 
 Start with:
 
@@ -22,7 +24,7 @@ Start with:
 - Diagnosis-only trials for all incidents, followed by diagnosis-and-remediation where deterministic validators are mature.
 - Five paired repetitions per model/scenario for a minimum pilot: 3 incidents x 2 conditions x 2-3 models x 5 repetitions = 60-90 runs.
 
-Use the pilot to estimate variance, debug leakage, and tune validators. A larger comparison should target at least 20 paired repetitions per model/scenario: 240 runs for two models or 360 for three. Do not claim a reliable graph effect from one demonstration or a handful of unpaired runs.
+Use the pilot to estimate variance, debug leakage, and tune validators. Campaign sizing follows the canonical plan's incident-clustered power analysis, not this historical repetition schedule. Do not claim a reliable combined-treatment effect from one demonstration or a handful of unpaired runs.
 
 ## Test environment
 
@@ -54,7 +56,7 @@ flowchart LR
 - Infrastructure failures are classified separately and retried; they do not count as agent failures.
 - The same scenario definition can target Compose and Kubernetes, with environment-specific implementation details hidden behind a driver.
 
-The benchmark should prefer Compose for the MVP because it is faster and cheaper. Kubernetes becomes required for resource-throttling fidelity, deployment-state evaluation, and Radius integration.
+The diagnosis comparison uses Compose. Kubernetes execution and additional deployment-state evaluation are optional later extensions, not prerequisites for the combined Radius repository treatment.
 
 ## Scenario catalog
 
@@ -136,9 +138,9 @@ The model names are examples, not selected models. Copilot credentials are injec
 
 ## Controlled condition payloads
 
-The primary fixture definitions are governed by the [canonical plan](copilot-radius-experiment-plan.md#primary-conditions). The graph payload rules below apply when constructing the fully Radius-enabled fixture and the later graph-only ablation. The unit of comparison remains a paired trial with randomized condition order.
+The primary fixture definitions are governed by the [canonical plan](copilot-radius-experiment-plan.md#primary-conditions). The graph payload rules below apply within the fully Radius-enabled fixture, alongside its configuration, tools, and skills. The unit of comparison remains matched trials with randomized condition order.
 
-### Graph-enabled
+### Fully Radius-enabled repository
 
 The agent receives a versioned, machine-readable graph payload containing:
 
@@ -151,7 +153,7 @@ The agent receives a versioned, machine-readable graph payload containing:
 
 The payload contains topology and measurements, not a generated root-cause conclusion or recommended fix.
 
-### Graph-disabled or native control
+### Native control
 
 The agent receives:
 
@@ -163,16 +165,9 @@ The agent receives:
 
 It does not receive the Radius graph payload, stable graph IDs, graph-rendered summaries, graph-derived dependency lists, or prompts that reveal the graph's conclusion. Control prompts are generated independently from neutral scenario metadata and checked for graph-only identifiers.
 
-### Recommended ablations
+### Architecture-document control
 
-After the two-condition MVP:
-
-1. **Static Radius graph:** topology, IDs, code references, and deployment state.
-2. **Radius graph plus telemetry overlay:** static graph plus mapped metric evidence.
-3. **Raw Kubernetes manifests:** manifests are highlighted as the primary topology artifact, with no Radius graph.
-4. **No graph:** ordinary repository/runtime evidence only.
-
-Traces and raw metrics must remain constant across compared arms. If a trial excludes traces or metrics, it must exclude them from every arm in that comparison.
+The native fixture also has a separate arm with comparable architectural facts in a frozen document, following the canonical plan. All three arms receive the same raw runtime evidence. No graph-only, skills-only, or telemetry-overlay comparison is required.
 
 ## Planned trial orchestrator
 

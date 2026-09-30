@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -33,6 +34,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from radius_perf_eval import astronomy_shop as shop  # noqa: E402
+from radius_perf_eval import cpu_limits, offered_load  # noqa: E402
+from radius_perf_eval.compose import ComposeProject  # noqa: E402
+from radius_perf_eval.shop_environment import render_stack as render_shop_stack  # noqa: E402
 from radius_perf_eval.hostclass import (  # noqa: E402
     derive_class_id,
     derive_fingerprint,
@@ -40,7 +44,7 @@ from radius_perf_eval.hostclass import (  # noqa: E402
     observe_host,
 )
 
-DEFAULT_ARTIFACTS = Path.home() / "Source" / "radius-perf-eval-artifacts"
+DEFAULT_ARTIFACTS = Path(__file__).resolve().parents[2].parent / "radius-perf-eval-artifacts"
 
 
 def _to_bytes(text: str) -> float:
@@ -59,38 +63,11 @@ def _to_bytes(text: str) -> float:
         return 0.0
 
 
-def render_stack(repo_root: Path, out_path: Path) -> dict:
+def render_stack(repo_root: Path, out_path: Path, facts=None) -> dict:
     """Merge upstream, apply the transforms, pin digests, write the file."""
-    paths = shop.compose_file_paths(repo_root)
-    args = ["docker", "compose"]
-    for path in paths:
-        args += ["-f", str(path)]
-    args += ["config", "--format", "json"]
-    env = dict(os.environ, DOCKER_SOCK="/var/run/docker.sock", HOST_FILESYSTEM="/")
-    result = subprocess.run(
-        args, capture_output=True, text=True, env=env, cwd=str(paths[0].parent)
-    )
-    if result.returncode != 0:
-        raise SystemExit(f"docker compose config failed: {result.stderr.strip()}")
-    config = json.loads(result.stdout)
-
-    report = shop.apply_transforms(config)
-
-    manifest = json.loads(
-        (repo_root / "benchmark/apps/astronomy-shop/image-digests.json").read_text()
-    )
-    for service, digest in manifest["images"].items():
-        if service in config["services"]:
-            config["services"][service]["image"] = digest
-
-    config.pop("name", None)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(config, indent=2) + "\n")
-    return {
-        "transforms": report.to_dict(),
-        "manifestHash": manifest["manifestHash"],
-        "services": sorted(config["services"]),
-    }
+    runtime = out_path.parent / "runtime"
+    runtime.mkdir()
+    return render_shop_stack(repo_root, out_path, facts or observe_host(), runtime)
 
 
 def sample_stats(project: str) -> dict[str, dict[str, float]]:
@@ -149,17 +126,20 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--minutes", type=float, default=10.0)
     parser.add_argument("--interval", type=float, default=5.0)
+    parser.add_argument("--demand-seconds", type=float, default=60.0)
     parser.add_argument("--project", default="astro-footprint")
     parser.add_argument("--artifacts", type=Path, default=DEFAULT_ARTIFACTS)
     options = parser.parse_args()
+    if options.minutes <= 0 or options.interval <= 0 or options.demand_seconds < 30:
+        parser.error("minutes and interval must be positive; demand-seconds must be at least 30")
 
     repo_root = Path(__file__).resolve().parents[2]
     run_dir = options.artifacts / f"astro-footprint-{datetime.now():%Y%m%dT%H%M%S}"
-    run_dir.mkdir(parents=True, exist_ok=True)
+    run_dir.mkdir(parents=True, exist_ok=False)
     stack_path = run_dir / "trial-stack.json"
 
     facts = observe_host()
-    rendered = render_stack(repo_root, stack_path)
+    rendered = render_stack(repo_root, stack_path, facts)
     ceiling = facts.docker_memory_bytes or 0
 
     provenance = {
@@ -185,18 +165,23 @@ def main() -> int:
     (run_dir / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
 
     compose = ["docker", "compose", "-f", str(stack_path), "-p", options.project]
+    project = ComposeProject(options.project, {}, [stack_path])
+    project.assert_absent()
     print(f"bringing up {len(rendered['services'])} services as {options.project}", flush=True)
-    up = subprocess.run(compose + ["up", "-d", "--wait", "--wait-timeout", "900"],
-                        text=True, capture_output=True)
-    if up.returncode != 0:
-        print("UP FAILED:", (up.stderr or "")[-4000:], file=sys.stderr, flush=True)
-
     try:
+        up = subprocess.run(compose + ["up", "-d", "--wait", "--wait-timeout", "900", "--no-build"],
+                            text=True, capture_output=True, timeout=1020)
+        if up.returncode != 0:
+            raise RuntimeError(f"Compose startup failed: {up.stderr}")
         peaks: dict[str, dict[str, float]] = {}
         series: list[dict] = []
         deadline = time.monotonic() + options.minutes * 60
         while time.monotonic() < deadline:
             taken = sample_stats(options.project)
+            with (run_dir / "series.jsonl").open("a") as stream:
+                stream.write(json.dumps({"t": time.monotonic(), "samples": taken}) + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
             if taken:
                 series.append({"t": round(time.monotonic(), 1), "samples": taken})
                 for name, values in taken.items():
@@ -265,6 +250,32 @@ def main() -> int:
         }
         (run_dir / "footprint.json").write_text(json.dumps(result, indent=2) + "\n")
         (run_dir / "series.json").write_text(json.dumps(series, indent=2) + "\n")
+        if not sampling["trustworthy"] or oom_killed:
+            raise RuntimeError("footprint sample is incomplete or contains OOM failures")
+
+        first = offered_load.read_offered_load(options.project, str(stack_path))
+        (run_dir / "demand-load-open.json").write_text(json.dumps(first.to_dict()) + "\n")
+        samples = cpu_limits.sample_cpu_demand(
+            options.project, duration_seconds=options.demand_seconds,
+            raw_path=run_dir / "demand.raw",
+        )
+        second = offered_load.read_offered_load(options.project, str(stack_path))
+        (run_dir / "demand-load-close.json").write_text(json.dumps(second.to_dict()) + "\n")
+        demand = {
+            "hostClass": derive_class_id(facts), "hostFingerprint": derive_fingerprint(facts),
+            "basis": "cgroup usage_usec deltas", "intervalSeconds": 0.25,
+            "windowSeconds": options.demand_seconds,
+            "minIntervals": min(sample.intervals for sample in samples.values()),
+            "totalGapIntervals": sum(sample.gap_intervals for sample in samples.values()),
+            "cpuLimitedServices": rendered["services"],
+            "load": offered_load.achieved_between(first, second).to_dict(),
+            "services": {
+                name: {"peakCores": sample.peak_cores, "meanCores": sample.mean_cores,
+                       "intervals": sample.intervals, "gapIntervals": sample.gap_intervals}
+                for name, sample in samples.items()
+            },
+        }
+        (run_dir / "demand-report.json").write_text(json.dumps(demand, indent=2) + "\n")
 
         print(f"\npeak total memory {result['peakTotalMemoryGib']} GiB "
               f"of {result['dockerMemoryCeilingGib']} GiB ceiling "
@@ -285,10 +296,15 @@ def main() -> int:
         # from the sampler, used to leave all 28 containers and their
         # networks running. The next run would then measure a host with a
         # whole shop already on it and report the result as a footprint.
-        subprocess.run(
+        down = subprocess.run(
             compose + ["down", "--volumes", "--remove-orphans", "--timeout", "60"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=180,
         )
+        residue = project.residual_resources()
+        (run_dir / "cleanup.json").write_text(json.dumps(residue.to_dict(), indent=2) + "\n")
+        if down.returncode != 0 or not residue.clean:
+            raise RuntimeError(f"footprint cleanup failed: {down.stderr}; {residue.describe()}")
+        shutil.rmtree(run_dir / "runtime")
     return 0
 
 
