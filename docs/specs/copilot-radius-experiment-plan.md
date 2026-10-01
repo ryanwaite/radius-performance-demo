@@ -85,8 +85,11 @@ identifies the missing deterministic reference reviewer and its attempt/export
 integration. Wrong-category controls do not establish rejection of a wrong
 mechanism within the right category. The current answer contract does not
 declare a separate mechanism claim. The owner decided on October 1, 2026 to
-keep the schema and define incident-specific prose interpretation rules.
-The proposed reference rules below need approval before implementation. Do not
+keep the schema and define incident-specific prose interpretation rules. The
+owner subsequently rejected the bounded-grammar proposal and recommended an
+incident rubric with human causal-prose adjudication and automated target,
+measurement and integrity checks. The revised policy below needs final approval
+before implementation. Do not
 move this M2 requirement into M5/M6 merely
 because those milestones build the live Shop integration and incident library.
 
@@ -754,51 +757,53 @@ During the pilot and the scored campaign, the repository owner reviews a random 
 #### M2 reference prose policy
 
 **Owner decision, October 1, 2026:** preserve the submitted answer schema.
-Use incident-specific deterministic prose interpretation rules, not a new
-mechanism field or a general keyword grader. A matching category, target or
-latency symptom does not establish the mechanism. Contradictory, negated and
-unsupported explanations must be planted rejection controls.
+The owner rejected the bounded CPU-quota grammar before implementation, then
+recommended a simple incident rubric with human adjudication for causal prose.
+A grammar would penalize unfamiliar but correct phrasing and create a separate
+language-coverage project. No such parser has been implemented.
 
-**Proposed reference rule, awaiting owner approval:** use an externally reduced
-CPU quota as the bounded M2 grading reference. Read raw cgroup v2 `cpu.max` and
-`cpu.stat` captures from the declared target, with immutable assignment/attempt
-bindings and a frozen baseline quota. For a fault, require a lower active quota
-and increasing throttled periods. A healthy control requires an unchanged quota
-and no increase in throttled periods. Both are reference evidence predicates,
-not a claim that they establish whole-application health, stable offered load
-or independent incident activation; M5 supplies those environment gates.
+**Revised proposal, awaiting approval:** retain automated schema, category,
+directed target, raw measurement, evidence-reference and record-integrity checks.
+A blinded human reviews every schema-valid answer's causal prose against an
+incident-owned rubric. The rubric states the hidden cause, required causal
+evidence, correlated alternatives and what establishes a healthy assertion.
+The reviewer judges mechanism correctness and whether each cited observation
+is relevant and supported. No keyword grader, model judge or allowed-phrase
+list decides those questions.
 
-Interpret complete propositions, including the whole `remediation` string,
-rather than searching for keywords. The initial accepted language is bounded:
+The recorded adjudication contains a public reviewer ID, rubric version/digest,
+the digest of the exact review packet, explicit pass/fail decisions for the
+mechanism and each citation, and a written rationale. The packet contains the
+canonical answer, incident rubric and captured observations but omits arm,
+model, assignment IDs and submitted aliases. Reviewer identity is an operator
+attestation, not cryptographic authentication. Packet hashing binds the decision
+to the answer and evidence; it does not prove the human's judgment correct.
+Canonical names and answer prose can still suggest an arm, as the existing
+blinded-review caveat recognizes.
 
-- A quota observation states the measured active and baseline CPU limits, for
-  example, "The CPU quota is 0.5 cores, down from 2 cores."
-- A throttling observation states measured counter endpoints, for example,
-  "Throttled periods increased from 3 to 15."
-- The fault explanation attributes the cause to the lowered quota and proposes
-  restoring the measured baseline, for example, "The CPU quota was reduced;
-  restore the limit to 2 cores." An increased-work explanation remains wrong
-  even though it shares `cpu_saturation` and the same target.
-- Healthy observations state the unchanged measured quota and unchanged
-  throttling counter. The existing healthy schema still forbids remediation.
+Missing or ambiguous adjudication leaves the attempt open for review. It
+produces neither success nor diagnosis failure and consumes no harness retry.
+An explicit reviewed wrong mechanism is a diagnosis failure even when the
+category and target match. Success requires both the automated gates and the
+human mechanism/evidence decisions. Recorded decisions are append-only;
+regrading policy and production capture integration remain later campaign work.
 
-Rules may normalize case and whitespace and declare explicit synonymous words
-such as quota/limit and reduced/lowered. Every numeric value must match the raw
-capture. Both quota and throttling evidence must be present; all citations must
-be supported and on the declared causal target. Full-input parsing must reject
-extra contradictory clauses, negation, a wrong restoration value, reversed
-numeric claims, correlated signals, invented sources and missing observations.
-Unknown prose fails the supported-language contract rather than being guessed
-at by a keyword or language-model grader.
+This is an intentional change to the primary endpoint: it becomes **validated
+diagnosis success with human causal adjudication**, not fully deterministic
+semantic grading. Deterministic replay verifies the recorded adjudication and
+automated evidence, not the semantic truth of prose. If approved, it supersedes
+the earlier rule that human review never affects the primary gates, for diagnosis
+causal/evidence adjudication only. The existing random blinded audit remains an
+independent second review for agreement/calibration, rather than the only human
+review. Pilot cost must include this additional review workload.
 
-This narrow language can produce false negatives for a semantically correct
-paraphrase. Approval would accept it as an **unqualified reference contract**,
-not as a calibrated Shop grader. It must not enter a scored campaign until
-pilot/blinded-review calibration approves its coverage. M2 would implement and
-exercise the reference rule through canonical outcomes, the attempt store and
-the report exporter; M6 would qualify or replace its language coverage before
-scientific use. No signing service, new telemetry infrastructure or live
-experiment is proposed.
+M2 would deliver the small adjudication interface, a CPU-quota reference rubric,
+automated raw-measurement checks, recorded review controls and integration through
+canonical outcomes, attempts and report export. Reference fixtures remain labelled
+offline controls, not real Shop or human-agreement findings. M3/M5/M6 still own
+sealed fixtures, live capture/activation, reviewers' operational blinding and
+incident qualification. No signing service, new telemetry infrastructure or
+live experiment is proposed.
 
 ### Catalog-application scenarios (harness development)
 
