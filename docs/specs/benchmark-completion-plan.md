@@ -43,6 +43,17 @@ No new tracing tooling or permissions are authorized.
 The dashboard is implemented, but M2's
 graded records/exporter and the later campaign milestones remain unbuilt.
 
+**M2 first increment:** directed answers and canonical endpoint mapping are
+implemented. The shared diagnosis gate checks the hidden causal target and
+requires incident-owned evidence review. The outcome resolver no longer treats
+schema acceptance as success and requires scope, safety and cleanup evidence.
+Offline planted controls use explicitly synthetic captures; they are not
+production Shop incident graders. The immutable roster, durable attempt store,
+retry/exclusion reduction and source-verifying redacted exporter remain unbuilt.
+M2's full exit criterion has not been met. See the
+[answer/outcome contract](../../benchmark/README.md#m2-answer-and-outcome-contract-increment)
+for the implemented boundary and its limitations.
+
 Each milestone is a reviewable PR or small sequence of PRs. Dependencies below
 are explicit; environment work and answer/report contracts can proceed
 independently. No date or campaign cost is promised before the first integrated

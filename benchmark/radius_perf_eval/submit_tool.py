@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
@@ -37,6 +38,7 @@ __all__ = [
     "CATEGORY_DISAMBIGUATION",
     "ComponentMap",
     "Citation",
+    "Connection",
     "Submission",
     "SubmissionError",
     "SubmissionRecorder",
@@ -140,8 +142,8 @@ class ComponentMap:
 
     aliases: Mapping[str, str]
 
-    @staticmethod
-    def from_mapping(raw: Mapping[str, str]) -> ComponentMap:
+    def __post_init__(self) -> None:
+        raw = self.aliases
         if not raw:
             raise SubmissionError("component map is empty")
         aliases: dict[str, str] = {}
@@ -151,12 +153,22 @@ class ComponentMap:
             key = alias.strip().lower()
             if not key or not canonical.strip():
                 raise SubmissionError("component map contains an empty name")
-            aliases[key] = canonical.strip()
+            value = canonical.strip()
+            if key in aliases and aliases[key] != value:
+                raise SubmissionError("component map contains conflicting aliases")
+            aliases[key] = value
         # Canonical names must themselves resolve, so a submission may name the
         # canonical form directly.
         for canonical in list(aliases.values()):
-            aliases.setdefault(canonical.strip().lower(), canonical)
-        return ComponentMap(aliases)
+            key = canonical.lower()
+            if key in aliases and aliases[key] != canonical:
+                raise SubmissionError("component map contains conflicting canonical names")
+            aliases[key] = canonical
+        object.__setattr__(self, "aliases", MappingProxyType(aliases))
+
+    @staticmethod
+    def from_mapping(raw: Mapping[str, str]) -> ComponentMap:
+        return ComponentMap(raw)
 
     @staticmethod
     def from_json_file(path: Path) -> ComponentMap:
@@ -191,8 +203,17 @@ class Citation:
 
 
 @dataclass(frozen=True)
+class Connection:
+    source: str
+    target: str
+
+    def to_json_dict(self) -> dict[str, str]:
+        return {"source": self.source, "target": self.target}
+
+
+@dataclass(frozen=True)
 class Submission:
-    """A validated answer."""
+    """A schema-valid answer, not a causally validated diagnosis."""
 
     fault_present: bool
     causal_category: str | None
@@ -201,6 +222,8 @@ class Submission:
     evidence: tuple[Citation, ...]
     confidence: float
     remediation: str | None
+    connection: Connection | None = None
+    connection_as_submitted: Connection | None = None
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -211,6 +234,11 @@ class Submission:
             "evidence": [c.to_json_dict() for c in self.evidence],
             "confidence": self.confidence,
             "remediation": self.remediation,
+            "connection": self.connection.to_json_dict() if self.connection else None,
+            "connectionAsSubmitted": (
+                self.connection_as_submitted.to_json_dict()
+                if self.connection_as_submitted else None
+            ),
         }
 
 
@@ -269,6 +297,9 @@ def validate_submission(
     category = payload.get("causalCategory")
     component_raw = payload.get("component")
     remediation = payload.get("remediation")
+    connection_raw = payload.get("connection")
+    connection = None
+    connection_as_submitted = None
 
     if fault_present:
         if not isinstance(category, str) or category not in CAUSAL_CATEGORIES:
@@ -278,6 +309,19 @@ def validate_submission(
         component_as_submitted = _require_str(component_raw, "component")
         component = component_map.canonical(component_as_submitted)
         remediation_text = _require_str(remediation, "remediation")
+        if connection_raw is not None:
+            if not isinstance(connection_raw, Mapping) or set(connection_raw) != {
+                "source", "target"
+            }:
+                raise SubmissionError("connection must contain source and target")
+            connection_as_submitted = Connection(
+                _require_str(connection_raw["source"], "connection.source"),
+                _require_str(connection_raw["target"], "connection.target"),
+            )
+            connection = Connection(
+                component_map.canonical(connection_as_submitted.source),
+                component_map.canonical(connection_as_submitted.target),
+            )
     else:
         if category is not None:
             raise SubmissionError(
@@ -287,6 +331,8 @@ def validate_submission(
             raise SubmissionError(
                 "component must be omitted when faultPresent is false"
             )
+        if connection_raw is not None:
+            raise SubmissionError("connection must be omitted when faultPresent is false")
         if remediation is not None and str(remediation).strip():
             raise SubmissionError(
                 "remediation must be omitted when faultPresent is false"
@@ -303,6 +349,8 @@ def validate_submission(
         evidence=tuple(citations),
         confidence=confidence,
         remediation=remediation_text,
+        connection=connection,
+        connection_as_submitted=connection_as_submitted,
     )
 
 
@@ -371,6 +419,21 @@ def submit_tool_schema() -> dict[str, Any]:
                 },
             },
             "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "connection": {
+                "type": "object",
+                "description": (
+                    "When the cause is a dependency connection, name its source "
+                    "and target in that direction, using application component "
+                    "names or resource ids. The component must name one end. "
+                    "Omit when faultPresent is false."
+                ),
+                "properties": {
+                    "source": {"type": "string", "minLength": 1},
+                    "target": {"type": "string", "minLength": 1},
+                },
+                "required": ["source", "target"],
+                "additionalProperties": False,
+            },
             "remediation": {
                 "type": "string",
                 "description": (
@@ -397,25 +460,25 @@ class SubmissionRecorder:
     attempts: list[dict[str, Any]] = field(default_factory=list)
     submission: Submission | None = None
 
-    def record(self, payload: Mapping[str, Any]) -> tuple[bool, str | None]:
+    def record(self, payload: Any) -> tuple[bool, str | None]:
         """Validate and record one attempt. Returns ``(accepted, error)``."""
         if self.submission is not None:
             # First valid submission wins. The tool is terminal on success, so a
             # second one should not be reachable; if it is, the answer is not
             # revised after the fact.
             self.attempts.append(
-                {"payload": dict(payload), "accepted": False, "error": "already submitted"}
+                {"payload": deepcopy(payload), "accepted": False, "error": "already submitted"}
             )
             return False, "a submission has already been accepted"
         try:
             submission = validate_submission(payload, component_map=self.component_map)
         except SubmissionError as exc:
             self.attempts.append(
-                {"payload": dict(payload), "accepted": False, "error": str(exc)}
+                {"payload": deepcopy(payload), "accepted": False, "error": str(exc)}
             )
             return False, str(exc)
         self.submission = submission
-        self.attempts.append({"payload": dict(payload), "accepted": True, "error": None})
+        self.attempts.append({"payload": deepcopy(payload), "accepted": True, "error": None})
         return True, None
 
     @property
@@ -432,13 +495,14 @@ class SubmissionRecorder:
         return self.submission is None
 
     def outcome(self) -> dict[str, Any]:
-        """The scoring view of what the agent submitted."""
+        """Submission accounting only; acceptance does not establish correctness."""
         return {
             "submitted": self.submission is not None,
+            "validationLevel": "schema_only",
             "submission": self.submission.to_json_dict() if self.submission else None,
             "attempts": len(self.attempts),
             "rejectedAttempts": self.rejected_attempts,
-            "attemptLog": list(self.attempts),
+            "attemptLog": deepcopy(self.attempts),
             # A trial that never submits, or only ever submitted invalid output,
             # is a failure rather than an absence of result.
             "scoredAsFailure": self.submission is None,
@@ -471,6 +535,9 @@ def build_submit_tool(recorder: SubmissionRecorder, *, event_recorder: Any = Non
             try:
                 arguments = json.loads(arguments)
             except json.JSONDecodeError as exc:
+                recorder.attempts.append(
+                    {"payload": arguments, "accepted": False, "error": "invalid JSON"}
+                )
                 if event_recorder is not None:
                     event_recorder.record(
                         "harness",
@@ -482,15 +549,12 @@ def build_submit_tool(recorder: SubmissionRecorder, *, event_recorder: Any = Non
                     result_type="failure",
                     error="invalid JSON",
                 )
-        if not isinstance(arguments, Mapping):
-            arguments = {}
-
         accepted, error = recorder.record(arguments)
         if event_recorder is not None:
             event_recorder.record(
                 "harness",
                 "submit.accepted" if accepted else "submit.rejected",
-                {"arguments": dict(arguments), "error": error},
+                {"arguments": deepcopy(arguments), "error": error},
             )
         if accepted:
             return ToolResult(

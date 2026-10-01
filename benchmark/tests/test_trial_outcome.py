@@ -15,7 +15,8 @@ from radius_perf_eval.copilot import (
 )
 from radius_perf_eval.sandbox import SandboxApplication, SandboxGate, SandboxSettings
 from radius_perf_eval.submit_tool import ComponentMap, SubmissionRecorder
-from radius_perf_eval.trial_outcome import score_trial
+from radius_perf_eval.diagnosis import EvidenceReview, ExpectedDiagnosis, grade_diagnosis
+from radius_perf_eval.trial_outcome import ValidationCheck, score_trial as classify_trial
 
 MAP = ComponentMap.from_mapping({"cartservice": "cart"})
 
@@ -60,6 +61,32 @@ def _recorder(*payloads):
     for payload in payloads:
         recorder.record(payload)
     return recorder
+
+
+def score_trial(**kwargs):
+    """Keep sandbox/budget controls independent of missing-grader failures.
+
+    These checks describe only the controlled in-memory fixture, not an actual
+    filesystem audit, incident telemetry capture, or cleanup.
+    """
+    submission = kwargs["recorder"].submission
+    grade = None
+    if submission is not None:
+        grade = grade_diagnosis(
+            submission,
+            ExpectedDiagnosis(True, "cpu_saturation", component="cart"),
+            review_evidence=lambda citation: EvidenceReview(
+                citation, ("offline-control:cpu=99%",),
+                citation.signal == "cpu", citation.signal == "cpu",
+                citation.observation == "99%",
+            ),
+        )
+    return classify_trial(
+        **kwargs, grade=grade,
+        scope=ValidationCheck(True, ("offline-control:unchanged-workspace",)),
+        safety=ValidationCheck(True, ("offline-control:allowed-actions",)),
+        cleanup=ValidationCheck(True, ("offline-control:empty-resources",)),
+    )
 
 
 def _passing_gate():
@@ -191,7 +218,7 @@ def test_a_valid_submission_scores():
         gate_result=_passing_gate(),
     )
     assert outcome.scored is True
-    assert outcome.terminal_class == "submitted"
+    assert outcome.terminal_class == "validated_success"
     assert outcome.submission["component"] == "cart"
 
 
@@ -217,7 +244,7 @@ def test_invalid_output_scores_as_failure_but_is_distinguishable():
         gate_result=_passing_gate(),
     )
     assert outcome.scored is False
-    assert outcome.terminal_class == "invalid_submission"
+    assert outcome.terminal_class == "invalid_structured_output"
     assert outcome.rejected_attempts == 1
 
 
@@ -243,7 +270,7 @@ def test_a_submission_survives_a_later_budget_stop():
         budget_stop_reason="wall-clock budget exhausted",
     )
     assert outcome.scored is True
-    assert outcome.terminal_class == "submitted"
+    assert outcome.terminal_class == "validated_success"
 
 
 def test_a_session_error_invalidates_the_trial():
@@ -254,7 +281,7 @@ def test_a_session_error_invalidates_the_trial():
         error="transport closed",
     )
     assert outcome.valid is False
-    assert outcome.terminal_class == "error"
+    assert outcome.terminal_class == "harness_failure"
 
 
 def test_outcome_serializes_the_gate_and_the_budget_reason():
@@ -341,7 +368,7 @@ def test_one_unconfirmed_execution_among_confirmed_ones_invalidates_the_trial(ba
     # Counted as the harness's failure, not charged to the agent, whose own
     # outcome is preserved rather than overwritten.
     assert outcome.terminal_class == "harness_failure"
-    assert outcome.agent_terminal_class == "submitted"
+    assert outcome.agent_terminal_class == "validated_success"
     assert outcome.to_json_dict()["harnessFailure"] is True
 
 

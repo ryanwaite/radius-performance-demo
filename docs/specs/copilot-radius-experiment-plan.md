@@ -23,6 +23,33 @@ This section is the handoff point. Update it in the same pull request as the wor
 
 **Merged in PR #14:** the [offline dashboard](../../benchmark/dashboard.html) imports `radius-comparison-v1` reports, displays descriptive per-model comparisons and exclusions, and downloads full JSON or filtered CSV. It has an empty initial state, rejects inconsistent reports, and hides interim scored-arm results. It is not connected to a campaign runner yet. The exporter, source-artifact verification, and pre-registered analysis remain M2/M5/M8 work in the completion plan.
 
+**M2 answer/outcome increment, not milestone completion:** the submit tool now
+accepts directed `connection: {source, target}` answers, canonicalizes endpoints
+through the fixture mapping, rejects conflicting name mappings, and retains
+malformed submission calls. Schema acceptance is explicitly separate from
+causal validation. A shared diagnosis gate compares the hidden fault claim,
+category and component or directed edge. It requires an incident-owned review
+of every citation, with nonempty examined references. The outcome resolver
+requires independent diagnosis/evidence, scope, safety and cleanup results,
+uses canonical terminal classes, and preserves the agent result when a harness
+failure overrides it.
+
+Offline planted controls exercise those boundaries using labelled synthetic
+captures, not Shop incidents or scientific results. They reject wrong targets,
+reversed edges, wrong categories, correlated signals, fabricated observations,
+and wrong healthy/fault claims. They do not establish a production mechanism
+grader, telemetry authenticity, incident activation or healthy detection
+coverage. Real incident reviewers and their trial binding remain unbuilt.
+Historical catalogue and smoke/session records are not promoted to campaign
+results. The assignment roster, durable attempts, retry/exclusion policy and
+source-backed redacted report exporter remain M2 work. This increment does not
+change M1 or authorize live calls.
+
+The offline command, guard/call-wiring mutation controls and full-suite logs
+are retained in `../radius-perf-eval-artifacts/m2-contracts-20261001-07ac055e/`.
+Earlier failed schema and mutation-control runs remain there as well. Docker
+was unreachable; no model calls, environment runs or cloud resources were used.
+
 **M1 implementation, not yet accepted:** a `shop` driver command now renders the pinned Shop with offline startup assets, an internal backend network, a loopback ingress, and blocked flag/control routes. It calls deployment, readiness, flag, CPU and load gates, saves evidence before judging it, and verifies cleanup. The public upstream `.env` is now tracked. The load script omits only `ask_agent`; the Apache-2.0 OpenSearch plugin is pinned for Linux ARM64 and AMD64. CPU readers resolve actual cgroup paths through host PIDs. The footprint tool emits a host-labelled kernel-demand report.
 
 The owner's approved local check exposed an unset-variable comparison bug, which is fixed, then stopped at Grafana's datasource-health gate. The plugin loaded, but reported `Index not found: otel-logs-*`; the collector also logged permanent OpenSearch mapping failures involving `attributes.http` and `http.request.method`. These are measurements, not a diagnosis of the full ingestion failure. Cleanup succeeded on the failed attempts. M1 remains open until shared telemetry works, the plugin's live negative control passes, and a healthy load window passes. No comparison, model call, qualification campaign, or cloud provisioning has run.
@@ -166,7 +193,7 @@ activation and sealed-fixture leakage enforcement remain M5/M6 and M3 work.
 **Next, in order.** Each step lists its exit criterion. Steps 1 and 2 are independent and can run in parallel.
 
 1. **Finish the Astronomy Shop environment.** Typed log bootstrap, collector-to-index accounting, actual Grafana logs, fresh metric-export gates, planted failures, healthy load samples, and the live footprint/demand producer now have bounded evidence. Outbound-attempt instrumentation awaits the owner's deferred tracing decision. After approval, finish coverage beyond Grafana logs. Investigate the unreproduced startup HTTP 500 using the new full backend diagnostics, and establish repeatability without weakening CPU or load gates. The Grafana source assessment records semantic hints but does not clear M3's sealed fixtures; incident-phase activation belongs to M5/M6. The requirements are in `benchmark/README.md`. *Exit:* a healthy stack on the internal network has no failing endpoint, makes no unexplained outbound request, and passes every generated check.
-2. **Finish the answer contract.** Add the `connection` field to the submit tool, align the code's terminal classes with [Trial outcomes and retries](#trial-outcomes-and-retries), and implement the retry policy. *Exit:* planted wrong answers for the component and the connection each fail, and a correct answer passes.
+2. **Finish M2's answer and result contracts.** Directed answers, canonical naming, a required incident-evidence review boundary, and canonical diagnosis outcome classes are implemented with offline controls. Build the immutable assignment roster, durable attempt records, retry/exclusion reduction and source-backed redacted exporter. Integrate real incident reviewers without treating the controlled test reviewer as one. *Exit:* M2's answer controls and retry/denominator requirements in the [completion plan](benchmark-completion-plan.md), with verified source-backed reports.
 3. **Fit and hold out the determinism suite on the laptop.** It takes about three hours and needs the user's approval before it starts. *Exit:* the holdout passes with tolerances frozen before it ran.
 4. **Build the three Astronomy Shop fixtures** under Phase 0: fault-flag code removed from the agent-visible source, a neutral README, a validated `app.bicep`, the arm C document, two difference manifests, and a leakage scan that covers Grafana dashboards and provisioning. *Exit:* the Phase 0 exit criteria.
 5. **Re-verify the sandbox** on the locked SDK and CLI pair and on each pilot model, and run the forced-compaction control. This needs a premium-request allowance from the user. Build the probe session that runs before each campaign batch. *Exit:* every escape probe is denied with `sandboxApplied: "true"`, and the in-workspace control succeeds.
@@ -250,6 +277,7 @@ The agent answers by calling a submit tool with fixed fields:
 | `faultPresent` | Boolean |
 | `causalCategory` | One value from a fixed list of about ten categories, the same list in every arm |
 | `component` | The affected service. Compose service names and Radius resource IDs are both accepted and mapped to one canonical name, so no arm fails on naming |
+| `connection` | Optional directed object with `source` and `target`, each mapped through the same component table; omitted for healthy claims |
 | `evidence` | A list of citations, each naming a metric, trace, or log and what it showed |
 | `confidence` | A number from 0 to 1 |
 | `remediation` | The smallest safe change, as text |
@@ -1200,7 +1228,7 @@ Exit criteria:
 | Weighted score | Graph-grounding points awarded in every arm for the correct component and connection with evidence | Decided |
 | Escape probes | None inside scored trials; each trial is gated on `sandboxApplied: "true"` for every execution; harness-driven probes run in separate sessions on the same host and pins at re-verification and before each campaign batch | Decided; not built |
 | Models | Pilot: Claude Opus 5 and GPT-5.6 Sol. Scored: Claude Opus 5.5 and GPT-6 Sol, after a calibration check on each | Decided |
-| Output schema | Submit tool with `faultPresent`, `causalCategory` from a fixed list, canonical `component`, optional `connection`, `evidence`, `confidence`, `remediation` | Decided; `connection` not built |
+| Output schema | Submit tool with `faultPresent`, `causalCategory` from a fixed list, canonical `component`, optional `connection`, `evidence`, `confidence`, `remediation` | Implemented; schema acceptance is not causal validation |
 | CI dependencies | Locked on the managed developer machine through CFS; GitHub-hosted runners install from public registries with hashes required and never re-resolve | Decided; implemented |
 | Trial hosts | Pilot on the developer laptop, kept awake on power. Scored campaign on one to three non-burstable Linux Azure VMs, one trial at a time each, each passing the determinism suite; harness shipped as a digest-pinned image built through CFS; provisional size `Standard_D8s_v5` | Decided; size confirmed after load-surge and harness measurement; VMs not provisioned |
 | Kubernetes target | `ryanw-aks` / `ryanw-rg` / Test account | User-selected; access/setup unverified |
