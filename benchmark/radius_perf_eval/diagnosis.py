@@ -1,9 +1,9 @@
-"""Diagnosis gate shared by arms, with incident-owned evidence verification.
+"""Shared automated target gate plus explicit human causal/evidence decisions.
 
-This module compares the declared causal target. It does not interpret telemetry
-or grade free-text observations. An incident supplies an independent reviewer
-that checks each citation against that trial's captured evidence. No production
-Shop reviewer is implemented here.
+This module does not interpret free text. An incident reviewer checks captured
+measurements and binds recorded human judgments to the answer. Missing mechanism
+adjudication cannot pass. The CPU reference lives in adjudication.py; it is not
+a qualified production Shop grader.
 """
 
 from __future__ import annotations
@@ -12,6 +12,10 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from .submit_tool import CAUSAL_CATEGORIES, Citation, Connection, Submission
+
+
+class ReviewRequired(ValueError):
+    """An unfinished human decision, not an agent result or a harness retry."""
 
 
 @dataclass(frozen=True)
@@ -84,12 +88,21 @@ class DiagnosisGrade:
     submission: Submission
     expected: ExpectedDiagnosis
     reviews: tuple[EvidenceReview, ...]
+    mechanism_passed: bool | None = None
+    mechanism_evidence: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.reviews, tuple):
             raise ValueError("evidence reviews must be an immutable tuple")
         if tuple(review.citation for review in self.reviews) != self.submission.evidence:
             raise ValueError("grade must review every submitted citation in order")
+        if self.mechanism_passed is not None:
+            if type(self.mechanism_passed) is not bool:
+                raise ValueError("mechanism review must be an explicit boolean")
+            if not isinstance(self.mechanism_evidence, tuple) or not self.mechanism_evidence or any(
+                not isinstance(ref, str) or not ref.strip() for ref in self.mechanism_evidence
+            ):
+                raise ValueError("mechanism review requires immutable examined references")
 
     @property
     def diagnosis_passed(self) -> bool:
@@ -108,7 +121,7 @@ class DiagnosisGrade:
                 )
             else:
                 diagnosis_passed = diagnosis_passed and submission.component == expected.component
-        return diagnosis_passed
+        return diagnosis_passed and self.mechanism_passed is True
 
     @property
     def evidence_passed(self) -> bool:
@@ -120,10 +133,12 @@ def grade_diagnosis(
     expected: ExpectedDiagnosis,
     *,
     review_evidence: EvidenceReviewer,
+    mechanism_passed: bool | None = None,
+    mechanism_evidence: tuple[str, ...] = (),
 ) -> DiagnosisGrade:
     """Compare cause and inspect every citation, including for healthy claims.
 
-    Reviewer failures propagate as harness errors; they are not wrong answers.
+    Reviewer failures propagate; they are not wrong answers or automatic retries.
     The caller must bind the reviewer and expected answer to the same trial.
     """
     reviews = []
@@ -132,4 +147,4 @@ def grade_diagnosis(
         if review.citation != citation:
             raise ValueError("evidence reviewer returned a result for another citation")
         reviews.append(review)
-    return DiagnosisGrade(submission, expected, tuple(reviews))
+    return DiagnosisGrade(submission, expected, tuple(reviews), mechanism_passed, mechanism_evidence)
