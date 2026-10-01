@@ -84,9 +84,10 @@ before declaring it ready. The
 identifies the missing deterministic reference reviewer and its attempt/export
 integration. Wrong-category controls do not establish rejection of a wrong
 mechanism within the right category. The current answer contract does not
-declare a separate mechanism claim or a deterministic interpretation policy for
-free-text observations/remediation. That scoring-policy choice needs the owner's
-decision before implementation. Do not move this M2 requirement into M5/M6 merely
+declare a separate mechanism claim. The owner decided on October 1, 2026 to
+keep the schema and define incident-specific prose interpretation rules.
+The proposed reference rules below need approval before implementation. Do not
+move this M2 requirement into M5/M6 merely
 because those milestones build the live Shop integration and incident library.
 
 Raw offline results, including failed guard-mutation and collection attempts,
@@ -749,6 +750,55 @@ A grader that passes a wrong answer produces a scored result that looks like a f
 - the evidence check must be deterministic. Cited evidence passes only if it names a metric, trace, or log that exists in the trial's captured telemetry and lies on the causal path the incident declares.
 
 During the pilot and the scored campaign, the repository owner reviews a random 10 percent of graded transcripts without knowing the arm. The harness removes arm labels, the architecture document's name, and Radius file paths from the transcripts before review. A reader may still infer the arm from what the agent examined, and the report says so. The report states how often the reviewer and the grader agree. If they disagree on more than 5 percent of reviewed trials, the grader is fixed and the affected trials are regraded before any result is reported. Pilot review also reads transcripts for harness artifacts, refusals, and grader gaming.
+
+#### M2 reference prose policy
+
+**Owner decision, October 1, 2026:** preserve the submitted answer schema.
+Use incident-specific deterministic prose interpretation rules, not a new
+mechanism field or a general keyword grader. A matching category, target or
+latency symptom does not establish the mechanism. Contradictory, negated and
+unsupported explanations must be planted rejection controls.
+
+**Proposed reference rule, awaiting owner approval:** use an externally reduced
+CPU quota as the bounded M2 grading reference. Read raw cgroup v2 `cpu.max` and
+`cpu.stat` captures from the declared target, with immutable assignment/attempt
+bindings and a frozen baseline quota. For a fault, require a lower active quota
+and increasing throttled periods. A healthy control requires an unchanged quota
+and no increase in throttled periods. Both are reference evidence predicates,
+not a claim that they establish whole-application health, stable offered load
+or independent incident activation; M5 supplies those environment gates.
+
+Interpret complete propositions, including the whole `remediation` string,
+rather than searching for keywords. The initial accepted language is bounded:
+
+- A quota observation states the measured active and baseline CPU limits, for
+  example, "The CPU quota is 0.5 cores, down from 2 cores."
+- A throttling observation states measured counter endpoints, for example,
+  "Throttled periods increased from 3 to 15."
+- The fault explanation attributes the cause to the lowered quota and proposes
+  restoring the measured baseline, for example, "The CPU quota was reduced;
+  restore the limit to 2 cores." An increased-work explanation remains wrong
+  even though it shares `cpu_saturation` and the same target.
+- Healthy observations state the unchanged measured quota and unchanged
+  throttling counter. The existing healthy schema still forbids remediation.
+
+Rules may normalize case and whitespace and declare explicit synonymous words
+such as quota/limit and reduced/lowered. Every numeric value must match the raw
+capture. Both quota and throttling evidence must be present; all citations must
+be supported and on the declared causal target. Full-input parsing must reject
+extra contradictory clauses, negation, a wrong restoration value, reversed
+numeric claims, correlated signals, invented sources and missing observations.
+Unknown prose fails the supported-language contract rather than being guessed
+at by a keyword or language-model grader.
+
+This narrow language can produce false negatives for a semantically correct
+paraphrase. Approval would accept it as an **unqualified reference contract**,
+not as a calibrated Shop grader. It must not enter a scored campaign until
+pilot/blinded-review calibration approves its coverage. M2 would implement and
+exercise the reference rule through canonical outcomes, the attempt store and
+the report exporter; M6 would qualify or replace its language coverage before
+scientific use. No signing service, new telemetry infrastructure or live
+experiment is proposed.
 
 ### Catalog-application scenarios (harness development)
 
