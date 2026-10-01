@@ -86,10 +86,10 @@ integration. Wrong-category controls do not establish rejection of a wrong
 mechanism within the right category. The current answer contract does not
 declare a separate mechanism claim. The owner decided on October 1, 2026 to
 keep the schema and define incident-specific prose interpretation rules. The
-owner subsequently rejected the bounded-grammar proposal and recommended an
+owner subsequently rejected the bounded-grammar proposal and approved an
 incident rubric with human causal-prose adjudication and automated target,
-measurement and integrity checks. The revised policy below needs final approval
-before implementation. Do not
+measurement and integrity checks. The revised policy below is approved for
+implementation. Do not
 move this M2 requirement into M5/M6 merely
 because those milestones build the live Shop integration and incident library.
 
@@ -762,7 +762,7 @@ recommended a simple incident rubric with human adjudication for causal prose.
 A grammar would penalize unfamiliar but correct phrasing and create a separate
 language-coverage project. No such parser has been implemented.
 
-**Revised proposal, awaiting approval:** retain automated schema, category,
+**Approved policy, October 1, 2026:** retain automated schema, category,
 directed target, raw measurement, evidence-reference and record-integrity checks.
 A blinded human reviews every schema-valid answer's causal prose against an
 incident-owned rubric. The rubric states the hidden cause, required causal
@@ -791,13 +791,13 @@ regrading policy and production capture integration remain later campaign work.
 This is an intentional change to the primary endpoint: it becomes **validated
 diagnosis success with human causal adjudication**, not fully deterministic
 semantic grading. Deterministic replay verifies the recorded adjudication and
-automated evidence, not the semantic truth of prose. If approved, it supersedes
+automated evidence, not the semantic truth of prose. It supersedes
 the earlier rule that human review never affects the primary gates, for diagnosis
 causal/evidence adjudication only. The existing random blinded audit remains an
 independent second review for agreement/calibration, rather than the only human
 review. Pilot cost must include this additional review workload.
 
-M2 would deliver the small adjudication interface, a CPU-quota reference rubric,
+M2 will deliver the small adjudication interface, a CPU-quota reference rubric,
 automated raw-measurement checks, recorded review controls and integration through
 canonical outcomes, attempts and report export. Reference fixtures remain labelled
 offline controls, not real Shop or human-agreement findings. M3/M5/M6 still own
@@ -872,7 +872,11 @@ The code's terminal classes must match this list. Only harness failures are retr
 
 ### Primary outcome
 
-**Deterministic validated end-to-end task success.** Diagnosis-only and remediation modes have separate gates. A weighted score is secondary and is calculated only after gate outcomes are fixed.
+**Validated diagnosis success with human causal adjudication.** Automated
+target, measurement and integrity gates combine with the approved incident-rubric
+review below. Replay of the recorded decision is deterministic; semantic
+judgment is not. Diagnosis-only and remediation modes have separate gates.
+A weighted score is secondary and is calculated only after gate outcomes are fixed.
 
 ### Diagnosis
 
