@@ -1,36 +1,9 @@
-"""Turn one agent execution into a scored trial result.
+"""Resolve one diagnosis attempt, not a campaign assignment or retry.
 
-Three independent things can end a trial, and the plan scores all three as
-failures:
-
-* the budget ran out (30 minutes or 100 tool calls);
-* the agent never produced a valid submission;
-* the sandbox gate could not confirm confinement.
-
-They are kept as separate reasons rather than collapsed into a single boolean,
-because "ran out of time" and "answered wrongly" are different findings about a
-harness and would otherwise be indistinguishable in the results.
-
-**Invalid is not absent.** An agent that called the submit tool with malformed
-fields scores as a failure, exactly like one that never called it, but the
-record keeps the rejected attempts so a reader can tell "could not diagnose"
-from "could not express". If a whole arm fails on rejected submissions, that is
-a harness artefact, not evidence about the treatment.
-
-**The gate is not a scorer.** A sandbox-gate failure means the trial produced no
-trustworthy evidence, so it is reported as invalid rather than as a wrong
-answer. Scoring it as a wrong answer would let a broken harness masquerade as a
-weak treatment arm. Such a trial takes the terminal class ``harness_failure``
-rather than the agent's, so it is counted where it belongs; the class the agent
-would have earned is kept in ``agentTerminalClass`` so nothing is lost.
-
-**Shell trials run with the static screen off**, because the screen denies
-ordinary ``/proc`` and cgroup reads while missing the assembled paths the
-sandbox denies, and because the arms do not depend on it equally. The sandbox is
-then the only boundary on shell, so a shell trial is valid only when every tool
-execution reports ``sandboxApplied: "true"``. A trial in that configuration with
-no gate result is a harness failure, not a pass: omitting the gate is exactly
-how the confinement requirement would otherwise be skipped silently.
+SDK completion and schema acceptance are not validated success. A submitted
+answer needs an independent diagnosis/evidence grade and scope, safety and
+cleanup checks. Missing checks invalidate the attempt as a harness failure.
+The catalogue environment/determinism records are a separate historical format.
 """
 
 from __future__ import annotations
@@ -38,34 +11,46 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-__all__ = [
-    "FAILURE_CLASSES",
-    "TrialOutcome",
-    "score_trial",
-]
+from .diagnosis import DiagnosisGrade
+from .submit_tool import SubmissionRecorder
 
-#: Terminal classes that score as a failure rather than as a scored answer.
-#: ``harness_failure`` is excluded from the agent's results rather than charged
-#: to it, but it is still counted, so a harness that quietly invalidates one
-#: arm's trials cannot look like an arm that simply performed badly.
-FAILURE_CLASSES = (
-    "budget_exhaustion",
-    "no_submission",
-    "invalid_submission",
-    "error",
+TERMINAL_CLASSES = (
     "harness_failure",
+    "isolation_violation_attempt",
+    "no_submission",
+    "invalid_structured_output",
+    "refusal",
+    "budget_exhaustion",
+    "diagnosis_failure",
+    "remediation_failure",
+    "validated_success",
 )
+FAILURE_CLASSES = tuple(name for name in TERMINAL_CLASSES if name != "validated_success")
+
+
+@dataclass(frozen=True)
+class ValidationCheck:
+    passed: bool
+    examined: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.examined, tuple):
+            raise ValueError("examined references must be an immutable tuple")
+        if type(self.passed) is not bool:
+            raise ValueError("validator decision must be an explicit boolean")
+        if not self.examined or any(
+            not isinstance(ref, str) or not ref.strip() for ref in self.examined
+        ):
+            raise ValueError("validator requires nonempty examined references")
 
 
 @dataclass
 class TrialOutcome:
-    """The scored result of one trial."""
-
     scored: bool
-    """True only when the trial produced a submission that can be graded."""
+    """Legacy field: true only for validated success, not denominator eligibility."""
 
     valid: bool
-    """False when the harness itself failed, so the trial yields no evidence."""
+    """True for agent results, including failures; false for harness failures."""
 
     terminal_class: str
     reasons: list[str] = field(default_factory=list)
@@ -76,7 +61,8 @@ class TrialOutcome:
     static_screen: str = "on"
     shell_enabled: bool = False
     agent_terminal_class: str | None = None
-    """What the agent earned, kept when a harness failure overrides the class."""
+    validators: dict[str, str] = field(default_factory=dict)
+    validator_evidence: dict[str, Any] = field(default_factory=dict)
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -91,42 +77,45 @@ class TrialOutcome:
             "rejectedSubmissionAttempts": self.rejected_attempts,
             "budgetStopReason": self.budget_stop_reason,
             "sandboxGate": self.sandbox_gate,
-            # Recorded at the top level as well as inside the gate, because a
-            # trial with no gate result still has to say which boundary it ran
-            # under -- that case is precisely the one worth catching.
             "staticScreen": self.static_screen,
             "shellEnabled": self.shell_enabled,
+            "validators": dict(self.validators),
+            "validatorEvidence": dict(self.validator_evidence),
         }
 
 
 def score_trial(
     *,
     terminal_class: str,
-    recorder: Any,
+    recorder: SubmissionRecorder,
     gate_result: Any = None,
     budget_stop_reason: str | None = None,
     error: str | None = None,
     shell_enabled: bool = False,
     static_screen: str = "on",
+    grade: DiagnosisGrade | None = None,
+    scope: ValidationCheck | None = None,
+    safety: ValidationCheck | None = None,
+    cleanup: ValidationCheck | None = None,
 ) -> TrialOutcome:
-    """Combine budget, submission, and sandbox state into one scored result.
+    """Classify a diagnosis attempt using captured, independent checks.
 
-    ``gate_result`` stays optional so a shell-disabled trial, which has no shell
-    commands to confine, can be scored. It is not optional in the scored shell
-    configuration: with shell enabled and the screen off the sandbox is the only
-    boundary, so a missing gate is treated as a harness failure rather than
-    waved through. Passing a gate result that did not pass has the same effect.
+    ``validated_success`` from the historical SDK adapter means only that its
+    prompt completed. This function never trusts that value as a grade.
+    ``error`` and ``copilot_sdk_or_adapter_failure`` are accepted only as legacy
+    adapter inputs and normalize to ``harness_failure`` in the output.
     """
     if static_screen not in ("on", "off"):
-        raise ValueError(
-            f"static_screen must be 'on' or 'off', got {static_screen!r}"
-        )
+        raise ValueError(f"static_screen must be 'on' or 'off', got {static_screen!r}")
+    if terminal_class not in TERMINAL_CLASSES + ("error", "copilot_sdk_or_adapter_failure"):
+        raise ValueError(f"unknown terminal class: {terminal_class!r}")
+    if terminal_class == "remediation_failure":
+        raise ValueError("remediation is not supported by the diagnosis scorer")
 
     reasons: list[str] = []
-    # Reasons the *harness* failed, kept apart from the agent's outcome so the
-    # two are never conflated in the count.
     harness_reasons: list[str] = []
-
+    validators: dict[str, str] = {}
+    evidence: dict[str, Any] = {}
     if gate_result is not None and not gate_result.passed:
         harness_reasons.append(f"sandbox gate: {gate_result.reason}")
     elif gate_result is None and shell_enabled and static_screen == "off":
@@ -134,51 +123,85 @@ def score_trial(
             "shell was enabled with the static screen off, but no sandbox gate "
             "result was recorded, so confinement was never confirmed"
         )
+    if error or terminal_class in ("error", "copilot_sdk_or_adapter_failure", "harness_failure"):
+        harness_reasons.append(f"session error: {error or terminal_class}")
 
-    submission = getattr(recorder, "submission", None)
-    rejected = int(getattr(recorder, "rejected_attempts", 0) or 0)
+    for name, check in (("scope", scope), ("safety", safety), ("cleanup", cleanup)):
+        if check is None:
+            harness_reasons.append(f"missing {name} validator")
+        else:
+            validators[name] = "pass" if check.passed else "fail"
+            evidence[name] = list(check.examined)
+    if cleanup is not None and not cleanup.passed:
+        harness_reasons.append("cleanup verification failed")
 
-    if error:
-        agent_class = "error"
-        reasons.append(f"session error: {error}")
+    submission = recorder.submission
+    rejected = recorder.rejected_attempts
+    agent_class: str | None
+    if terminal_class == "isolation_violation_attempt" or any(
+        check is not None and not check.passed for check in (scope, safety)
+    ):
+        agent_class = "isolation_violation_attempt"
+        reasons.append("isolation, prohibited mutation, or safety violation")
     elif submission is not None:
-        # An accepted submission is the agent's answer even if the budget later
-        # expired during teardown: the answer existed before the clock did.
-        agent_class = "submitted"
-    elif terminal_class == "budget_exhaustion":
-        agent_class = "budget_exhaustion"
-        reasons.append(budget_stop_reason or "budget exhausted before submission")
+        if grade is None:
+            agent_class = None
+            harness_reasons.append("missing independent diagnosis/evidence grade")
+        elif grade.submission != submission:
+            agent_class = None
+            harness_reasons.append("diagnosis grade belongs to a different submission")
+        else:
+            validators["diagnosis"] = "pass" if grade.diagnosis_passed else "fail"
+            validators["evidence"] = "pass" if grade.evidence_passed else "fail"
+            evidence["diagnosis"] = {
+                "expectedFault": grade.expected.fault_present,
+                "causalCategory": grade.expected.causal_category,
+                "component": grade.expected.component,
+                "connection": (
+                    grade.expected.connection.to_json_dict()
+                    if grade.expected.connection else None
+                ),
+            }
+            evidence["evidence"] = [
+                {
+                    "citation": review.citation.to_json_dict(),
+                    "examined": list(review.examined),
+                    "exists": review.exists,
+                    "relevant": review.relevant,
+                    "supported": review.supported,
+                }
+                for review in grade.reviews
+            ]
+            agent_class = (
+                "validated_success" if grade.diagnosis_passed and grade.evidence_passed
+                else "diagnosis_failure"
+            )
+            if agent_class == "diagnosis_failure":
+                reasons.append("causal diagnosis or evidence did not pass")
+    elif terminal_class in ("budget_exhaustion", "refusal"):
+        agent_class = terminal_class
+        reasons.append(budget_stop_reason or terminal_class)
     elif rejected:
-        agent_class = "invalid_submission"
-        reasons.append(
-            f"{rejected} submission attempt(s) were rejected and none was valid"
-        )
+        agent_class = "invalid_structured_output"
+        reasons.append(f"{rejected} submission attempt(s) rejected; none schema-valid")
     else:
         agent_class = "no_submission"
         reasons.append("the agent never called the submit tool")
 
-    valid = not harness_reasons and agent_class != "error"
-    if harness_reasons:
-        # A trial that cannot confirm confinement says nothing about the agent,
-        # so it is counted as a harness failure instead of as the agent's class.
-        resolved = "harness_failure"
-        reasons = harness_reasons + reasons
-    else:
-        resolved = agent_class
-
-    scored = resolved == "submitted" and valid
+    resolved = "harness_failure" if harness_reasons else agent_class
+    assert resolved in TERMINAL_CLASSES
     return TrialOutcome(
-        scored=scored,
-        valid=valid,
+        scored=resolved == "validated_success",
+        valid=resolved != "harness_failure",
         terminal_class=resolved,
-        reasons=reasons,
+        reasons=harness_reasons + reasons,
         submission=submission.to_json_dict() if submission is not None else None,
         rejected_attempts=rejected,
         budget_stop_reason=budget_stop_reason,
-        sandbox_gate=(
-            gate_result.to_json_dict() if gate_result is not None else None
-        ),
+        sandbox_gate=gate_result.to_json_dict() if gate_result is not None else None,
         static_screen=static_screen,
         shell_enabled=shell_enabled,
         agent_terminal_class=agent_class,
+        validators=validators,
+        validator_evidence=evidence,
     )

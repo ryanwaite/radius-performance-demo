@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from radius_perf_eval.submit_tool import (
@@ -9,10 +11,12 @@ from radius_perf_eval.submit_tool import (
     CATEGORY_DISAMBIGUATION,
     CAUSAL_CATEGORIES,
     ComponentMap,
+    Connection,
     SubmissionError,
     SubmissionRecorder,
     submit_tool_schema,
     validate_submission,
+    build_submit_tool,
 )
 
 FIXTURE_MAP = {
@@ -440,3 +444,106 @@ def test_the_overlapping_pairs_are_separated_by_origin():
 def test_component_is_defined_by_what_must_change():
     description = submit_tool_schema()["properties"]["component"]["description"]
     assert "whose behaviour must change to fix the fault" in description
+
+
+def test_directed_connection_canonicalizes_both_endpoints_and_keeps_original():
+    raw = {"source": "frontend", "target": " CartService "}
+    answer = validate_submission(_valid(connection=raw), component_map=_map())
+    assert answer.connection == Connection("frontend", "cart")
+    assert answer.to_json_dict()["connection"] == {"source": "frontend", "target": "cart"}
+    assert answer.to_json_dict()["connectionAsSubmitted"] == {
+        "source": "frontend", "target": "CartService"
+    }
+    backwards = validate_submission(
+        _valid(connection={"source": "cart", "target": "frontend"}), component_map=_map()
+    )
+    assert backwards.connection != answer.connection
+
+
+@pytest.mark.parametrize("connection", [
+    "", [], {}, {"source": "cart"}, {"target": "cart"},
+    {"source": "", "target": "cart"}, {"source": "cart", "target": None},
+    {"source": "unknown", "target": "cart"},
+    {"source": "cart", "target": "unknown"},
+    {"source": "cart", "target": "frontend", "extra": "x"},
+])
+def test_malformed_connections_are_rejected(connection):
+    with pytest.raises(SubmissionError):
+        validate_submission(_valid(connection=connection), component_map=_map())
+
+
+def test_healthy_claim_cannot_name_a_connection():
+    with pytest.raises(SubmissionError, match="connection"):
+        validate_submission({
+            "faultPresent": False,
+            "connection": {"source": "cart", "target": "frontend"},
+            "evidence": [{"signal": "latency", "observation": "baseline"}],
+            "confidence": 0.5,
+        }, component_map=_map())
+
+
+def test_connection_schema_is_directed_and_contains_no_inventory():
+    schema = submit_tool_schema()["properties"]["connection"]
+    assert schema["required"] == ["source", "target"]
+    assert schema["additionalProperties"] is False
+    for endpoint in ("source", "target"):
+        assert schema["properties"][endpoint] == {"type": "string", "minLength": 1}
+
+
+@pytest.mark.parametrize("mapping", [
+    {"cart": "cart", " CART ": "frontend"},
+    {"alias": "cart", "cart": "frontend"},
+    {"alias1": "cart", "alias2": "CART"},
+])
+def test_ambiguous_fixture_vocabulary_fails_before_an_agent_runs(mapping):
+    with pytest.raises(SubmissionError, match="conflicting"):
+        ComponentMap.from_mapping(mapping)
+
+
+def test_fixture_vocabulary_cannot_be_changed_after_construction():
+    raw = {"service": "cart"}
+    mapping = ComponentMap.from_mapping(raw)
+    raw["service"] = "frontend"
+    assert mapping.canonical("service") == "cart"
+    with pytest.raises(TypeError):
+        mapping.aliases["service"] = "frontend"
+    with pytest.raises(TypeError):
+        ComponentMap(raw).aliases["service"] = "changed"
+
+
+def test_invalid_json_tool_call_is_preserved_and_can_be_followed_by_valid_output():
+    recorder = SubmissionRecorder(_map())
+    tool = build_submit_tool(recorder)
+    result = tool.handler(SimpleNamespace(arguments="{broken"))
+    assert result.result_type == "failure"
+    assert recorder.rejected_attempts == 1
+    assert recorder.attempts[0]["payload"] == "{broken"
+    assert recorder.submission is None
+    result = tool.handler(SimpleNamespace(arguments=_valid()))
+    assert result.result_type == "success"
+    assert len(recorder.attempts) == 2
+    assert recorder.submission is not None
+
+
+@pytest.mark.parametrize("arguments", [None, [], ["not", "an", "object"], "[]"])
+def test_nonobject_tool_calls_are_retained(arguments):
+    import json
+
+    recorder = SubmissionRecorder(_map())
+    result = build_submit_tool(recorder).handler(SimpleNamespace(arguments=arguments))
+    assert result.result_type == "failure"
+    assert recorder.rejected_attempts == 1
+    assert recorder.attempts[0]["payload"] == (
+        json.loads(arguments) if isinstance(arguments, str) else arguments
+    )
+
+
+def test_caller_cannot_rewrite_submission_history_through_payload_or_export():
+    recorder = SubmissionRecorder(_map())
+    original = _valid()
+    recorder.record(original)
+    original["evidence"][0]["observation"] = "altered"
+    assert recorder.attempts[0]["payload"]["evidence"][0]["observation"] == "pegged at 99%"
+    exported = recorder.outcome()
+    exported["attemptLog"][0]["payload"]["evidence"].clear()
+    assert recorder.attempts[0]["payload"]["evidence"]

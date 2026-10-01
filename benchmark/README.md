@@ -470,7 +470,7 @@ the treatment.
 
 ### The submit tool
 
-Fixed fields: `faultPresent`, `causalCategory`, `component`, `evidence`,
+Fixed fields: `faultPresent`, `causalCategory`, `component`, optional `connection`, `evidence`,
 `confidence`, `remediation`. The tool is **terminal on success**, so an accepted
 submission ends the trial on the agent's own answer. A rejected submission
 returns a failure, which leaves the loop running so the model can correct it.
@@ -516,6 +516,77 @@ Two decisions the brief did not specify:
 
 A sandbox-gate failure marks the trial **invalid** rather than scoring it as a
 wrong answer, so a broken harness cannot masquerade as a weak arm.
+
+### M2 answer and outcome contract increment
+
+`connection` is an object with `source` and `target`. Both endpoints use the
+fixture's `ComponentMap`, just as `component` does. Direction is preserved.
+The answer stores both canonical and submitted endpoint names. Healthy answers
+omit the connection. The map rejects conflicting aliases or canonical names
+before execution and cannot be changed after construction. Its inventory is
+not added to the tool schema or rejection text.
+
+Submission acceptance means **schema-valid**, not causally correct.
+`SubmissionRecorder.outcome()` labels this `validationLevel: schema_only`.
+Its existing `scoredAsFailure` field still means no accepted submission, not a
+causal verdict. Malformed JSON and non-object tool calls remain in submission
+history, as do rejected corrections; returned history is a snapshot. This is
+submission-call accounting, not durable campaign-attempt storage.
+
+`diagnosis.grade_diagnosis` compares a hidden `ExpectedDiagnosis` with the
+submitted fault claim, category and causal target. A component incident requires
+that component. A connection incident requires the directed edge and a component
+at one of its ends. Every citation goes through a required, incident-owned
+`EvidenceReviewer`, including healthy claims. The reviewer reports whether the
+signal exists, belongs to the declared causal path or healthy detection coverage,
+and supports the observation. It must identify nonempty examined references.
+An absent signal, unsupported observation, or correlated non-causal signal fails.
+A crashed reviewer is a harness error, not a wrong diagnosis.
+
+This is an **integration contract, not an implemented Shop evidence grader**.
+The offline tests use a labelled, controlled latency dictionary and exact
+observations. That toy reviewer is test code only. No keyword grader, general
+free-text mechanism grader, or production telemetry adapter is supplied. Real
+incident activation, healthy detection coverage, within-category mechanisms,
+captured-artifact authentication and reviewer versioning still need incident
+validators and campaign wiring. The caller must bind the hidden expectation,
+reviewer, submission and captured artifacts to the same trial.
+
+`trial_outcome.score_trial` now requires independent diagnosis/evidence,
+scope, safety and cleanup results before reporting `validated_success`.
+Checks retain what they examined. Missing checks, failed cleanup, adapter errors
+and sandbox-gate failures produce `harness_failure`; a known agent result stays
+in `agentTerminalClass`. A wrong diagnosis or citation produces
+`diagnosis_failure`. Prohibited actions produce `isolation_violation_attempt`
+even when an accepted answer is correct. No answer, malformed output, an
+explicit refusal and budget exhaustion retain their distinct canonical classes.
+Refusal must come from a trusted adapter decision, not a keyword in a transcript.
+The existing rule that an accepted answer precedes a later teardown budget stop
+is unchanged.
+
+For compatibility, `TrialOutcome.scored` still means success; `valid` identifies
+agent results, including failures, rather than harness failures. Neither field
+defines a campaign denominator. Historical smoke/session completion labels and
+catalogue environment/determinism records retain their development-fixture
+meaning and are not comparison reports. In particular, the SDK adapter's
+historical `validated_success` completion label is not trusted as a diagnosis.
+There is no remediation scorer in this increment.
+
+**M2 remains open:** immutable campaign assignments, durable attempt storage,
+retry-once/exclusion reduction, denominator reconciliation, and the redacted
+`radius-comparison-v1` exporter with source-digest verification are not built.
+Neither M1 internals nor the dashboard format changes here.
+
+With the locked benchmark environment restored, run the offline contracts and
+guard mutations from the repository root:
+
+```bash
+DOCKER_HOST=unix:///nonexistent/docker.sock benchmark/.venv/bin/python -m pytest benchmark/tests/test_submit_tool.py benchmark/tests/test_trial_outcome.py benchmark/tests/test_diagnosis.py benchmark/tests/test_m2_mutations.py -q
+```
+
+Mutation controls remove guards and call wiring in fresh local Python processes.
+They do not start agents or Docker, and a collection/import failure does not
+count as a killed mutation.
 
 ### Context window and compaction
 
