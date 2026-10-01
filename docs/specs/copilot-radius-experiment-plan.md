@@ -33,7 +33,7 @@ The isolated live control `radius-eval-shop-9b17c82ee06f` demonstrated daily-pat
 
 The application experiment `radius-eval-shop-6dbbb5769f15` installed that candidate template before starting the collector. Grafana returned log data, and the saved OpenSearch sample contains actual Shop service logs, including both `http` and `http.request.method` attributes. The captured collector log tail had no mapping/export error, but the exporter-metric query returned an empty vector, so zero data loss is **not established**. The measurement reached the CPU gate and failed on checkout throttling. Raw load boundaries and cgroup counters were saved, and cleanup succeeded. Do not promote the mapping candidate or refit CPU limits from this observation alone; complete the ingestion controls and demand measurement first. Docker allocation, service limits, and version pins were unchanged.
 
-**M1 follow-up on this branch:** the shared Shop/footprint startup now starts
+**Merged in PR #15:** the shared Shop/footprint startup now starts
 OpenSearch first, installs and reads back the typed attribute template, then
 starts producers. The template is hashed in render provenance. Derived collector
 configuration keeps the upstream OTLP telemetry reader and adds an internal-only
@@ -87,6 +87,41 @@ mutation journal at `m1-offline-1790813063` has no surviving mutations.
 Earlier failed reconciliation and mutation attempts remain in the artifact
 directory rather than being overwritten.
 
+**M1 metric-export acceptance increment:** the environment driver now checks
+direct metric-export counters and requires fresh stored Prometheus samples
+before and after the healthy load window. It waits for the existing periodic
+self-telemetry export rather than interpreting an empty query as zero loss.
+Each backend exporter counter must reach its direct-read lower bound and
+carry the current collector instance. Range-vector sample timestamps, not
+instant-query evaluation timestamps, establish freshness. Observed metric
+send, enqueue, receiver failure or refusal counters reject the attempt.
+Missing or stale backend evidence times out; collector replacement and
+counter regression also fail. Raw observations are journaled before judgment.
+Failed environment attempts retain complete collector and Prometheus logs,
+not only the combined log tail.
+
+`radius-eval-shop-757f8b7374b2` captured a bounded reproduction attempt with
+full backend logs and repeated direct/Prometheus readings. It did **not**
+reproduce the earlier permanent HTTP 500. That earlier rejection's root cause
+remains unknown; no speculative configuration repair was applied.
+`radius-eval-shop-bc65f8391e84` passed the exact documented calibration command,
+both fresh metric boundaries, log accounting, and the unchanged CPU/load gates.
+`radius-eval-shop-a01cc2841397` observed an empty query that the readiness
+predicate rejected. It then sent deliberately conflicting metric samples,
+observed a permanent HTTP 400 and a nonzero direct export-failure counter, and
+verified that the metric gate rejected it. The planted HTTP 400 is a positive
+detector control, not a reproduction or explanation of the historical HTTP 500.
+All these attempts verified cleanup.
+
+The new witness establishes fresh collector self-telemetry reaching Prometheus
+and rejects observed metric-export failures. It is not metric-by-metric
+accounting, application-SDK completeness, a scrape-success guarantee, or a
+substitute for the stronger direct log-accounting witness. Absent failure-only
+series remain absent, not reported zeros. No telemetry configuration, diagnostic
+query semantics, pin, CPU limit, or Docker allocation changed.
+Offline fault and guard-mutation controls and the full-suite outcome are saved
+in `m1-metrics-20261001`; the earlier failed mutation attempt remains there too.
+
 **M1 remains open:** extend outbound-attempt evidence beyond Grafana's logged
 destinations, investigate the observed startup metric-export failure, and
 establish repeatable healthy acceptance rather than infer it from bounded
@@ -103,11 +138,11 @@ activation and sealed-fixture leakage enforcement remain M5/M6 and M3 work.
 - CI that installs Python dependencies by hash from PyPI, checks the export against `uv.lock`, discovers every test module from disk, and runs the whole suite with the Docker daemon unreachable (PR #7).
 - The runtime sandbox, applied before the first prompt and verified on every tool execution including unfinished ones; the static screen off inside the sandbox; trial budgets; the submit tool with ten defined causal categories; and trial outcome records (PR #9).
 - Host qualification by observed class and fingerprint; the Astronomy Shop 3.1.0 vendored with its isolation defects removed; uniform CPU limits verified by zero lifetime throttling; per-service readiness; the flag-off gate; and the offered-load gate on healthy cycles (PR #11). Six defects from review of #11 are fixed (PR #12): the CPU limits refuse to load on a host class other than the one they were fitted on, and the class is inside the verified hash; a requalification record counts only against the tolerance set it was made for; each trial gets its own copy of the flag file; the footprint tool tears the stack down when interrupted.
-- PR #14 integrated the Shop environment driver and offline startup assets. This branch adds typed telemetry bootstrap, log accounting, and scoped Grafana inventories. The catalogue determinism runner remains separate.
+- PR #14 integrated the Shop environment driver and offline startup assets. PR #15 added typed telemetry bootstrap, log accounting, and scoped Grafana inventories. This branch adds metric-export acceptance and full backend failure diagnostics. The catalogue determinism runner remains separate.
 
 **Next, in order.** Each step lists its exit criterion. Steps 1 and 2 are independent and can run in parallel.
 
-1. **Finish the Astronomy Shop environment.** Typed log bootstrap, collector-to-index accounting, actual Grafana logs, planted mapping/plugin failures, healthy load samples, and the live footprint/demand producer now have bounded evidence. Finish outbound-attempt coverage beyond Grafana logs, investigate the observed startup metric-export failure, and establish repeatability without weakening CPU or load gates. The Grafana inventory feeds M3's semantic leakage scan; incident-phase activation belongs to M5/M6. The requirements are in `benchmark/README.md`. *Exit:* a healthy stack on the internal network has no failing endpoint, makes no unexplained outbound request, and passes every generated check.
+1. **Finish the Astronomy Shop environment.** Typed log bootstrap, collector-to-index accounting, actual Grafana logs, fresh metric-export gates, planted failures, healthy load samples, and the live footprint/demand producer now have bounded evidence. Finish outbound-attempt coverage beyond Grafana logs, investigate the unreproduced startup HTTP 500 using the new full backend diagnostics, and establish repeatability without weakening CPU or load gates. The Grafana inventory feeds M3's semantic leakage scan; incident-phase activation belongs to M5/M6. The requirements are in `benchmark/README.md`. *Exit:* a healthy stack on the internal network has no failing endpoint, makes no unexplained outbound request, and passes every generated check.
 2. **Finish the answer contract.** Add the `connection` field to the submit tool, align the code's terminal classes with [Trial outcomes and retries](#trial-outcomes-and-retries), and implement the retry policy. *Exit:* planted wrong answers for the component and the connection each fail, and a correct answer passes.
 3. **Fit and hold out the determinism suite on the laptop.** It takes about three hours and needs the user's approval before it starts. *Exit:* the holdout passes with tolerances frozen before it ran.
 4. **Build the three Astronomy Shop fixtures** under Phase 0: fault-flag code removed from the agent-visible source, a neutral README, a validated `app.bicep`, the arm C document, two difference manifests, and a leakage scan that covers Grafana dashboards and provisioning. *Exit:* the Phase 0 exit criteria.

@@ -69,6 +69,30 @@ def request(project: str, evidence: Evidence, name: str, url: str, *,
         raise LogIngestionError(f"{name}: invalid JSON response") from error
 
 
+def counter_samples(text: str, names: set[str]) -> list[tuple[str, dict[str, str], int]]:
+    """Read selected integer counters without silently skipping malformed samples."""
+    samples = []
+    for line in text.splitlines():
+        if line.startswith("#") or not line.strip():
+            continue
+        name = re.split(r"[\s{]", line, maxsplit=1)[0]
+        if name not in names:
+            continue
+        match = re.fullmatch(r'(\w+)\{(.*)\} ([0-9]+)(?:\.0+)?', line)
+        if match is None:
+            raise LogIngestionError(f"malformed telemetry counter: {line!r}")
+        labels = {}
+        remaining = match[2]
+        while remaining:
+            label = re.match(r'(\w+)=("(?:[^"\\]|\\.)*")(?:,|$)', remaining)
+            if label is None or label[1] in labels:
+                raise LogIngestionError(f"malformed telemetry counter labels: {line!r}")
+            labels[label[1]] = json.loads(label[2])
+            remaining = remaining[label.end():]
+        samples.append((name, labels, int(match[3].split(".")[0])))
+    return samples
+
+
 def counters(text: str) -> dict[str, int]:
     """Parse the pinned collector's direct exposition, never missing-as-zero."""
     names = {
@@ -80,23 +104,7 @@ def counters(text: str) -> dict[str, int]:
         "otelcol_exporter_enqueue_failed_log_records": "enqueue-failed",
     }
     values = {}
-    for line in text.splitlines():
-        if line.startswith("#") or not line.strip():
-            continue
-        name = re.split(r"[\s{]", line, maxsplit=1)[0]
-        if name not in names:
-            continue
-        match = re.fullmatch(r'(\w+)\{(.*)\} ([0-9]+)(?:\.0+)?', line)
-        if match is None:
-            raise LogIngestionError(f"malformed log counter: {line!r}")
-        labels = {}
-        remaining = match[2]
-        while remaining:
-            label = re.match(r'(\w+)=("(?:[^"\\]|\\.)*")(?:,|$)', remaining)
-            if label is None or label[1] in labels:
-                raise LogIngestionError(f"malformed log counter labels: {line!r}")
-            labels[label[1]] = json.loads(label[2])
-            remaining = remaining[label.end():]
+    for name, labels, value in counter_samples(text, set(names)):
         if name.startswith("otelcol_receiver_"):
             if labels.get("receiver") != "otlp" or labels.get("transport") not in ("grpc", "http"):
                 raise LogIngestionError(f"unexpected log receiver: {labels}")
@@ -107,7 +115,7 @@ def counters(text: str) -> dict[str, int]:
             key = f"{names[name]}:{labels['exporter']}"
         if key in values:
             raise LogIngestionError(f"duplicate log counter: {key}")
-        values[key] = int(match[3].split(".")[0])
+        values[key] = value
     required = {f"{kind}:{transport}" for kind in ("accepted", "refused", "failed")
                 for transport in ("grpc", "http")} | {"sent:debug", "sent:opensearch"}
     if not required <= values.keys():
