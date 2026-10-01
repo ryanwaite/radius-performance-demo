@@ -17,13 +17,18 @@ not required for this finish line.
 ## Delivery sequence
 
 **Implementation progress:** PR #14 merged the M1 environment driver and
-offline assets. This follow-up adds shared typed log bootstrap, direct
+offline assets. PR #15 added shared typed log bootstrap, direct
 collector-to-index accounting, actual Grafana log queries, and source inventories.
 Bounded live controls passed a healthy window and rejected planted mapping/plugin
 failures. The footprint/demand producer also completed. The mapping preserves
 typed fields, but does not support a nested object reusing a scalar field's name.
 Outbound evidence currently covers Grafana's logged destinations, not every
-unlogged attempt. Startup metric-export errors and intermittent checkout
+unlogged attempt. The current increment requires fresh periodic metric-export
+counters in Prometheus at both load boundaries and rejects observed direct
+metric failures. A healthy calibration and planted permanent-export failure
+exercised that gate. The earlier startup HTTP 500 was not reproduced and is
+not explained by the planted HTTP 400. Complete collector/Prometheus failure
+logs are now preserved. That startup rejection and intermittent checkout
 throttling need further investigation; quotas remain unchanged. Failed attempts
 preserve evidence and verify cleanup. M1 is not complete.
 The dashboard is implemented, but M2's

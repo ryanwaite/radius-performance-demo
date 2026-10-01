@@ -393,18 +393,19 @@ class ShopLifecycleTests(unittest.TestCase):
                         self.assertTrue(env.record["gates"]["log-ingestion"]["passed"])
                 env.destroy()
 
-    def test_healthy_lifecycle_requires_both_log_boundaries(self):
+    def test_healthy_lifecycle_requires_both_telemetry_boundaries(self):
         for final_failure in (False, True):
             with tempfile.TemporaryDirectory() as temp:
                 env = environment.ShopEnvironment(ROOT, Path(temp))
                 calls = []
                 def check(**kwargs):
                     calls.append(("logs", kwargs))
-                    if len(calls) == 5 and final_failure:
+                    if len(calls) == 6 and final_failure:
                         raise environment.shop_telemetry.LogIngestionError("final boundary failed")
                 with patch.object(env, "create", side_effect=lambda: calls.append("create")), \
                      patch.object(env, "ready", side_effect=lambda: calls.append("ready")), \
                      patch.object(env, "check_logs", side_effect=check), \
+                     patch.object(env, "check_metrics", side_effect=lambda: calls.append("metrics")), \
                      patch.object(env, "audit_grafana") as audit, \
                      patch.object(env, "measure", side_effect=lambda *a, **kw: calls.append("measure")):
                     if final_failure:
@@ -415,7 +416,45 @@ class ShopLifecycleTests(unittest.TestCase):
                         env.run_healthy(60, calibrate=True)
                         self.assertEqual(env.record["status"], "calibration-measured")
                         audit.assert_called_once()
-                self.assertEqual(calls, ["create", "ready", ("logs", {"probe": True}), "measure", ("logs", {})])
+                expected = ["create", "ready", ("logs", {"probe": True}), "metrics", "measure", ("logs", {})]
+                self.assertEqual(calls, expected if final_failure else expected + ["metrics"])
+
+    def test_metric_checks_reject_restarts_and_export_failure(self):
+        for fault in (None, "before", "after", "export"):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temp:
+                env = environment.ShopEnvironment(ROOT, Path(temp))
+                env.record["collectorIdentity"] = {"id": "original"}
+                identities = [{"id": "original"}, {"id": "original"}]
+                if fault in ("before", "after"):
+                    identities[0 if fault == "before" else 1]["id"] = "replaced"
+                with patch.object(env, "collector_identity", side_effect=identities) as identity, \
+                     patch.object(environment.shop_metrics, "verify", return_value={"backend": {"ready": True}}) as verify:
+                    if fault == "export":
+                        verify.side_effect = environment.shop_metrics.MetricExportError("planted")
+                    if fault:
+                        with self.assertRaises((environment.ShopEnvironmentError, environment.shop_metrics.MetricExportError)):
+                            env.check_metrics()
+                    else:
+                        env.check_metrics()
+                        verify.assert_called_once_with(env.run_id, env.evidence)
+                        self.assertEqual(identity.call_count, 2)
+                        self.assertTrue(env.record["gates"]["metric-export"]["passed"])
+                env.destroy()
+
+    def test_either_metric_boundary_failure_blocks_a_healthy_result(self):
+        for boundary in (1, 2):
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory() as temp:
+                env = environment.ShopEnvironment(ROOT, Path(temp))
+                outcomes = [None] * (boundary - 1) + [environment.shop_metrics.MetricExportError("planted")]
+                with patch.object(env, "create"), patch.object(env, "ready"), \
+                     patch.object(env, "check_logs"), patch.object(env, "measure") as measure, \
+                     patch.object(env, "check_metrics", side_effect=outcomes) as metrics:
+                    with self.assertRaises(environment.shop_metrics.MetricExportError):
+                        env.run_healthy(60, calibrate=True)
+                self.assertEqual(metrics.call_count, boundary)
+                self.assertEqual(measure.call_count, boundary - 1)
+                self.assertEqual(env.record["status"], "failed")
+                self.assertIn("MetricExportError", env.record["error"])
 
     def test_grafana_audit_requires_successful_full_logs_and_no_unexplained_destinations(self):
         startup = 'level=info msg="Starting Grafana"\n'
@@ -513,6 +552,11 @@ class ShopLifecycleTests(unittest.TestCase):
                 self.assertEqual(result["status"], "failed")
                 self.assertTrue(result["gates"]["cleanup"]["passed"])
                 self.assertFalse(env.runtime_dir.exists())
+                journal = [json.loads(line) for line in (env.run_dir / "measurements.jsonl").read_text().splitlines()]
+                for service in ("otel-collector", "prometheus"):
+                    self.assertTrue(any(entry["name"] == f"{service}-complete-logs" for entry in journal))
+                    self.assertIn(unittest.mock.call("logs", "--no-color", "--no-log-prefix", service, check=False),
+                                  project._run.call_args_list)
 
     def test_cleanup_failure_is_not_saved_as_success(self):
         with tempfile.TemporaryDirectory() as temp:

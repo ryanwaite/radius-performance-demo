@@ -12,7 +12,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from . import astronomy_shop as shop, cpu_limits, offered_load, shop_readiness, shop_telemetry
+from . import astronomy_shop as shop, cpu_limits, offered_load, shop_readiness, shop_telemetry, shop_metrics
 from .checks import generate_check_plan, parse_compose_config
 from .compose import ComposeProject
 from .docker_cli import DockerError, docker
@@ -163,6 +163,14 @@ class ShopEnvironment:
         self.gate("grafana-log-read", result.returncode == 0, {"exitCode": result.returncode})
         report = shop_telemetry.audit_grafana_logs(result.stdout + result.stderr, set(self.model.services))
         self.gate("grafana-logged-outbound", not report["unexplainedCandidates"], report)
+
+    def check_metrics(self) -> None:
+        self.gate("collector-identity", self.collector_identity() == self.record["collectorIdentity"],
+                  self.record["collectorIdentity"])
+        result = shop_metrics.verify(self.run_id, self.evidence)
+        self.gate("metric-export", True, result)
+        self.gate("collector-identity", self.collector_identity() == self.record["collectorIdentity"],
+                  self.record["collectorIdentity"])
 
     def verify_deployment(self) -> None:
         assert self.project is not None
@@ -335,8 +343,10 @@ class ShopEnvironment:
             self.create()
             self.ready()
             self.check_logs(probe=True)
+            self.check_metrics()
             self.measure(seconds, calibrate=calibrate)
             self.check_logs()
+            self.check_metrics()
             self.audit_grafana()
             self.record["status"] = "calibration-measured" if calibrate else "healthy-measured"
         except BaseException as error:
@@ -348,6 +358,11 @@ class ShopEnvironment:
                     (self.run_dir / "failure-logs.txt").write_text(result.stdout + result.stderr)
                     if result.returncode:
                         self.record["logError"] = result.stderr
+                    for service in ("otel-collector", "prometheus"):
+                        result = self.project._run("logs", "--no-color", "--no-log-prefix", service, check=False)
+                        self.evidence(f"{service}-complete-logs", {
+                            "exitCode": result.returncode, "stdout": result.stdout, "stderr": result.stderr,
+                        })
                 except (DockerError, OSError) as log_error:
                     self.record["logError"] = str(log_error)
             raise

@@ -1186,7 +1186,7 @@ health and a Grafana PPL query over synthetic records; missing-index and
 missing-plugin controls failed. The driver requires the timestamp field to
 exist with date type, not merely a plugin status of `OK`.
 
-**This follow-up adds typed ingestion acceptance.** Both the environment
+**PR #15 added typed ingestion acceptance.** Both the environment
 driver and footprint producer start OpenSearch first, install and read back
 the same `attributes: {type: object, disable_objects: true}` index template,
 then start the remaining services. The render record hashes the template and
@@ -1217,6 +1217,36 @@ The exact environment command above passed in
 `radius-eval-shop-93bde23ed9e4`. These are bounded healthy samples, not host
 qualification. The earlier checkout throttling remains unexplained; this
 change neither refits limits nor relaxes lifetime-throttling checks.
+
+**Metric-export acceptance:** before and after the measured load window, the
+driver captures direct metric counters, then waits up to a 90-second polling
+deadline for Prometheus's stored self-telemetry samples to reach those lower
+bounds. Individual probe requests have their own timeouts. Both debug and
+Prometheus exporters need positive counters from the same collector instance.
+The backend samples must have been recorded after the direct-read boundary.
+A range-vector query preserves stored timestamps; an instant-vector timestamp
+would only prove when the query ran. Empty, partial, stale, and lagging results
+cannot pass. A changed collector, regressed direct counters, or any observed
+metric receiver refusal/failure or exporter send/enqueue failure rejects the
+attempt. Failure-only counters that were not emitted are not reported as zeros.
+Raw queries and direct expositions are saved before the verdict. On a failed
+environment attempt, complete collector and Prometheus logs are also saved
+in the measurement journal.
+
+This witnesses fresh self-telemetry delivery and detects observed export
+failures. It does not account for every application metric, prove SDK
+completeness, or establish that every scraper succeeded. It does not replace
+the direct log-accounting witness. Collector configuration and periodic
+export cadence are unchanged.
+
+The exact environment command passed with both metric boundaries in
+`radius-eval-shop-bc65f8391e84`. Live controls in
+`radius-eval-shop-a01cc2841397` rejected an empty query and a deliberately
+conflicting OTLP sample that produced a permanent HTTP 400 and a nonzero
+export-failure counter. The earlier startup HTTP 500 was not reproduced in
+`radius-eval-shop-757f8b7374b2`; its cause remains unknown. The HTTP 400 control
+proves detection, not a diagnosis of that earlier failure. All attempts
+preserved evidence and verified cleanup.
 
 The driver saves complete Grafana stdout/stderr and inventories logged URLs
 and outbound-error candidates, rejecting unexplained destinations and missing
@@ -1249,9 +1279,10 @@ bind copies are removed only after verified container cleanup.
   - **Telemetry and outbound acceptance.** Retain the typed ingestion and
     missing-plugin controls. Extend outbound-attempt coverage beyond Grafana's
     logs; network isolation alone does not prove services never tried to leave.
-    Investigate the startup Prometheus metric-export failure captured during
-    the counter investigation. Direct log accounting avoids relying on that
-    path, but does not repair lost metrics. The Grafana file inventory is ready
+    Investigate the unreproduced startup Prometheus HTTP 500 using the new
+    complete backend logs. Metric gates now prevent observed export failures
+    or missing periodic counter evidence from passing, but are not a repair
+    for that unexplained rejection. The Grafana file inventory is ready
     for M3's semantic leakage review, not a substitute for it.
   - **The incident-phase load gate integration.** The implemented gate checks
     generator activity, both window-boundary states and user counts, and its
