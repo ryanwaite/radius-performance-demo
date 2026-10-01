@@ -87,7 +87,7 @@ mutation journal at `m1-offline-1790813063` has no surviving mutations.
 Earlier failed reconciliation and mutation attempts remain in the artifact
 directory rather than being overwritten.
 
-**M1 metric-export acceptance increment:** the environment driver now checks
+**Merged in PR #16:** the environment driver now checks
 direct metric-export counters and requires fresh stored Prometheus samples
 before and after the healthy load window. It waits for the existing periodic
 self-telemetry export rather than interpreting an empty query as zero loss.
@@ -122,7 +122,30 @@ query semantics, pin, CPU limit, or Docker allocation changed.
 Offline fault and guard-mutation controls and the full-suite outcome are saved
 in `m1-metrics-20261001`; the earlier failed mutation attempt remains there too.
 
-**M1 remains open:** extend outbound-attempt evidence beyond Grafana's logged
+**M1 semantic audit increment:** the offline Grafana extractor now records
+every parsed dashboard JSON leaf and every provisioning/configuration line,
+including comments, with source hashes and locations. Planted nonliteral hints
+and guard mutations exercise extraction and coverage failures; extraction
+never reports a semantic clearance. The [source assessment](../../benchmark/README.md#grafana-semantic-review-evidence)
+records cart-specific latency guidance, the Jaeger dependency graph,
+service-selected defaults, and queue/drop/export mechanism explanations.
+These are observations of source contents, not findings that a hidden incident
+has leaked or that live dashboards have been cleared. M3 must compare the
+sealed fixtures and incident set, and the owner must review the retained risks.
+No dashboard, alert rule, telemetry capability or treatment parity changed.
+Raw source inventories and offline results are in `m1-audits-20261001`.
+
+**Owner decision, October 1, 2026:** finish the semantic audit now; defer tracing
+approval. Do not implement packet/syscall tracing or acquire new instrumentation
+permissions in this increment. Blocked curl connections and Grafana logs do not
+cover every application's outbound attempts. Packet capture would still miss
+calls rejected before emitting packets; socket polling can miss brief calls.
+A future approved design needs service/startup coverage, IPv4/IPv6/DNS scope,
+probe attribution, positive controls and observer-loss/perturbation evidence.
+The [observation boundary](../../benchmark/README.md#outbound-attempt-observation-remains-open)
+records alternatives without choosing an unapproved instrumentation architecture.
+
+**M1 remains open:** after observation scope is approved, extend outbound-attempt evidence beyond Grafana's logged
 destinations, investigate the observed startup metric-export failure, and
 establish repeatable healthy acceptance rather than infer it from bounded
 samples. Host fit/holdout still needs separate approval. Incident-phase
@@ -138,11 +161,11 @@ activation and sealed-fixture leakage enforcement remain M5/M6 and M3 work.
 - CI that installs Python dependencies by hash from PyPI, checks the export against `uv.lock`, discovers every test module from disk, and runs the whole suite with the Docker daemon unreachable (PR #7).
 - The runtime sandbox, applied before the first prompt and verified on every tool execution including unfinished ones; the static screen off inside the sandbox; trial budgets; the submit tool with ten defined causal categories; and trial outcome records (PR #9).
 - Host qualification by observed class and fingerprint; the Astronomy Shop 3.1.0 vendored with its isolation defects removed; uniform CPU limits verified by zero lifetime throttling; per-service readiness; the flag-off gate; and the offered-load gate on healthy cycles (PR #11). Six defects from review of #11 are fixed (PR #12): the CPU limits refuse to load on a host class other than the one they were fitted on, and the class is inside the verified hash; a requalification record counts only against the tolerance set it was made for; each trial gets its own copy of the flag file; the footprint tool tears the stack down when interrupted.
-- PR #14 integrated the Shop environment driver and offline startup assets. PR #15 added typed telemetry bootstrap, log accounting, and scoped Grafana inventories. This branch adds metric-export acceptance and full backend failure diagnostics. The catalogue determinism runner remains separate.
+- PR #14 integrated the Shop environment driver and offline startup assets. PR #15 added typed telemetry bootstrap, log accounting, and scoped Grafana inventories. PR #16 added metric-export acceptance and full backend failure diagnostics. This increment adds offline semantic review evidence, not tracing or sealed-fixture acceptance. The catalogue determinism runner remains separate.
 
 **Next, in order.** Each step lists its exit criterion. Steps 1 and 2 are independent and can run in parallel.
 
-1. **Finish the Astronomy Shop environment.** Typed log bootstrap, collector-to-index accounting, actual Grafana logs, fresh metric-export gates, planted failures, healthy load samples, and the live footprint/demand producer now have bounded evidence. Finish outbound-attempt coverage beyond Grafana logs, investigate the unreproduced startup HTTP 500 using the new full backend diagnostics, and establish repeatability without weakening CPU or load gates. The Grafana inventory feeds M3's semantic leakage scan; incident-phase activation belongs to M5/M6. The requirements are in `benchmark/README.md`. *Exit:* a healthy stack on the internal network has no failing endpoint, makes no unexplained outbound request, and passes every generated check.
+1. **Finish the Astronomy Shop environment.** Typed log bootstrap, collector-to-index accounting, actual Grafana logs, fresh metric-export gates, planted failures, healthy load samples, and the live footprint/demand producer now have bounded evidence. Outbound-attempt instrumentation awaits the owner's deferred tracing decision. After approval, finish coverage beyond Grafana logs. Investigate the unreproduced startup HTTP 500 using the new full backend diagnostics, and establish repeatability without weakening CPU or load gates. The Grafana source assessment records semantic hints but does not clear M3's sealed fixtures; incident-phase activation belongs to M5/M6. The requirements are in `benchmark/README.md`. *Exit:* a healthy stack on the internal network has no failing endpoint, makes no unexplained outbound request, and passes every generated check.
 2. **Finish the answer contract.** Add the `connection` field to the submit tool, align the code's terminal classes with [Trial outcomes and retries](#trial-outcomes-and-retries), and implement the retry policy. *Exit:* planted wrong answers for the component and the connection each fail, and a correct answer passes.
 3. **Fit and hold out the determinism suite on the laptop.** It takes about three hours and needs the user's approval before it starts. *Exit:* the holdout passes with tolerances frozen before it ran.
 4. **Build the three Astronomy Shop fixtures** under Phase 0: fault-flag code removed from the agent-visible source, a neutral README, a validated `app.bicep`, the arm C document, two difference manifests, and a leakage scan that covers Grafana dashboards and provisioning. *Exit:* the Phase 0 exit criteria.

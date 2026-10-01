@@ -1254,8 +1254,9 @@ startup coverage. This does not detect unlogged network attempts. Render
 provenance also lists and hashes Grafana source/provisioning files and the
 derived datasource, with every literal fault-flag/`flagd` match and line.
 The measured inventory had no such matches. Its planted-reference control
-detects both flag names and `flagd`; semantic leakage review remains M3 work.
-Dashboards and provisioning are not rewritten.
+detects both flag names and `flagd`. The source-level semantic assessment below
+records additional diagnostic hints; final sealed-fixture leakage enforcement
+remains M3 work. Dashboards and provisioning are not rewritten.
 
 The shared footprint/demand producer completed a bounded live run recorded as
 `astro-footprint-20260930T165306`. Its raw cgroup stream, load boundaries,
@@ -1282,8 +1283,8 @@ bind copies are removed only after verified container cleanup.
     Investigate the unreproduced startup Prometheus HTTP 500 using the new
     complete backend logs. Metric gates now prevent observed export failures
     or missing periodic counter evidence from passing, but are not a repair
-    for that unexplained rejection. The Grafana file inventory is ready
-    for M3's semantic leakage review, not a substitute for it.
+    for that unexplained rejection. The Grafana source assessment below feeds
+    M3's incident-specific review; it does not clear the sealed fixtures.
   - **The incident-phase load gate integration.** The implemented gate checks
     generator activity, both window-boundary states and user counts, and its
     lifetime throttling. Wire it to actual incident activation in M5/M6.
@@ -1313,6 +1314,96 @@ bind copies are removed only after verified container cleanup.
     containing the observed host class, sample coverage, load and services with quotas.
     The bounded laptop producer ran successfully. Confirm the resolver on the
     Linux VM before fitting that host class.
+
+### Grafana semantic review evidence
+
+The offline extractor records source hashes, every parsed dashboard JSON leaf
+at its JSON pointer (including unknown fields, links, defaults and numeric
+thresholds), and every YAML/INI line including comments. It covers the same
+source and derived datasource inventory as the render record. It refuses empty
+files, malformed or duplicate-key dashboard JSON, dashboards without titles or
+panels, missing file roles, and a file that changed during capture. It does not
+use a keyword heuristic to label arbitrary prose safe. A successful extraction
+always reports `semanticVerdict: not-established` and `reviewRequired: true`.
+It is not a live Grafana export, a frozen file allowlist, or M3's sealed-fixture
+scanner. Removing one file while others still cover its role is not a semantic
+approval; the generated path/hash inventory is what a reviewer must compare.
+
+From the repository root, after installing the locked environment:
+
+```bash
+mkdir -p ../radius-perf-eval-artifacts/m1-audits-20261001
+DOCKER_HOST=unix:///nonexistent/docker.sock benchmark/.venv/bin/python -m radius_perf_eval.grafana_review --output ../radius-perf-eval-artifacts/m1-audits-20261001/grafana-review-final.json
+```
+
+The output path must be new. Choose another filename for a later capture;
+the command never overwrites earlier evidence. No Docker, model call or
+network request is needed. The generated document inventory and offline test
+log carry coverage details, rather than counts copied into this README.
+Planted controls preserve a remediation sentence, a causal category, an
+incident URL, a service selector and a numeric threshold outside literal
+flag names, including inside unknown nested fields. They prove extraction,
+not automatic recognition of those meanings. Guard and parser-wiring
+mutations exercise the fail-closed checks.
+
+**Source measurement, October 1, 2026:** the capture at
+`m1-audits-20261001/grafana-review-final.json` hashes the unchanged vendored
+Grafana files and derived datasource. The literal scan found no declared
+fault-flag or `flagd` match. The following are observed source contents, not
+measurements of loaded dashboards, firing alerts or network attempts.
+Dashboard paths below are relative to
+`upstream/src/grafana/provisioning/dashboards/demo/`; other paths are relative
+to `upstream/src/grafana/`.
+
+| Surface | Observed evidence | Assessment and retained risk |
+|---|---|---|
+| `demo-dashboard.json` `/panels/14/targets/0/queryType` | `dependencyGraph`, under Service Dependency, uses the Jaeger datasource. | All arms can receive topology information independently of Radius. This can narrow the treatment contrast, as the canonical plan already anticipates. |
+| `demo-dashboard.json` `/panels/9` through `/panels/12` | Python CPU/memory, Recommendations Rate with `recommendation_type="catalog"`, and Quote Service batch span processor panels. | Uneven diagnostic emphasis may direct attention to services or mechanisms that overlap future incidents. It is not a literal answer flag. |
+| `exemplars-dashboard.json` `/title` and `/panels` | Cart Service Exemplars with GetCart and AddItem latency/exemplar panels. | Cart has dedicated diagnostic guidance not shared uniformly by every service. Review against the final incident set. |
+| `provisioning/alerting/cart-service-alerting.yml` | `CartAddItemHighLatency`, cart/AddItem selectors, a `0.0001` seconds threshold, and `isPaused: false`. Its description still says `xxx seconds for 2 minutes` while `for` is `1m`. | The source preselects a component, operation and symptom. The inconsistent prose is not an incident specification or a verified firing threshold in a running stack. Preserve it now; any neutralization needs M3 review and identical treatment across arms. |
+| `apm-dashboard.json` `/templating/list/5/current`; `demo-dashboard.json` `/templating/list/0/current` | Default service selections are `checkout` and `frontend`. APM also groups outbound services/databases and links logs and traces. | Defaults can steer an agent before it examines evidence. Useful navigation does not establish a cause, but may overlap a future answer. |
+| `self-observability.json` `/panels/7/description`, `/panels/13/description`, `/panels/15/description`; `opentelemetry-collector.json`; `provisioning/alerting/opentelemetry-collector-rules.yaml` | Text distinguishes processor queue drops from failed exports and names `queue_full`, shutdown and connection errors. Collector rules label refused/export/enqueue failures, queue utilization and runbook links. | These are explicit mechanism hints. They are ordinary diagnostic telemetry, not grounds to remove it, but an incident about telemetry loss could become easier through prewritten explanations. |
+| `events-by-name.json`, `spanmetrics-dashboard.json`, `NGINX-metrics.json`, `linux-dashboard.json`, `postgresql-dashboard.json` | Event-name grouping, slow/error span rankings, connections, host resources, PostgreSQL cache/conflict/deadlock/connection views. Linux defaults to `docker-desktop`. | These reveal symptom categories and some environment context, not a demonstrated hidden diagnosis. Event names and live labels may carry additional hints absent from static files. Host panels do not prove that the removed host receiver supplies data. |
+| `provisioning/datasources/`, `provisioning/dashboards/demo.yaml`, `grafana.ini`, derived OpenSearch datasource | Internal backend URLs, trace/log/exemplar joins, dashboard file provider and Demo home folder. Source dashboards/datasources are editable; anonymous access is configured as Admin. | Navigation and runtime edits are separate review surfaces. This offline capture cannot attest to the state later visible to an agent. Source and derived datasource retain their existing query capabilities. |
+| `apm-dashboard.json` `/panels/0/options/content`; datasource and alert provisioning | An external OpenTelemetry image URL, external documentation/runbook links, localhost exemplar links, and the default email contact `admin@example.com`. | The HTML image could cause a browser-side fetch, not necessarily a Grafana-server call. A configured email recipient or link is not proof of an attempted connection. External contents were not fetched or reviewed. |
+
+**Judgment:** this agent-authored assessment finds meaningful diagnostic hints
+beyond literal flags. It does not establish that any is a hidden incident
+answer, nor certify their absence. The final incident set and sealed fixtures
+are not available for that comparison. The owner must review incident overlap,
+live state and common-arm parity in M3. Preserve these capabilities identically
+across all three arms; this increment changes no dashboard, provisioned alert,
+telemetry semantics, startup asset, image pin or quota.
+
+### Outbound-attempt observation remains open
+
+**Owner decision, October 1, 2026:** finish the semantic audit now and defer
+tracing approval. No packet capture, syscall tracer or new instrumentation
+permission is authorized by this increment.
+
+The existing ingress-positive/backend-negative curl controls demonstrate a
+connection boundary. They generate harness traffic, not evidence that each
+application refrained from trying an external call. Grafana's complete logs
+cover only logged destinations. Neither provides an application-attempt
+observation interval for every service. A socket-table poll can miss short-lived
+or immediately rejected calls; packet capture misses calls rejected before a
+packet exists. Empty traces, absent logs and blocked routes cannot clear M1.
+
+A future approved design must name the exact observation start/end for each
+service and container incarnation, include startup or explicitly leave it
+uncovered, distinguish application traffic from readiness/load/control probes,
+and inventory expected internal destinations rather than exempt all traffic.
+It must define coverage of IPv4, IPv6, DNS (including Docker's embedded resolver),
+TCP and UDP/send operations, connection reuse and observer loss. Plant a real
+external attempt and an internal control in every claimed observation scope;
+prove detection even when the external call is blocked. Record raw observations
+before judging, reject missing coverage, and measure observer perturbation.
+
+Possible owner decisions are a separately bounded, service-scoped syscall
+diagnostic with explicitly approved tracing permissions and pinned tooling, or
+packet-level evidence that leaves pre-packet failures unresolved. Neither is
+implemented or silently substituted for the required absence-of-attempt
+evidence. M1 stays open pending that decision and its controls.
 
 ### It is 28 services, not 17
 
