@@ -23,7 +23,7 @@ Bounded live controls passed a healthy window and rejected planted mapping/plugi
 failures. The footprint/demand producer also completed. The mapping preserves
 typed fields, but does not support a nested object reusing a scalar field's name.
 Outbound evidence currently covers Grafana's logged destinations, not every
-unlogged attempt. The current increment requires fresh periodic metric-export
+unlogged attempt. PR #16 requires fresh periodic metric-export
 counters in Prometheus at both load boundaries and rejects observed direct
 metric failures. A healthy calibration and planted permanent-export failure
 exercised that gate. The earlier startup HTTP 500 was not reproduced and is
@@ -31,6 +31,15 @@ not explained by the planted HTTP 400. Complete collector/Prometheus failure
 logs are now preserved. That startup rejection and intermittent checkout
 throttling need further investigation; quotas remain unchanged. Failed attempts
 preserve evidence and verify cleanup. M1 is not complete.
+The offline semantic audit now extracts all dashboard JSON leaves and
+provisioning/configuration lines with source hashes. Its source assessment
+records cart latency guidance, service defaults, topology and telemetry-loss
+mechanism hints, not a semantic clearance. M3 retains owner review against the
+actual incidents and sealed artifacts. No diagnostic capabilities were removed.
+On October 1, 2026, the owner chose to finish this audit and defer tracing
+approval. Broader outbound-attempt observation remains an M1 gap; neither blocked
+connections nor logged destinations proves absence of application attempts.
+No new tracing tooling or permissions are authorized.
 The dashboard is implemented, but M2's
 graded records/exporter and the later campaign milestones remain unbuilt.
 
