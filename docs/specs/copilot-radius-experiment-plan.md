@@ -50,7 +50,7 @@ are retained in `../radius-perf-eval-artifacts/m2-contracts-20261001-07ac055e/`.
 Earlier failed schema and mutation-control runs remain there as well. Docker
 was unreachable; no model calls, environment runs or cloud resources were used.
 
-**M2 bookkeeping/report increment, not milestone completion:** the offline
+**M2 bookkeeping/report increment:** the offline
 campaign store freezes the complete three-arm roster and requires its preparation
 receipt on reopen. An append-only SQLite journal preserves starts, raw captures
 and canonical terminal records across restart. Only a harness failure permits
@@ -71,27 +71,36 @@ Offline controls use a test-only exact-observation reviewer. They cover
 interruption/resume, duplicate and foreign artifacts, checksum/grade forgeries,
 retry/exclusion denominators, healthy/fault claims and generated reports through
 the shipped dashboard. The source hashes are not signatures or proof of
-scientific validity. There is no installed Shop verifier, authenticated telemetry
-producer, within-category mechanism grader or live scheduler. The default CLI
+scientific validity. There is no qualified Shop verifier, authenticated telemetry
+producer or live scheduler. The default generic CLI
 refuses terminal export without a trusted verifier. M5 still owns live binding,
 randomized execution, interruption/cleanup recovery and campaign-stop thresholds;
 M6 owns the incident controls. See the
 [bookkeeping contract](../../benchmark/README.md#m2-campaign-bookkeeping-and-export).
 
-**M2 closure requirement:** the owner has asked to finish the entire milestone
-before declaring it ready. The
+**M2 contracts and reference path complete under the approved human-adjudication
+policy:** the
 [criterion accounting](../../benchmark/README.md#m2-exit-criterion-accounting)
-identifies the missing deterministic reference reviewer and its attempt/export
-integration. Wrong-category controls do not establish rejection of a wrong
-mechanism within the right category. The current answer contract does not
-declare a separate mechanism claim. The owner decided on October 1, 2026 to
-keep the schema and define incident-specific prose interpretation rules. The
-owner subsequently rejected the bounded-grammar proposal and approved an
-incident rubric with human causal-prose adjudication and automated target,
-measurement and integrity checks. The revised policy below is approved for
-implementation. Do not
-move this M2 requirement into M5/M6 merely
-because those milestones build the live Shop integration and incident library.
+maps each exit requirement to its implementation and offline controls.
+The owner kept the answer schema, rejected the bounded-grammar proposal and
+approved an incident rubric with human causal-prose adjudication. The
+`adjudication` module now produces blinded review packets and explicitly ingests
+human decision files. Packet/rubric digests bind decisions to each answer and
+its evidence. An unknown or ambiguous review leaves the attempt open without a
+terminal result or harness retry. A wrong mechanism fails independently of the
+category/target checks. The reference CLI finishes canonical outcomes and exports
+them through the source-replaying store into the shipped dashboard.
+
+The CPU-quota reference checks raw quota/counter measurements, source binding,
+scope/action/cleanup inventories and accounting inputs. Human rubric decisions
+judge the mechanism and each citation's relevance/support; no parser or model
+judge infers semantic correctness. Offline tests plant explicit decisions,
+including contradictions, negation, wrong mechanisms within the same category,
+fabricated observations, correlated symptoms and correct unfamiliar phrasing.
+They establish decision/gate wiring, **not human agreement or a qualified Shop
+grader**. The reference remains barred from scored campaigns. Live producers,
+operational blinding, actual activation and reviewer/library qualification
+remain M3/M4/M5/M6 work. No reference-only capture is a scientific finding.
 
 Raw offline results, including failed guard-mutation and collection attempts,
 are in `../radius-perf-eval-artifacts/m2-attempts-20261001-07393aba/`. The local
@@ -242,7 +251,7 @@ activation and sealed-fixture leakage enforcement remain M5/M6 and M3 work.
 **Next, in order.** Each step lists its exit criterion. Steps 1 and 2 are independent and can run in parallel.
 
 1. **Finish the Astronomy Shop environment.** Typed log bootstrap, collector-to-index accounting, actual Grafana logs, fresh metric-export gates, planted failures, healthy load samples, and the live footprint/demand producer now have bounded evidence. Outbound-attempt instrumentation awaits the owner's deferred tracing decision. After approval, finish coverage beyond Grafana logs. Investigate the unreproduced startup HTTP 500 using the new full backend diagnostics, and establish repeatability without weakening CPU or load gates. The Grafana source assessment records semantic hints but does not clear M3's sealed fixtures; incident-phase activation belongs to M5/M6. The requirements are in `benchmark/README.md`. *Exit:* a healthy stack on the internal network has no failing endpoint, makes no unexplained outbound request, and passes every generated check.
-2. **Finish M2's answer and result contracts.** Directed answers, canonical naming, canonical diagnosis outcomes, the immutable roster, durable attempts, retry/exclusion reduction and source-replaying redacted exporter are implemented with offline controls. Integrate real incident reviewers and authenticated trial binding without treating the controlled test reviewer as one. *Exit:* M2's answer controls and retry/denominator requirements in the [completion plan](benchmark-completion-plan.md), with verified source-backed reports.
+2. **M2 contract milestone complete, carry its limits into integration.** Directed answers, canonical outcomes, immutable assignments, durable attempts, retry/exclusion reduction, redacted reports and the approved incident-rubric human-adjudication reference are implemented. The [criterion accounting](../../benchmark/README.md#m2-exit-criterion-accounting) names the positive/negative controls and real limitations. M5 must connect actual Shop captures and operational human review; M6 must qualify incidents and measure reviewer agreement. The unqualified reference cannot produce scored findings.
 3. **Fit and hold out the determinism suite on the laptop.** It takes about three hours and needs the user's approval before it starts. *Exit:* the holdout passes with tolerances frozen before it ran.
 4. **Build the three Astronomy Shop fixtures** under Phase 0: fault-flag code removed from the agent-visible source, a neutral README, a validated `app.bicep`, the arm C document, two difference manifests, and a leakage scan that covers Grafana dashboards and provisioning. *Exit:* the Phase 0 exit criteria.
 5. **Re-verify the sandbox** on the locked SDK and CLI pair and on each pilot model, and run the forced-compaction control. This needs a premium-request allowance from the user. Build the probe session that runs before each campaign batch. *Exit:* every escape probe is denied with `sandboxApplied: "true"`, and the in-workspace control succeeds.
@@ -750,7 +759,10 @@ A grader that passes a wrong answer produces a scored result that looks like a f
 
 - a reference diagnosis must pass;
 - planted wrong answers must fail: the wrong component, the right component with the wrong mechanism, the correlated symptom, "no fault" when there is one, and a fault when there is none;
-- the evidence check must be deterministic. Cited evidence passes only if it names a metric, trace, or log that exists in the trial's captured telemetry and lies on the causal path the incident declares.
+- evidence references and measurements must be checked automatically. A blinded
+  human applies the incident rubric to causal prose and citation support under
+  the approved policy below. A citation needs both a real captured source and
+  an affirmative relevance/support decision; matching a signal name is not enough.
 
 During the pilot and the scored campaign, the repository owner reviews a random 10 percent of graded transcripts without knowing the arm. The harness removes arm labels, the architecture document's name, and Radius file paths from the transcripts before review. A reader may still infer the arm from what the agent examined, and the report says so. The report states how often the reviewer and the grader agree. If they disagree on more than 5 percent of reviewed trials, the grader is fixed and the affected trials are regraded before any result is reported. Pilot review also reads transcripts for harness artifacts, refusals, and grader gaming.
 
@@ -797,7 +809,7 @@ causal/evidence adjudication only. The existing random blinded audit remains an
 independent second review for agreement/calibration, rather than the only human
 review. Pilot cost must include this additional review workload.
 
-M2 will deliver the small adjudication interface, a CPU-quota reference rubric,
+M2 implements the small adjudication interface, a CPU-quota reference rubric,
 automated raw-measurement checks, recorded review controls and integration through
 canonical outcomes, attempts and report export. Reference fixtures remain labelled
 offline controls, not real Shop or human-agreement findings. M3/M5/M6 still own
@@ -874,7 +886,7 @@ The code's terminal classes must match this list. Only harness failures are retr
 
 **Validated diagnosis success with human causal adjudication.** Automated
 target, measurement and integrity gates combine with the approved incident-rubric
-review below. Replay of the recorded decision is deterministic; semantic
+review described above. Replay of the recorded decision is deterministic; semantic
 judgment is not. Diagnosis-only and remediation modes have separate gates.
 A weighted score is secondary and is calculated only after gate outcomes are fixed.
 
@@ -1020,7 +1032,7 @@ Remediation adds:
 
 A sandbox escape attempt, secret access attempt, shared-resource mutation, invalid output, or uncleanable environment is an automatic failure with its own classification.
 
-The weighted score remains as defined in [agent-evaluation-spec.md](agent-evaluation-spec.md), with one change: the graph-grounding points are awarded in every arm for naming the correct component and connection by canonical name with valid evidence, however the agent found them. As written there, only the Radius arm could earn them. Optional blinded human review covers explanation clarity and operational practicality, is reported separately, and never overrides deterministic gates.
+The weighted score remains as defined in [agent-evaluation-spec.md](agent-evaluation-spec.md), with one change: the graph-grounding points are awarded in every arm for naming the correct component and connection by canonical name with valid evidence, however the agent found them. As written there, only the Radius arm could earn them. The approved incident-rubric human causal/evidence adjudication is part of the primary diagnosis gates. Optional review of explanation clarity and operational practicality is separate and cannot override failed automated gates.
 
 ### Experimental design
 
@@ -1344,7 +1356,7 @@ Exit criteria:
 | Shell tool | Denied by default; permitted only inside the runtime sandbox, verified per command; static screen off inside the sandbox and on wherever the sandbox is unconfirmed | Required; permission API cannot confine shell; runtime sandbox denied every executed escape in one spike on one pin; write confinement shown, read confinement partial |
 | Fixture documentation | Neutral README and healthy manifest defaults | Required; current demo files disclose the incident |
 | Astronomy Shop images | `ghcr.io`, pinned by digest | Declared exception; digests not yet recorded |
-| Human review | Repository owner reviews a random 10 percent of graded transcripts, arm labels stripped; separate from the deterministic score; 95 percent agreement required | Decided |
+| Human review | Blinded incident-rubric causal/citation adjudication gates each valid diagnosis; unresolved decisions stay unfinished. A separate random 10 percent second review measures agreement; 95 percent agreement required. Include human work in pilot costs. | Owner approved October 1, 2026 |
 
 Models, budgets, and the output schema are decided above. The Copilot SDK drives its own pinned CLI unless explicitly pointed at another binary; pinning the SDK-supplied CLI is preferred because it removes host machine state from the reproducibility surface, and both versions are recorded separately so a result cannot be misattributed. Before Phase 5, verify Azure access and select the Kubernetes/Radius deployment configuration.
 

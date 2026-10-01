@@ -75,6 +75,7 @@ def score_trial(**kwargs):
         grade = grade_diagnosis(
             submission,
             ExpectedDiagnosis(True, "cpu_saturation", component="cart"),
+            mechanism_passed=True, mechanism_evidence=("offline-control:human-review",),
             review_evidence=lambda citation: EvidenceReview(
                 citation, ("offline-control:cpu=99%",),
                 citation.signal == "cpu", citation.signal == "cpu",

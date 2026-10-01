@@ -281,7 +281,10 @@ def _validate_outcome(outcome: dict[str, Any], binding: Binding,
         require(parsed is not None and "diagnosis" in gates and "evidence" in gates,
                 "incomplete diagnosis grade")
         expected = evidence["diagnosis"]
-        _shape(expected, ("expectedFault", "causalCategory", "component", "connection"))
+        _shape(expected, ("expectedFault", "causalCategory", "component", "connection",
+                          "mechanismPassed", "mechanismExamined"))
+        require(type(expected["mechanismPassed"]) is bool, "missing explicit mechanism review")
+        _references(expected["mechanismExamined"], sources)
         edge = expected["connection"]
         if edge is not None:
             _shape(edge, ("source", "target"))
@@ -301,7 +304,8 @@ def _validate_outcome(outcome: dict[str, Any], binding: Binding,
             results.append(EvidenceReview(Citation(**review["citation"]),
                            tuple(review["examined"]), review["exists"],
                            review["relevant"], review["supported"]))
-        grade = DiagnosisGrade(parsed, target, tuple(results))
+        grade = DiagnosisGrade(parsed, target, tuple(results), expected["mechanismPassed"],
+                               tuple(expected["mechanismExamined"]))
         require(gates["diagnosis"] == ("pass" if grade.diagnosis_passed else "fail")
                 and gates["evidence"] == ("pass" if grade.evidence_passed else "fail"),
                 "saved grade contradicts canonical diagnosis gate")
@@ -557,6 +561,13 @@ class CampaignStore:
                    and read_json(data)["kind"] == "finished"]
         require(len(matches) == 1, "terminal record digest not found")
         return matches[0]
+
+    def captured_sources(self, binding: Binding) -> dict[str, bytes]:
+        """Read durable raw inputs for preparing a review packet or resuming work."""
+        with self._transaction() as db:
+            _, attempts, _ = self._read(db)
+            current = self._open(binding, attempts)
+            return self._decode_sources(current["sources"])
 
     def open_attempts(self) -> list[Binding]:
         """Recover unfinished handles without creating or classifying new attempts."""

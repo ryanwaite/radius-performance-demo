@@ -5,6 +5,7 @@ import pytest
 
 from radius_perf_eval.diagnosis import (
     DiagnosisGrade, EvidenceReview, ExpectedDiagnosis, grade_diagnosis,
+    ReviewRequired,
 )
 from radius_perf_eval.submit_tool import (
     Citation, ComponentMap, Connection, SubmissionRecorder, validate_submission,
@@ -63,7 +64,8 @@ def grade(answer=None, expected=FAULT, *, healthy=False):
     submission = validate_submission(
         payload() if answer is None else answer, component_map=COMPONENTS
     )
-    return grade_diagnosis(submission, expected, review_evidence=reviewer(healthy=healthy))
+    return grade_diagnosis(submission, expected, review_evidence=reviewer(healthy=healthy),
+                           mechanism_passed=True, mechanism_evidence=("offline-control:human-review",))
 
 
 def checks():
@@ -77,7 +79,8 @@ def outcome(*, answer=None, expected=FAULT, terminal="validated_success", **kwar
     recorder = SubmissionRecorder(COMPONENTS)
     recorder.record(payload() if answer is None else answer)
     diagnosis = grade_diagnosis(
-        recorder.submission, expected, review_evidence=reviewer()
+        recorder.submission, expected, review_evidence=reviewer(),
+        mechanism_passed=True, mechanism_evidence=("offline-control:human-review",)
     ) if recorder.submission is not None else None
     return score_trial(
         terminal_class=terminal, recorder=recorder,
@@ -100,6 +103,27 @@ def test_reference_connection_and_component_answers_pass():
         "diagnosis", "evidence", "scope", "safety", "cleanup"
     )}
     assert set(result.validator_evidence) == set(result.validators)
+
+
+def test_mechanism_adjudication_is_required_not_guessed():
+    missing = replace(grade(), mechanism_passed=None, mechanism_evidence=())
+    assert not missing.diagnosis_passed
+    with pytest.raises(ReviewRequired):
+        outcome(grade=missing)
+    failed = replace(grade(), mechanism_passed=False)
+    result = outcome(grade=failed)
+    assert result.terminal_class == "diagnosis_failure"
+    assert result.validators["diagnosis"] == "fail" and result.validators["evidence"] == "pass"
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"mechanism_passed": "pass"}, {"mechanism_passed": 1},
+    {"mechanism_evidence": ()}, {"mechanism_evidence": ("",)},
+    {"mechanism_evidence": ["mutable"]},
+])
+def test_invalid_mechanism_adjudication(kwargs):
+    with pytest.raises(ValueError, match="mechanism review"):
+        replace(grade(), **kwargs)
 
 
 @pytest.mark.parametrize("overrides", [

@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .diagnosis import DiagnosisGrade
+from .diagnosis import DiagnosisGrade, ReviewRequired
 from .submit_tool import SubmissionRecorder
 
 TERMINAL_CLASSES = (
@@ -150,6 +150,8 @@ def score_trial(
         elif grade.submission != submission:
             agent_class = None
             harness_reasons.append("diagnosis grade belongs to a different submission")
+        elif grade.mechanism_passed is None:
+            raise ReviewRequired("causal prose needs incident-rubric adjudication")
         else:
             validators["diagnosis"] = "pass" if grade.diagnosis_passed else "fail"
             validators["evidence"] = "pass" if grade.evidence_passed else "fail"
@@ -157,6 +159,8 @@ def score_trial(
                 "expectedFault": grade.expected.fault_present,
                 "causalCategory": grade.expected.causal_category,
                 "component": grade.expected.component,
+                "mechanismPassed": grade.mechanism_passed,
+                "mechanismExamined": list(grade.mechanism_evidence),
                 "connection": (
                     grade.expected.connection.to_json_dict()
                     if grade.expected.connection else None

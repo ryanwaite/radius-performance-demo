@@ -83,6 +83,7 @@ isolates the application under test, not the agent.
 | `images.py` / `docker_cli.py` | Digest pinning and Docker CLI plumbing |
 | `cli.py` | `radius-perf-eval-env` (`doctor`/`trial`/`determinism`/`cleanup`) |
 | `campaign.py` | Prepared three-arm roster, append-only attempt journal, retry reduction, source-replaying report export |
+| `adjudication.py` | Blinded review packets, explicit human-decision ingestion, unqualified CPU-quota reference verifier |
 
 ## Packages come from CFS only
 
@@ -543,15 +544,17 @@ at one of its ends. Every citation goes through a required, incident-owned
 signal exists, belongs to the declared causal path or healthy detection coverage,
 and supports the observation. It must identify nonempty examined references.
 An absent signal, unsupported observation, or correlated non-causal signal fails.
-A crashed reviewer is a harness error, not a wrong diagnosis.
+A crashed automatic reviewer is not a wrong diagnosis. In the durable campaign
+path it leaves an unfinished attempt until a verified result is available.
 
 This is an **integration contract, not an implemented Shop evidence grader**.
 The offline tests use a labelled, controlled latency dictionary and exact
 observations. That toy reviewer is test code only. No keyword grader, general
 free-text mechanism grader, or production telemetry adapter is supplied. Real
-incident activation, healthy detection coverage, within-category mechanisms,
-captured-artifact authentication and reviewer versioning still need incident
-validators and campaign wiring. The caller must bind the hidden expectation,
+incident activation, whole-application healthy detection and captured-artifact
+authentication still need live integration. The approved human-adjudication
+increment below adds mechanism decisions and pinned reviewer/rubric records.
+The caller must bind the hidden expectation,
 reviewer, submission and captured artifacts to the same trial.
 
 `trial_outcome.score_trial` now requires independent diagnosis/evidence,
@@ -565,6 +568,11 @@ explicit refusal and budget exhaustion retain their distinct canonical classes.
 Refusal must come from a trusted adapter decision, not a keyword in a transcript.
 The existing rule that an accepted answer precedes a later teardown budget stop
 is unchanged.
+The approved causal-prose policy adds an explicit mechanism decision and its
+examined review references to `DiagnosisGrade`. `score_trial` raises
+`ReviewRequired` when that decision is absent. It is not a terminal class or a
+retry. A reviewed wrong mechanism fails diagnosis even with the right category
+and target. The answer schema is unchanged.
 
 For compatibility, `TrialOutcome.scored` still means success; `valid` identifies
 agent results, including failures, rather than harness failures. Neither field
@@ -574,10 +582,11 @@ meaning and are not comparison reports. In particular, the SDK adapter's
 historical `validated_success` completion label is not trusted as a diagnosis.
 There is no remediation scorer in this increment.
 
-The next increment below implements campaign bookkeeping and the report
-boundary. M2 remains open for production incident reviewers and their independent
-mechanism, activation and healthy-detection controls. Neither increment changes
-M1 internals.
+The increments below implement M2's bookkeeping/report boundary and its approved
+reference human-adjudication path. They do not claim production incident
+qualification, live activation, whole-application healthy detection or measured
+human agreement. Those remain the later integration and incident milestones.
+Neither increment changes M1 internals.
 
 With the locked benchmark environment restored, run the offline contracts and
 guard mutations from the repository root:
@@ -673,12 +682,13 @@ recomputes the shared diagnosis gate and compares the entire saved result,
 including types, with replay. A self-consistent checksum or a saved `pass` label
 is not sufficient.
 
-No production Shop verifier is registered by this increment. The test verifier
-is a labelled exact-observation toy, and the store forbids it in scored attempts.
+No qualified production Shop verifier is registered by this increment. The test
+verifier and the unqualified CPU reference are barred from scored attempts.
 The source hash does not prove a reviewer's scientific validity or the origin
-of caller-supplied telemetry. Production evidence authentication, within-category
-mechanism validation, fixture/runtime binding, hidden incident provenance and
-independent reviewer controls remain M5/M6 and incident work. Retain pinned
+of caller-supplied telemetry. The human-adjudication path below implements the
+mechanism decision boundary. Production evidence authentication, fixture/runtime
+binding, hidden incident provenance and reviewer-agreement calibration remain
+M5/M6 and incident work. Retain pinned
 verifier sources with the artifacts; changing them refuses replay rather than
 silently regrading history. Historical smoke/catalogue records are not accepted.
 
@@ -687,8 +697,9 @@ takes `--spec` and `--store` and prints the receipt. The read commands take
 `--store`, `--receipt` and a new `--output` path; export also accepts `--complete`.
 Existing outputs are never overwritten. The default CLI has no production
 verifier registry, so it can export prepared/pending rosters but refuses
-terminal records. A future trusted driver can call `main(..., verifiers=...)`
-or the same `CampaignStore` API. This is deliberately not a live run/resume CLI.
+terminal records. The `adjudication` CLI below installs the built-in reference
+verifier explicitly; a trusted driver can also call `main(..., verifiers=...)`
+or the same `CampaignStore` API. Neither is a live scheduler.
 
 From the repository root with the locked environment restored:
 
@@ -706,28 +717,106 @@ Synthetic captures stay in test temporary directories, not published results.
 Raw verification logs, including failed mutation and collection attempts, are
 retained in `../radius-perf-eval-artifacts/m2-attempts-20261001-07393aba/`.
 
+### M2 human adjudication and reference verifier
+
+The owner approved an incident rubric with human causal-prose adjudication,
+not a bounded grammar or a model judge. Automated schema, category, target,
+measurement and integrity gates remain. Human mechanism and per-citation
+relevance/support decisions now also gate success. Unfamiliar phrasing is not
+automatically wrong. Missing or ambiguous review leaves the attempt `running`,
+with no terminal digest and no harness retry.
+
+`adjudication.CPUReference` implements the file-based reference path. Its
+operator-owned configuration contains `target` (canonical component),
+`componentAliases` (fixture mapping), `baselineCpuMax` (finite cgroup v2 quota
+and period text), and `reviewers` (public allowed reviewer IDs). Its
+`configuration_id` and `verifier().fingerprint()` bind these settings and source
+code to the prepared roster. The supported incident IDs are
+`cpu-quota-fault/v1` and `cpu-quota-healthy/v1`; their Boolean fault expectations
+must agree. No arbitrary Python module is imported from configuration.
+
+Capture these sources through `CampaignStore.capture`. Each JSON source has
+`binding: binding.to_dict()` and `data`. Raw bytes are stored before judgment:
+
+| Source | Data checked by the reference verifier |
+|---|---|
+| `adapter` | `terminalClass`, ordered submission `calls`, `error`, `budgetStopReason`. Reconstruct the canonical submission recorder; no-answer classes do not need prose review. |
+| `measurements` | `target`, raw `baselineCpuMax`, `activeCpuMax`, `beforeCpuStat`, `afterCpuStat`. Parse finite quotas and required cgroup counters, reject regressions/impossible deltas, require an observed period increase. Fault requires a reduced quota and increased throttled periods/time; healthy requires unchanged quota and no added throttling. |
+| `lifecycle` | Nonempty `workspaceBefore`/`workspaceAfter` path-to-digest inventories; nonempty unique `actions` with `id` and `kind`; matching nonempty `resourcesBefore`/`resourcesAfter` ID-to-existence inventories. Derive scope from unchanged files, safety from read-only actions and cleanup from observed removal. Unknown action kinds or missing coverage fail closed. |
+| `usage` | Nullable `startedMonotonicNs`/`finishedMonotonicNs`, unique `toolCallIds`, and `aiCredits`. Derive elapsed seconds and tool count; preserve missing values. Credits remain the capture producer's measured normalized value. |
+
+These snapshots are **operator-attested reference inputs**, not authenticated
+Shop collectors. The predicates prove only what those captures record. CPU
+health does not prove whole-application health; increased throttling alone
+does not prove the independently assigned quota changed. The real workload,
+activation, sandbox and capture-producer integrations remain M4/M5. The
+reference is unqualified and cannot finish scored attempts.
+
+`packet(binding, captured_sources)` contains the unchanged canonical answer,
+CPU observations and versioned incident rubric. It strips submitted component
+aliases, arm/model labels and assignment IDs. Opaque source digests bind it to
+the exact attempt, so the same answer in another arm still needs its own review.
+The answer's prose and canonical names can suggest treatment; the packet is
+not a guarantee that humans cannot infer the arm.
+
+The human fills the generated review template with `reviewer`, `status`,
+`mechanismPassed`, an overall `rationale`, and an ordered decision/rationale
+for each citation (`relevant`, `supported`). Packet and rubric digests must
+match. `needs_review` may contain null decisions; `decided` requires explicit
+Booleans. A later decision can resolve an ambiguous review, but cannot replace
+an already decided review. Review IDs are operator attestations, not signatures.
+Replay verifies the record and applies its decision; it does not independently
+understand the prose or prove the human right.
+
+Run the `adjudication` module with `--config` pointing to that frozen JSON.
+`identity` emits the configuration/verifier fields for preparation.
+`packet`, `review`, `finish` and `export` take `--store` and `--receipt`;
+the first three also take `--run-id`. `packet --output` writes a review packet
+and template. `review --input` preserves the imported raw file, then appends a
+valid review to the decision sequence. Rejected imports remain as
+`review-input-*` captures and a corrected import can follow without replacing
+them. `finish` explicitly resolves the reviewed attempt.
+`export --output` writes the same allowlisted report; `--complete` still
+requires every assignment finished. Output paths must be new. No server,
+review platform or live run command is involved.
+
+Run the reference CLI help and its controls from the repository root:
+
+```bash
+DOCKER_HOST=unix:///nonexistent/docker.sock benchmark/.venv/bin/python -m radius_perf_eval.adjudication --help
+DOCKER_HOST=unix:///nonexistent/docker.sock benchmark/.venv/bin/python -m pytest benchmark/tests/test_adjudication.py benchmark/tests/test_adjudication_mutations.py -q
+```
+
+`test_adjudication.py` drives explicit review ingestion, canonical scoring,
+durable records and terminal CLI export into the shipped dashboard. Planted
+decisions reject wrong mechanisms within the same category, contradictory or
+negated explanations, unsupported observations and correlated symptoms.
+Correct unfamiliar phrasing passes with a positive decision. These are wiring
+controls, **not measured human judgments or agreement**. The independent second
+review and pilot cost accounting remain campaign/qualification work.
+
 ### M2 exit-criterion accounting
 
-The bookkeeping increment does **not** close M2. The owner has asked for the
-entire milestone before declaring it ready. This table separates a tested
-interface from an implemented incident grader.
+M2's approved contract and reference implementation are complete. This does
+not qualify the reference incident for scored Shop use. The table distinguishes
+the evidence for each M2 requirement from later campaign work.
 
-| Criterion | Implementation and evidence | Remaining M2 work |
+| Criterion | Implementation and evidence | Later work, not claimed by M2 |
 |---|---|---|
 | Directed answers and canonical names | `submit_tool.py`; reference, reversed-edge, alias-conflict and malformed-call controls in `test_submit_tool.py` and `test_diagnosis.py` | None at the schema/mapping boundary; sealed fixture inventories are M3. |
-| Correct component/edge and healthy/fault claim | `DiagnosisGrade` derives these verdicts; reference and planted wrong answers in `test_diagnosis.py`, with canonical outcomes exercised through `test_campaign.py` | Connect the shared gate to the reference incident reviewer below, not just the exact-observation test double. |
-| Wrong mechanism fails | The shared gate checks `causalCategory`. The submit schema has no separate mechanism claim; the toy reviewer matches complete observation strings. Neither establishes discrimination between mechanisms within a category. | The owner rejected a bounded grammar and recommended human causal-prose adjudication with an incident rubric. The revised policy awaits approval and implementation, with correct and wrong within-category controls. Do not count category mismatch as this criterion. |
-| Correlated symptom, fabricated evidence and empty evidence fail | Every citation must be reviewed; the test reviewer rejects non-causal signals, missing signals and wrong exact observations. Actual captured byte references, checksums and trial binding are exercised in `test_campaign.py`. | A reference reviewer that checks incident-owned causal evidence rather than test dictionary equality. Actual Shop capture/authentication and incident activation integrate in M5; the expanded library and calibration are M6. |
-| Canonical outcome classes and all success gates | `trial_outcome.py` and `campaign.py`; missing grade/lifecycle checks fail closed, agent class survives harness override, and unsupported canonical shapes cannot export | Wire the reference reviewer into the canonical attempt path. Real sandbox/environment adapters are M4/M5, not implied by offline pass labels. |
+| Correct component/edge and healthy/fault claim | Shared gates and reference verifier; planted wrong targets and false/missed faults in `test_diagnosis.py` and `test_adjudication.py` cannot be overridden by a human pass. | Sealed inventories and actual incident activation are M3/M5. |
+| Wrong mechanism fails | `DiagnosisGrade.mechanism_passed` requires an explicit incident-rubric decision. Same-category wrong explanations fail with a negative review. Missing/ambiguous decisions remain unfinished. Correct unfamiliar paraphrases pass. | Semantic judgment is human, not an automated proof. Reviewer calibration/agreement and library coverage are M6. |
+| Correlated symptom, fabricated evidence and empty evidence fail | Automated source existence and required CPU-evidence coverage combine with per-citation human relevance/support. Reference controls reject fabricated/contradictory observations and correlated signals; every citation is covered. | Actual Shop telemetry authentication, production coverage and incident activation are M5/M6. |
+| Canonical outcome classes and all success gates | `trial_outcome.py`, `campaign.py` and reference CLI; source-bound adjudications feed the canonical outcome. Independent lifecycle/measurement gates and complete structures still fail closed; agent class survives harness override. | Actual sandbox/environment capture adapters are M4/M5, not implied by reference snapshots. |
 | Prepared full roster; interruption and retry do not inflate denominators | `CampaignStore`; durable start/capture/finish events, process-crash and concurrent-start controls, retry-once/exclusion tests and guard mutations | None in the offline bookkeeping contract. Live randomized scheduling and campaign-stop enforcement are M5. |
-| Source-backed redacted report and shipped dashboard | Export replays registered code against stored bytes, checks the canonical grade and saved result, and emits the full roster. `test_campaign.py` passes generated exports through `dashboard_checks.cjs`, including healthy false alarms and the scored embargo. | Install the reference verifier through a trusted operator entry point. The default CLI currently refuses terminal export. Real telemetry-origin authentication cannot be inferred from hashes. |
+| Source-backed redacted report and shipped dashboard | The reference CLI installs its pinned verifier, ingests recorded decisions and exports terminal records through the same replay boundary. `test_campaign.py` and `test_adjudication.py` exercise generated exports through the actual dashboard, including false alarms, retry denominators and embargo. | Source hashes and reviewer IDs do not authenticate production capture origin or human identity. M8 adds inference and full artifact publication. |
 
 The [reference prose policy](../docs/specs/copilot-radius-experiment-plan.md#m2-reference-prose-policy)
-records the owner's retain-schema decision and the proposed rule's exact limits.
-M2 must remain incomplete until that rule is approved and the corresponding
-reference grading and integration controls pass. No live call is needed to make
-or exercise that contract; real Shop measurements remain subject to the existing
-approval gates.
+records the owner's approval and the endpoint change. No live call was needed
+to exercise these contracts; real Shop measurements remain subject to the
+existing approval gates. Raw results and earlier failures remain in the M2
+artifact directory above. `human-mutations-second.log` records the reference
+guard controls; `full-suite-human-accepted.log` records combined coverage.
 
 ### Context window and compaction
 

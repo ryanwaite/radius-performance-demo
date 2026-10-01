@@ -41,7 +41,8 @@ approval. Broader outbound-attempt observation remains an M1 gap; neither blocke
 connections nor logged destinations proves absence of application attempts.
 No new tracing tooling or permissions are authorized.
 The dashboard and M2's offline attempt/report boundary are implemented.
-Production incident reviewers and the later campaign milestones remain unbuilt.
+M2 also implements the owner-approved file-based human-adjudication reference.
+Qualified production incidents and the later campaign milestones remain unbuilt.
 
 **M2 first increment:** directed answers and canonical endpoint mapping are
 implemented. The shared diagnosis gate checks the hidden causal target and
@@ -53,11 +54,19 @@ immutable full roster, append-only SQLite attempts and captures, retry/exclusion
 reduction, denominator reconciliation and source-replaying redacted exporter.
 It verifies canonical outcomes against an explicitly registered, source-pinned
 verifier and actual captured bytes; it does not authenticate Shop evidence.
-M2's full exit criterion has not been met. See the
+The owner then approved human causal-prose adjudication with an incident rubric,
+keeping automated target, measurement and integrity checks. The reference path
+now implements that policy and completes M2's contract milestone: wrong
+within-category mechanisms require an explicit negative human decision, while
+unknown or ambiguous reviews remain unfinished without retry. Planted decisions
+exercise the interface; they are not measured human agreement. See the
 [answer/outcome contract](../../benchmark/README.md#m2-answer-and-outcome-contract-increment)
 for the implemented boundary and its limitations.
 The [bookkeeping and export contract](../../benchmark/README.md#m2-campaign-bookkeeping-and-export)
 describes recovery, provenance, redaction and the remaining integration work.
+The [criterion accounting](../../benchmark/README.md#m2-exit-criterion-accounting)
+maps M2's full exit criteria to implemented controls and separates the later
+live capture, operational review and incident-qualification responsibilities.
 
 Each milestone is a reviewable PR or small sequence of PRs. Dependencies below
 are explicit; environment work and answer/report contracts can proceed
@@ -118,7 +127,8 @@ file directly in a browser. Automated checks exercise
 the shipped JavaScript, UI event wiring, exports, and guard mutations without
 third-party JavaScript packages. CI runs those checks through the Python suite
 with Node.js available. Export requires a trusted registered verifier for
-terminal records; production Shop reviewers are not installed. Historical run
+terminal records; the built-in reference CLI installs its unqualified CPU
+reviewer explicitly. Qualified production Shop reviewers are not installed. Historical run
 JSON cannot be imported as comparison data.
 
 This is a reporting boundary, not a replacement for Inspect, canonical run

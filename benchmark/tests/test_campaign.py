@@ -43,6 +43,7 @@ def synthetic_replay(binding, sources):
         telemetry = data["telemetry"]
         grade = grade_diagnosis(
             recorder.submission, expected,
+            mechanism_passed=True, mechanism_evidence=("adapter",),
             review_evidence=lambda citation: EvidenceReview(
                 citation, ("telemetry",), citation.signal in telemetry,
                 citation.signal == "cpu", telemetry.get(citation.signal) == citation.observation,
@@ -548,6 +549,7 @@ def test_generated_reports_through_shipped_dashboard(tmp_path):
     (lambda o: o["validatorEvidence"].update(evidence=[]), "empty citation reviews"),
     (lambda o: o["validators"].update(diagnosis="fail"), "saved grade contradicts"),
     (lambda o: o["validators"].update(evidence="fail"), "saved grade contradicts"),
+    (lambda o: o["validatorEvidence"]["diagnosis"].update(mechanismPassed=None), "explicit mechanism"),
 ])
 def test_outcome_structure_controls(change, message):
     row = specification()["assignments"][0]
