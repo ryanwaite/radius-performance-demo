@@ -182,6 +182,11 @@ service:
             otlp:
               protocol: http/protobuf
               endpoint: http://${env:OTEL_COLLECTOR_HOST}:${env:OTEL_COLLECTOR_PORT_HTTP}
+      - pull:
+          exporter:
+            prometheus:
+              host: 0.0.0.0
+              port: 8888
     logs:
       processors:
       - batch:

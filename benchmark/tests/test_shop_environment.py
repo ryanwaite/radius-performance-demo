@@ -347,6 +347,94 @@ class MeasurementControlsTests(unittest.TestCase):
 
 
 class ShopLifecycleTests(unittest.TestCase):
+    def test_collector_process_identity_requires_no_restart(self):
+        clean = {"Id": "container", "State": {"StartedAt": "timestamp", "Running": True}, "RestartCount": 0}
+        for fault in (None, "id", "start", "running", "restart"):
+            value = copy.deepcopy(clean)
+            if fault == "id": value["Id"] = ""
+            if fault == "start": value["State"]["StartedAt"] = ""
+            if fault == "running": value["State"]["Running"] = False
+            if fault == "restart": value["RestartCount"] = 1
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temp:
+                env = environment.ShopEnvironment(ROOT, Path(temp))
+                env.project = Mock()
+                with patch.object(environment, "docker", return_value=completed(json.dumps([value]))):
+                    if fault:
+                        with self.assertRaisesRegex(environment.ShopEnvironmentError, "collector-process"):
+                            env.collector_identity()
+                    else:
+                        self.assertEqual(env.collector_identity()["id"], "container")
+                env.destroy()
+
+    def test_ingestion_calls_are_wired_and_collector_replacement_is_rejected(self):
+        for fault in (None, "initial-identity", "final-identity", "probe", "reconcile"):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temp:
+                env = environment.ShopEnvironment(ROOT, Path(temp))
+                identity = {"id": "original"}
+                env.record["collectorIdentity"] = identity
+                env.model = Mock(services={"checkout": {}, "otel-collector": {}})
+                identities = [identity.copy(), identity.copy()]
+                if fault == "initial-identity": identities[0]["id"] = "replaced"
+                if fault == "final-identity": identities[1]["id"] = "replaced"
+                with patch.object(env, "collector_identity", side_effect=identities), \
+                     patch.object(environment.shop_telemetry, "typed_probe", return_value={"probe": True}) as probe, \
+                     patch.object(environment.shop_telemetry, "grafana_logs", return_value={"logs": True}) as grafana, \
+                     patch.object(environment.shop_telemetry, "reconcile", return_value={"reconciled": True}) as reconcile:
+                    if fault in ("probe", "reconcile"):
+                        (probe if fault == "probe" else reconcile).side_effect = environment.shop_telemetry.LogIngestionError("planted")
+                    if fault:
+                        with self.assertRaises((environment.ShopEnvironmentError, environment.shop_telemetry.LogIngestionError)):
+                            env.check_logs(probe=True)
+                    else:
+                        env.check_logs(probe=True)
+                        probe.assert_called_once()
+                        grafana.assert_called_once_with(env.run_id, env.evidence, {"checkout"})
+                        reconcile.assert_called_once()
+                        self.assertTrue(env.record["gates"]["log-ingestion"]["passed"])
+                env.destroy()
+
+    def test_healthy_lifecycle_requires_both_log_boundaries(self):
+        for final_failure in (False, True):
+            with tempfile.TemporaryDirectory() as temp:
+                env = environment.ShopEnvironment(ROOT, Path(temp))
+                calls = []
+                def check(**kwargs):
+                    calls.append(("logs", kwargs))
+                    if len(calls) == 5 and final_failure:
+                        raise environment.shop_telemetry.LogIngestionError("final boundary failed")
+                with patch.object(env, "create", side_effect=lambda: calls.append("create")), \
+                     patch.object(env, "ready", side_effect=lambda: calls.append("ready")), \
+                     patch.object(env, "check_logs", side_effect=check), \
+                     patch.object(env, "audit_grafana") as audit, \
+                     patch.object(env, "measure", side_effect=lambda *a, **kw: calls.append("measure")):
+                    if final_failure:
+                        with self.assertRaises(environment.shop_telemetry.LogIngestionError):
+                            env.run_healthy(60, calibrate=True)
+                        self.assertEqual(env.record["status"], "failed")
+                    else:
+                        env.run_healthy(60, calibrate=True)
+                        self.assertEqual(env.record["status"], "calibration-measured")
+                        audit.assert_called_once()
+                self.assertEqual(calls, ["create", "ready", ("logs", {"probe": True}), "measure", ("logs", {})])
+
+    def test_grafana_audit_requires_successful_full_logs_and_no_unexplained_destinations(self):
+        startup = 'level=info msg="Starting Grafana"\n'
+        for code, text, passes in ((0, startup, True), (1, startup, False), (0, "", False),
+                                   (0, startup + 'error="Get https://grafana.com/api: failed"', False)):
+            with tempfile.TemporaryDirectory() as temp:
+                env = environment.ShopEnvironment(ROOT, Path(temp))
+                env.project = Mock()
+                env.model = Mock(services={"grafana": {}, "opensearch": {}})
+                env.project._run.return_value = completed(text, code)
+                if passes:
+                    env.audit_grafana()
+                    self.assertTrue(env.record["gates"]["grafana-logged-outbound"]["passed"])
+                else:
+                    with self.assertRaises((environment.ShopEnvironmentError, environment.shop_telemetry.LogIngestionError)):
+                        env.audit_grafana()
+                env.project._run.assert_called_once_with("logs", "--no-color", "--no-log-prefix", "grafana", check=False)
+                env.destroy()
+
     def test_deployment_checks_compare_observed_state(self):
         config = {
             "services": {
@@ -565,6 +653,7 @@ class ShopLifecycleTests(unittest.TestCase):
                      patch.object(environment, "derive_fingerprint", return_value={}), \
                      patch.object(environment, "render_stack", return_value={}), \
                      patch.object(environment, "ComposeProject", return_value=project), \
+                     patch.object(environment.shop_telemetry, "start_stack", return_value=completed()), \
                      patch.object(environment, "generate_check_plan", return_value=plan), \
                      patch.object(env, "verify_deployment"):
                     with self.assertRaisesRegex(environment.ShopEnvironmentError, "check-plan"):

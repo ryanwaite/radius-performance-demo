@@ -18,11 +18,9 @@ depends on nothing outside the standard library so its test suite runs
 anywhere. So PyYAML is a tooling dependency, used here and never imported by
 `radius_perf_eval`.
 
-Requires PyYAML 6.0.2:
+Uses PyYAML from the locked CFS environment:
 
-    python3.12 -m venv .tools-venv
-    .tools-venv/bin/pip install "PyYAML==6.0.2"
-    .tools-venv/bin/python benchmark/tools/derive_collector_config.py
+    benchmark/.venv/bin/python benchmark/tools/derive_collector_config.py
 
 Regenerating is a fixture change: the derived files are hashed into the run
 record, so a change to them shows up as a changed fixture rather than as a
@@ -85,6 +83,18 @@ REMOVED_EXPORTERS: dict[str, str] = {
 FORBIDDEN_SUBSTRINGS: tuple[str, ...] = ("firepit",)
 
 DERIVED_DIR = "derived/otel-collector"
+
+
+def add_direct_metrics(document: dict) -> bool:
+    """Keep OTLP telemetry and add an internal, synchronous audit endpoint."""
+    telemetry = (document.get("service") or {}).get("telemetry")
+    if telemetry is None:
+        return False
+    readers = telemetry["metrics"]["readers"]
+    if not isinstance(readers, list) or not readers or any("pull" in reader for reader in readers):
+        raise ValueError("expected existing periodic telemetry and no pull reader")
+    readers.append({"pull": {"exporter": {"prometheus": {"host": "0.0.0.0", "port": 8888}}}})
+    return True
 
 
 def strip_receivers(document: dict) -> tuple[dict, list[str]]:
@@ -179,10 +189,8 @@ def strip_exporters(document: dict) -> tuple[dict, list[str]]:
 def main() -> int:
     if yaml is None:
         sys.exit(
-            "PyYAML is required to run this tool. It is a tooling dependency, "
-            "not a driver dependency:\n"
-            "    python3.12 -m venv .tools-venv\n"
-            '    .tools-venv/bin/pip install "PyYAML==6.0.2"'
+            "PyYAML is required. Run this tool with benchmark/.venv/bin/python "
+            "after restoring the frozen CFS environment. Do not use a public package index."
         )
     repo_root = Path(__file__).resolve().parents[2]
     upstream = shop.upstream_dir(repo_root)
@@ -201,6 +209,7 @@ def main() -> int:
         document, removed = strip_receivers(document)
         document, removed_exporters = strip_exporters(document)
         removed = removed + removed_exporters
+        direct_metrics = add_direct_metrics(document)
         rendered = yaml.safe_dump(document, sort_keys=False, width=1000)
         target = out_dir / source.name
         target.write_text(rendered)
@@ -218,6 +227,8 @@ def main() -> int:
 
         results[source.name] = {
             "removed": removed,
+            "directMetrics": direct_metrics,
+            "sourceSha256": hashlib.sha256(original.encode()).hexdigest(),
             "sha256": hashlib.sha256(rendered.encode()).hexdigest(),
         }
         print(f"{source.name}: removed {len(removed)} reference(s)")
