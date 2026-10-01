@@ -11,6 +11,8 @@
   "files": {
     "otelcol-config-extras.yml": {
       "removed": [],
+      "directMetrics": false,
+      "sourceSha256": "4b343286290788a7dd246e9c19229bfeb27028d55130070531bf47634757823a",
       "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
     },
     "otelcol-config-full.yml": {
@@ -18,6 +20,8 @@
         "service::pipelines::metrics::docker_stats",
         "service::pipelines::metrics::host_metrics"
       ],
+      "directMetrics": false,
+      "sourceSha256": "78bf039fd12910d171cd5e6cb760107d975b1fbbc1e4a74c787b1e69e1f4ab96",
       "sha256": "85d605f6b237d8215c020d4729265c637fdb60b69a57d61a2f8d27c075d970ee"
     },
     "otelcol-config-observability.yml": {
@@ -25,6 +29,8 @@
         "exporters::otlp_grpc/firepit",
         "service::pipelines::profiles::otlp_grpc/firepit"
       ],
+      "directMetrics": false,
+      "sourceSha256": "120c91500c748a87a1fe45971a50c212aa00d1a485f8b8e3cb90d1b50986b108",
       "sha256": "7bd6945ca1ee59fa66f16d7d6c6008a44525d11b78acce5ece2f132445f2a177"
     },
     "otelcol-config.yml": {
@@ -34,8 +40,10 @@
         "service::pipelines::metrics::docker_stats",
         "service::pipelines::metrics::host_metrics"
       ],
-      "sha256": "8120fb549c40e1ff5b5c081a53ac4fc6cb84ee8c46592e374157461bf5c369e1"
+      "directMetrics": true,
+      "sourceSha256": "5c6a048e000b1871a8ac28129973136ebc1629f30049452fdc98251d9fcccf78",
+      "sha256": "9bb9c316304f8b075c065f48536915d003c623d847f0b829e5447618dbedd709"
     }
   },
-  "manifestHash": "sha256:77a6f8352d799b33e2497e420468feaeec1401eee3152b0f9c3027227bf78d6a"
+  "manifestHash": "sha256:77477a38099daee9cc07f6514e8057763fbdeaafac90cd1d86a231e17afab2d4"
 }

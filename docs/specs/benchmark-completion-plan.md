@@ -16,12 +16,16 @@ not required for this finish line.
 
 ## Delivery sequence
 
-**Implementation progress:** the M1 environment driver and offline startup
-assets are implemented on this branch. The Grafana wildcard-health defect is
-fixed with a derived daily index pattern; isolated live controls exercised
-queries and missing-index/plugin failures. OpenSearch attribute collisions
-remain under investigation, and healthy application acceptance is incomplete.
-Failed attempts preserve evidence and verify cleanup. M1 is not complete.
+**Implementation progress:** PR #14 merged the M1 environment driver and
+offline assets. This follow-up adds shared typed log bootstrap, direct
+collector-to-index accounting, actual Grafana log queries, and source inventories.
+Bounded live controls passed a healthy window and rejected planted mapping/plugin
+failures. The footprint/demand producer also completed. The mapping preserves
+typed fields, but does not support a nested object reusing a scalar field's name.
+Outbound evidence currently covers Grafana's logged destinations, not every
+unlogged attempt. Startup metric-export errors and intermittent checkout
+throttling need further investigation; quotas remain unchanged. Failed attempts
+preserve evidence and verify cleanup. M1 is not complete.
 The dashboard is implemented, but M2's
 graded records/exporter and the later campaign milestones remain unbuilt.
 

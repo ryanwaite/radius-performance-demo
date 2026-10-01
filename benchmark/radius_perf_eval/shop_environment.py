@@ -12,12 +12,12 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from . import astronomy_shop as shop, cpu_limits, offered_load, shop_readiness
+from . import astronomy_shop as shop, cpu_limits, offered_load, shop_readiness, shop_telemetry
 from .checks import generate_check_plan, parse_compose_config
 from .compose import ComposeProject
 from .docker_cli import DockerError, docker
 from .hostclass import HostFacts, derive_class_id, derive_fingerprint, observe_host
-from .shop_assets import digest, mount_assets, verify_assets
+from .shop_assets import digest, mount_assets, verify_assets, verify_collector_assets, grafana_inventory
 
 
 class ShopEnvironmentError(RuntimeError):
@@ -28,6 +28,7 @@ def render_stack(
     repo_root: Path, out_path: Path, facts: HostFacts, runtime_dir: Path,
 ) -> dict[str, Any]:
     verify_assets(repo_root)
+    collector_hash = verify_collector_assets(repo_root)
     paths = shop.compose_file_paths(repo_root)
     keys = {
         line.split("=", 1)[0] for line in (paths[0].parent / ".env").read_text().splitlines()
@@ -62,6 +63,9 @@ def render_stack(
         "transforms": report.to_dict(), "startupAssets": assets,
         "manifestHash": manifest["manifestHash"], "services": sorted(config["services"]),
         "loadConfiguration": config["services"]["load-generator"]["environment"],
+        "collectorConfigHash": collector_hash,
+        "logTemplateHash": digest(json.dumps(shop_telemetry.TEMPLATE, sort_keys=True).encode()),
+        "grafanaInventory": grafana_inventory(repo_root, set(shop.declared_flags(repo_root))),
     }
 
 
@@ -110,7 +114,7 @@ class ShopEnvironment:
         self.project.assert_absent()
         self.owns_project = True
         self.save()
-        started = self.project.up(wait_timeout=900)
+        started = shop_telemetry.start_stack(self.project, self.evidence)
         self.evidence("compose-up", {"stdout": started.stdout, "stderr": started.stderr})
         normalized = self.project.config_json()
         self.declared_environment = {
@@ -124,6 +128,41 @@ class ShopEnvironment:
         )
         self.gate("check-plan", bool(self.plan.checks) and self.plan.complete, self.plan.to_dict())
         self.verify_deployment()
+        self.record["collectorIdentity"] = self.collector_identity()
+        self.save()
+
+    def collector_identity(self) -> dict:
+        assert self.project is not None
+        observed = json.loads(docker("inspect", self.project.container_id("otel-collector")).stdout)[0]
+        identity = {"id": observed["Id"], "startedAt": observed["State"]["StartedAt"],
+                    "restarts": observed["RestartCount"], "running": observed["State"]["Running"]}
+        self.gate("collector-process", bool(identity["id"]) and bool(identity["startedAt"])
+                  and identity["restarts"] == 0 and identity["running"] is True, identity)
+        return identity
+
+    def check_logs(self, *, probe: bool = False) -> None:
+        self.gate("collector-identity", self.collector_identity() == self.record["collectorIdentity"],
+                  self.record["collectorIdentity"])
+        if probe:
+            result = shop_telemetry.typed_probe(self.run_id, self.evidence)
+            self.gate("log-typed-probe", True, result)
+            result = shop_telemetry.grafana_logs(
+                self.run_id, self.evidence, set(self.model.services) - {"otel-collector"},
+            )
+            self.gate("grafana-application-logs", True, result)
+        result = shop_telemetry.reconcile(self.run_id, self.evidence)
+        self.gate("log-ingestion", True, result)
+        self.gate("collector-identity", self.collector_identity() == self.record["collectorIdentity"],
+                  self.record["collectorIdentity"])
+
+    def audit_grafana(self) -> None:
+        assert self.project is not None
+        result = self.project._run("logs", "--no-color", "--no-log-prefix", "grafana", check=False)
+        self.evidence("grafana-complete-logs", {"exitCode": result.returncode,
+                                             "stdout": result.stdout, "stderr": result.stderr})
+        self.gate("grafana-log-read", result.returncode == 0, {"exitCode": result.returncode})
+        report = shop_telemetry.audit_grafana_logs(result.stdout + result.stderr, set(self.model.services))
+        self.gate("grafana-logged-outbound", not report["unexplainedCandidates"], report)
 
     def verify_deployment(self) -> None:
         assert self.project is not None
@@ -295,7 +334,10 @@ class ShopEnvironment:
                 offered_load.load_band(self.repo_root, derive_class_id(observe_host()))
             self.create()
             self.ready()
+            self.check_logs(probe=True)
             self.measure(seconds, calibrate=calibrate)
+            self.check_logs()
+            self.audit_grafana()
             self.record["status"] = "calibration-measured" if calibrate else "healthy-measured"
         except BaseException as error:
             self.record["status"] = "failed"

@@ -121,6 +121,48 @@ def verify_assets(repo_root: Path) -> dict[str, Any]:
     return manifest
 
 
+def verify_collector_assets(repo_root: Path) -> str:
+    root = asset_root(repo_root)
+    path = root / "derived/collector-config-manifest.json"
+    manifest = json.loads(path.read_text())
+    recorded_hash = manifest.pop("manifestHash", None)
+    if digest(json.dumps(manifest, sort_keys=True).encode()) != recorded_hash:
+        raise AssetError("collector manifest hash mismatch")
+    expected = {"otelcol-config.yml", "otelcol-config-full.yml",
+                "otelcol-config-observability.yml", "otelcol-config-extras.yml"}
+    if set(manifest.get("files", {})) != expected:
+        raise AssetError("collector manifest inventory is incomplete")
+    for name, entry in manifest["files"].items():
+        for directory, key in (("upstream/src/otel-collector", "sourceSha256"),
+                               ("derived/otel-collector", "sha256")):
+            if digest((root / directory / name).read_bytes()) != "sha256:" + entry[key]:
+                raise AssetError(f"collector asset hash mismatch: {directory}/{name}")
+    return recorded_hash
+
+
+def grafana_inventory(repo_root: Path, flags: set[str]) -> dict[str, Any]:
+    """Inventory possible answer leakage without modifying upstream dashboards."""
+    root = asset_root(repo_root)
+    source = root / "upstream/src/grafana"
+    paths = sorted(path for path in source.rglob("*") if path.is_file())
+    paths.append(root / DATASOURCE_DERIVED)
+    if not flags or not any(path.suffix == ".json" for path in paths):
+        raise AssetError("Grafana leakage inventory requires flags and dashboard files")
+    terms = sorted(flags | {"flagd"})
+    files = []
+    matches = []
+    for path in paths:
+        text = path.read_text()
+        name = str(path.relative_to(root))
+        files.append({"path": name, "sha256": digest(path.read_bytes()), "lines": len(text.splitlines())})
+        for number, line in enumerate(text.splitlines(), 1):
+            found = [term for term in terms if term.lower() in line.lower()]
+            if found:
+                matches.append({"path": name, "line": number, "terms": found, "text": line.strip()})
+    return {"files": files, "searchedTerms": terms, "matches": matches,
+            "scope": "literal flag names and flagd in Grafana source and derived datasource; not a sealed-fixture verdict"}
+
+
 def extract_plugin(archive_path: Path, destination: Path) -> Path:
     """Extract a verified archive, preserving its signed files and backend mode."""
     with zipfile.ZipFile(archive_path) as archive:

@@ -21,7 +21,7 @@ This section is the handoff point. Update it in the same pull request as the wor
 
 **Scope decision, September 30, 2026:** evaluate the combined Radius repository experience. The owner removed separate graph-only, skills-only, and factorial experiments. The native and architecture-document controls remain. [Completion and reporting plan](benchmark-completion-plan.md) defines the delivery sequence and the approved local HTML dashboard with JSON/CSV downloads.
 
-**Added on this branch, pending merge:** the [offline dashboard](../../benchmark/dashboard.html) imports `radius-comparison-v1` reports, displays descriptive per-model comparisons and exclusions, and downloads full JSON or filtered CSV. It has an empty initial state, rejects inconsistent reports, and hides interim scored-arm results. It is not connected to a campaign runner yet. The exporter, source-artifact verification, and pre-registered analysis remain M2/M5/M8 work in the completion plan.
+**Merged in PR #14:** the [offline dashboard](../../benchmark/dashboard.html) imports `radius-comparison-v1` reports, displays descriptive per-model comparisons and exclusions, and downloads full JSON or filtered CSV. It has an empty initial state, rejects inconsistent reports, and hides interim scored-arm results. It is not connected to a campaign runner yet. The exporter, source-artifact verification, and pre-registered analysis remain M2/M5/M8 work in the completion plan.
 
 **M1 implementation, not yet accepted:** a `shop` driver command now renders the pinned Shop with offline startup assets, an internal backend network, a loopback ingress, and blocked flag/control routes. It calls deployment, readiness, flag, CPU and load gates, saves evidence before judging it, and verifies cleanup. The public upstream `.env` is now tracked. The load script omits only `ask_agent`; the Apache-2.0 OpenSearch plugin is pinned for Linux ARM64 and AMD64. CPU readers resolve actual cgroup paths through host PIDs. The footprint tool emits a host-labelled kernel-demand report.
 
@@ -29,9 +29,69 @@ The owner's approved local check exposed an unset-variable comparison bug, which
 
 **Telemetry investigation correction:** the follow-up run `radius-eval-shop-cfa0b4b8433f` found a nonempty dated log index with a valid timestamp mapping. The missing-index message did not prove absent ingestion. The pinned plugin's health implementation looks up the literal wildcard in a response keyed by concrete index names. A derived Grafana datasource now uses `[otel-logs-]YYYY-MM-DD` with `interval: daily`, without changing container or plugin versions. Its input and output are hashed with the startup assets. The driver also rejects the plugin's nominally successful responses for missing or mistyped timestamp fields.
 
-The isolated live control `radius-eval-shop-9b17c82ee06f` demonstrated daily-pattern health and a Grafana PPL query over synthetic records. An absent index and a removed plugin both failed; teardown left no resources. This is not application-ingestion acceptance. A separate mapping experiment found that OpenSearch 3.7's `disable_objects` preserves scalar and dotted attribute fields and their numeric queries, but still rejects a nested object sharing a scalar field's name. That candidate is not part of the shipped configuration. No `flat_object` conversion or reduction in typed query capabilities has been approved or applied.
+The isolated live control `radius-eval-shop-9b17c82ee06f` demonstrated daily-pattern health and a Grafana PPL query over synthetic records. An absent index and a removed plugin both failed; teardown left no resources. This was not application-ingestion acceptance. A separate mapping experiment found that OpenSearch 3.7's `disable_objects` preserves scalar and dotted attribute fields and their numeric queries, but still rejects a nested object sharing a scalar field's name. That candidate was not shipped in PR #14. No `flat_object` conversion or reduction in typed query capabilities has been approved or applied.
 
 The application experiment `radius-eval-shop-6dbbb5769f15` installed that candidate template before starting the collector. Grafana returned log data, and the saved OpenSearch sample contains actual Shop service logs, including both `http` and `http.request.method` attributes. The captured collector log tail had no mapping/export error, but the exporter-metric query returned an empty vector, so zero data loss is **not established**. The measurement reached the CPU gate and failed on checkout throttling. Raw load boundaries and cgroup counters were saved, and cleanup succeeded. Do not promote the mapping candidate or refit CPU limits from this observation alone; complete the ingestion controls and demand measurement first. Docker allocation, service limits, and version pins were unchanged.
+
+**M1 follow-up on this branch:** the shared Shop/footprint startup now starts
+OpenSearch first, installs and reads back the typed attribute template, then
+starts producers. The template is hashed in render provenance. Derived collector
+configuration keeps the upstream OTLP telemetry reader and adds an internal-only
+direct metrics reader. Source and derived configuration hashes are verified at
+render time. No attribute is dropped or flattened.
+
+The empty metric query above was not evidence of unavailable counters.
+`radius-eval-shop-413d2a28701f` observed them after a periodic export, but also
+recorded an unrelated failed Prometheus metric export. The new log witness
+therefore does not depend on delayed Prometheus telemetry. It brackets an index
+refresh/count with direct collector counters in one probe container, requires
+stable accepted counts, and reconciles accepted records with both exporters and
+the complete index count. Missing counters, nonzero failures, partial shards,
+collector replacement/restart, and a bracket that never stabilizes fail closed.
+This proves accounting for **collector-accepted logs through the captured
+boundary**, not that an application SDK emitted every possible log. Absent
+failure-only series are not converted to zeros or used as the proof.
+
+`radius-eval-shop-93bde23ed9e4` passed both ingestion boundaries around a healthy
+load window with unchanged zero-lifetime-throttling gates. An OTLP probe preserved
+scalar `http`, dotted `http.request.method`, and a numeric attribute in `_source`;
+numeric range and average queries passed. Grafana returned actual Shop logs
+through `/grafana/api/ds/query`. A deliberately incompatible nested `http` value
+produced an export failure that the witness rejected, and removing the plugin
+failed health. The nested-map limitation remains real, not hidden by a
+`flat_object` fallback. This acceptance is for the pinned Shop's observed fields,
+not arbitrary future schemas.
+
+The exact documented environment command passed in
+`radius-eval-shop-72c84caeafb3`. Its journal contains raw boundaries, complete
+Grafana logs, and the generated Grafana source/provisioning inventory. The
+logged-destination audit found no unexplained candidate; its startup coverage and
+planted external-destination controls prevent an empty log from passing. It
+cannot observe unlogged outbound attempts. The hashed file inventory found no
+literal fault-flag or `flagd` reference, but is not M3's semantic leakage verdict.
+Dashboards and provisioning were not rewritten.
+
+`astro-footprint-20260930T165306` exercised the shared startup, host-labelled
+footprint, raw cgroup-demand stream, load boundaries, and verified cleanup.
+`radius-eval-shop-413d2a28701f` also recorded bounded checkout demand with no
+throttling. These samples do not explain the earlier intermittent checkout
+throttling or justify changing fitted quotas. All named attempts preserved their
+raw records beside the checkout and verified cleanup. CPU limits, Docker
+allocation, image/plugin/runtime pins were unchanged. No model request, cloud
+provisioning, or qualification campaign ran.
+
+Offline controls ran with Docker unreachable. The ingestion test module mutates
+each rejection guard and its Boolean conditions; the separate lifecycle/asset
+mutation journal at `m1-offline-1790813063` has no surviving mutations.
+`m1-offline-1790813018/final-pytest.log` preserves the full-suite outcome.
+Earlier failed reconciliation and mutation attempts remain in the artifact
+directory rather than being overwritten.
+
+**M1 remains open:** extend outbound-attempt evidence beyond Grafana's logged
+destinations, investigate the observed startup metric-export failure, and
+establish repeatable healthy acceptance rather than infer it from bounded
+samples. Host fit/holdout still needs separate approval. Incident-phase
+activation and sealed-fixture leakage enforcement remain M5/M6 and M3 work.
 
 **Owner decision, September 30, 2026:** repair the shared telemetry configuration rather than change the pinned container versions. Apply the repair identically to all three arms and preserve the telemetry available for diagnosis. Derive changes from the vendored inputs, record their hashes, and demonstrate ingestion and Grafana queries with actual application logs. Do not hide the failure by dropping conflicting attributes, relaxing the datasource gate, or counting an empty index as evidence. This decision does not authorize model calls, a multi-hour qualification run, or cloud provisioning.
 
@@ -43,11 +103,11 @@ The application experiment `radius-eval-shop-6dbbb5769f15` installed that candid
 - CI that installs Python dependencies by hash from PyPI, checks the export against `uv.lock`, discovers every test module from disk, and runs the whole suite with the Docker daemon unreachable (PR #7).
 - The runtime sandbox, applied before the first prompt and verified on every tool execution including unfinished ones; the static screen off inside the sandbox; trial budgets; the submit tool with ten defined causal categories; and trial outcome records (PR #9).
 - Host qualification by observed class and fingerprint; the Astronomy Shop 3.1.0 vendored with its isolation defects removed; uniform CPU limits verified by zero lifetime throttling; per-service readiness; the flag-off gate; and the offered-load gate on healthy cycles (PR #11). Six defects from review of #11 are fixed (PR #12): the CPU limits refuse to load on a host class other than the one they were fitted on, and the class is inside the verified hash; a requalification record counts only against the tolerance set it was made for; each trial gets its own copy of the flag file; the footprint tool tears the stack down when interrupted.
-- On `main`, the Shop gates are libraries rather than an integrated driver. This branch adds the environment-only Shop driver described above. The catalogue determinism runner remains separate.
+- PR #14 integrated the Shop environment driver and offline startup assets. This branch adds typed telemetry bootstrap, log accounting, and scoped Grafana inventories. The catalogue determinism runner remains separate.
 
 **Next, in order.** Each step lists its exit criterion. Steps 1 and 2 are independent and can run in parallel.
 
-1. **Finish the Astronomy Shop environment.** Resolve the live log-ingestion failure without weakening the datasource gate. Verify plugin-backed data through Grafana, run its missing-plugin negative control, inspect outbound attempts and dashboard leakage, and obtain a healthy load measurement. Finish exercising the footprint demand producer and incident-phase integration. The new driver and asset derivation are implemented, but their acceptance evidence is incomplete. The requirements are in `benchmark/README.md`. *Exit:* a healthy stack on the internal network has no failing endpoint, makes no unexplained outbound request, and passes every generated check.
+1. **Finish the Astronomy Shop environment.** Typed log bootstrap, collector-to-index accounting, actual Grafana logs, planted mapping/plugin failures, healthy load samples, and the live footprint/demand producer now have bounded evidence. Finish outbound-attempt coverage beyond Grafana logs, investigate the observed startup metric-export failure, and establish repeatability without weakening CPU or load gates. The Grafana inventory feeds M3's semantic leakage scan; incident-phase activation belongs to M5/M6. The requirements are in `benchmark/README.md`. *Exit:* a healthy stack on the internal network has no failing endpoint, makes no unexplained outbound request, and passes every generated check.
 2. **Finish the answer contract.** Add the `connection` field to the submit tool, align the code's terminal classes with [Trial outcomes and retries](#trial-outcomes-and-retries), and implement the retry policy. *Exit:* planted wrong answers for the component and the connection each fail, and a correct answer passes.
 3. **Fit and hold out the determinism suite on the laptop.** It takes about three hours and needs the user's approval before it starts. *Exit:* the holdout passes with tolerances frozen before it ran.
 4. **Build the three Astronomy Shop fixtures** under Phase 0: fault-flag code removed from the agent-visible source, a neutral README, a validated `app.bicep`, the arm C document, two difference manifests, and a leakage scan that covers Grafana dashboards and provisioning. *Exit:* the Phase 0 exit criteria.

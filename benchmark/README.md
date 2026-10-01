@@ -1155,7 +1155,7 @@ driver actually calls. Several are libraries with tests and no caller yet.
     generator's own counter, scored only inside a frozen band.
   - The `firepit` exporter stripped from the derived collector config.
 
-**Added on this branch:** `shop_environment.py` calls the deployment,
+**Merged in PR #14:** `shop_environment.py` calls the deployment,
 readiness, flag, lifetime-throttling and phase-specific load checks. The
 catalogue runner in `trials.py` is unchanged. The Shop command is an
 environment check, not an agent trial or a qualified campaign.
@@ -1186,16 +1186,52 @@ health and a Grafana PPL query over synthetic records; missing-index and
 missing-plugin controls failed. The driver requires the timestamp field to
 exist with date type, not merely a plugin status of `OK`.
 
-This does not resolve the collector's separate attribute-mapping failures.
-The full healthy application window has not passed. Do not interpret
-container readiness or the synthetic control as application-ingestion
-acceptance. The failed attempts and isolated controls verified cleanup.
-An exploratory run with a typed attribute-mapping template returned real
-Shop logs through Grafana, then failed the CPU gate on checkout throttling.
-That template is not installed by the shipped driver. Its exporter-metric
-query returned no series, so loss-free ingestion remains unproven. See the
-canonical plan's current-state section for the artifact identifiers and
-the candidate's nested-attribute limitation.
+**This follow-up adds typed ingestion acceptance.** Both the environment
+driver and footprint producer start OpenSearch first, install and read back
+the same `attributes: {type: object, disable_objects: true}` index template,
+then start the remaining services. The render record hashes the template and
+verified collector source/derived configuration. Image and plugin pins are
+unchanged. No attributes are discarded or converted to `flat_object`.
+
+The collector retains upstream OTLP self-telemetry and exposes direct counters
+on internal port 8888, without a host port. Before and after the healthy
+measurement, one probe container reads counters, refreshes/counts the dated
+indices, and reads counters again. Acceptance requires stable receiver-accepted
+counts across both transports, matching debug/OpenSearch exports and indexed
+documents, successful query shards, and the same non-restarted collector.
+Failure counters reject any observed loss. Missing required counters and a
+bracket that never stabilizes fail; absent failure-only series are not treated
+as reported zeros. The witness covers collector-accepted logs through each
+boundary, not logs an application SDK never emitted or delivered.
+
+An OTLP positive control verifies scalar and dotted keys in `_source` and a
+numeric range/average query. An additional Grafana PPL query must return actual
+Shop service logs through the existing `/grafana` ingress, not just synthetic
+probe rows. Live controls rejected an incompatible nested object and a removed
+plugin. `disable_objects` is not blanket arbitrary-map support: a nested object
+reusing a scalar field's name still fails. The driver must reject that loss if
+future application data introduces it.
+
+The exact environment command above passed in
+`radius-eval-shop-72c84caeafb3`. The independent planted-failure run is
+`radius-eval-shop-93bde23ed9e4`. These are bounded healthy samples, not host
+qualification. The earlier checkout throttling remains unexplained; this
+change neither refits limits nor relaxes lifetime-throttling checks.
+
+The driver saves complete Grafana stdout/stderr and inventories logged URLs
+and outbound-error candidates, rejecting unexplained destinations and missing
+startup coverage. This does not detect unlogged network attempts. Render
+provenance also lists and hashes Grafana source/provisioning files and the
+derived datasource, with every literal fault-flag/`flagd` match and line.
+The measured inventory had no such matches. Its planted-reference control
+detects both flag names and `flagd`; semantic leakage review remains M3 work.
+Dashboards and provisioning are not rewritten.
+
+The shared footprint/demand producer completed a bounded live run recorded as
+`astro-footprint-20260930T165306`. Its raw cgroup stream, load boundaries,
+host-labelled demand report and cleanup record are beside this checkout.
+This run retained quotas and cannot be used as an unlimited-demand refit.
+See the canonical plan's current-state section for investigation history.
 
 `--calibrate` records a fitting sample without claiming a frozen load-band
 verdict. Without it, the driver refuses a missing or wrong-host band.
@@ -1210,19 +1246,13 @@ bind copies are removed only after verified container cleanup.
   - **Qualification and campaign integration.** There is still no frozen
     `offered-load.json`, Shop determinism campaign, agent trial, or report
     exporter. A successful environment sample will not qualify a host.
-  - **Grafana and log ingestion.** Resolve the live failure without bypassing
-    the datasource gate. Evidence still required: Grafana stays healthy,
-    and makes **no outbound request** (check its logs for `grafana.com` or any
-    external host, not just `up --wait`); an OpenSearch-backed dashboard
-    returns data, proving the plugin loaded rather than merely being present on
-    disk. The isolated missing-plugin control removed the mount with
-    `GF_INSTALL_PLUGINS` still stripped and received `plugin.notRegistered`;
-    retain this control when completing the full application acceptance.
-    Grafana's dashboards and provisioning files join the fixture-file list for
-    the leakage scan: list any dashboard, panel or variable whose name refers
-    to a fault flag or to flagd, and do not change them yet. Upstream routes
-    Grafana through `frontend-proxy` at `/grafana`, so it should need no extra
-    route off the internal network; confirm that.
+  - **Telemetry and outbound acceptance.** Retain the typed ingestion and
+    missing-plugin controls. Extend outbound-attempt coverage beyond Grafana's
+    logs; network isolation alone does not prove services never tried to leave.
+    Investigate the startup Prometheus metric-export failure captured during
+    the counter investigation. Direct log accounting avoids relying on that
+    path, but does not repair lost metrics. The Grafana file inventory is ready
+    for M3's semantic leakage review, not a substitute for it.
   - **The incident-phase load gate integration.** The implemented gate checks
     generator activity, both window-boundary states and user counts, and its
     lifetime throttling. Wire it to actual incident activation in M5/M6.
@@ -1232,9 +1262,10 @@ bind copies are removed only after verified container cleanup.
     generator's own lifetime throttled-period count must be zero, and it must
     be in the running state with its configured user count. Load-surge
     incidents declare their own expected rate.
-  - **The healthy failure rate.** The derived load script removes the known
-    absent-host task. A healthy measured window still has to establish that
-    no unexplained endpoint failures remain.
+  - **Repeatable healthy acceptance.** Bounded windows passed with active
+    configured users, no new endpoint failures, and zero lifetime throttling.
+    Do not extrapolate them to repeatability or dismiss the earlier checkout
+    throttle failure. Keep the existing gates.
   - **The determinism fit and holdout.** Roughly three hours at about eight
     minutes a cycle, fitting on one set of cycles and validating on a separate
     holdout, following the catalog app's method. It needs the user's go-ahead
@@ -1249,8 +1280,8 @@ bind copies are removed only after verified container cleanup.
     a cgroupfs-only path. Missing process/path/counter evidence fails closed.
     The footprint tool streams raw kernel readings and emits a demand report
     containing the observed host class, sample coverage, load and services with quotas.
-    Exercise this producer live and confirm the resolver on the Linux VM
-    before fitting that host class.
+    The bounded laptop producer ran successfully. Confirm the resolver on the
+    Linux VM before fitting that host class.
 
 ### It is 28 services, not 17
 

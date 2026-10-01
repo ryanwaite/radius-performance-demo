@@ -34,7 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from radius_perf_eval import astronomy_shop as shop  # noqa: E402
-from radius_perf_eval import cpu_limits, offered_load  # noqa: E402
+from radius_perf_eval import cpu_limits, offered_load, shop_telemetry  # noqa: E402
 from radius_perf_eval.compose import ComposeProject  # noqa: E402
 from radius_perf_eval.shop_environment import render_stack as render_shop_stack  # noqa: E402
 from radius_perf_eval.hostclass import (  # noqa: E402
@@ -168,9 +168,14 @@ def main() -> int:
     project = ComposeProject(options.project, {}, [stack_path])
     project.assert_absent()
     print(f"bringing up {len(rendered['services'])} services as {options.project}", flush=True)
+    def evidence(name, value):
+        with (run_dir / "startup.jsonl").open("a") as stream:
+            stream.write(json.dumps({"at": time.time(), "name": name, "value": value}) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+
     try:
-        up = subprocess.run(compose + ["up", "-d", "--wait", "--wait-timeout", "900", "--no-build"],
-                            text=True, capture_output=True, timeout=1020)
+        up = shop_telemetry.start_stack(project, evidence)
         if up.returncode != 0:
             raise RuntimeError(f"Compose startup failed: {up.stderr}")
         peaks: dict[str, dict[str, float]] = {}
