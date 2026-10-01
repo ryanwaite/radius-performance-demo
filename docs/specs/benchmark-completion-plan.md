@@ -40,19 +40,24 @@ On October 1, 2026, the owner chose to finish this audit and defer tracing
 approval. Broader outbound-attempt observation remains an M1 gap; neither blocked
 connections nor logged destinations proves absence of application attempts.
 No new tracing tooling or permissions are authorized.
-The dashboard is implemented, but M2's
-graded records/exporter and the later campaign milestones remain unbuilt.
+The dashboard and M2's offline attempt/report boundary are implemented.
+Production incident reviewers and the later campaign milestones remain unbuilt.
 
 **M2 first increment:** directed answers and canonical endpoint mapping are
 implemented. The shared diagnosis gate checks the hidden causal target and
 requires incident-owned evidence review. The outcome resolver no longer treats
 schema acceptance as success and requires scope, safety and cleanup evidence.
 Offline planted controls use explicitly synthetic captures; they are not
-production Shop incident graders. The immutable roster, durable attempt store,
-retry/exclusion reduction and source-verifying redacted exporter remain unbuilt.
+production Shop incident graders. A subsequent offline increment implements the
+immutable full roster, append-only SQLite attempts and captures, retry/exclusion
+reduction, denominator reconciliation and source-replaying redacted exporter.
+It verifies canonical outcomes against an explicitly registered, source-pinned
+verifier and actual captured bytes; it does not authenticate Shop evidence.
 M2's full exit criterion has not been met. See the
 [answer/outcome contract](../../benchmark/README.md#m2-answer-and-outcome-contract-increment)
 for the implemented boundary and its limitations.
+The [bookkeeping and export contract](../../benchmark/README.md#m2-campaign-bookkeeping-and-export)
+describes recovery, provenance, redaction and the remaining integration work.
 
 Each milestone is a reviewable PR or small sequence of PRs. Dependencies below
 are explicit; environment work and answer/report contracts can proceed
@@ -74,7 +79,9 @@ trial measures runtime and usage.
 
 The future command surface must cover fixture build/verification, host
 qualification, campaign preparation, run/resume, analysis, and export. These
-are requirements, not commands that work today. Configuration must pin model,
+are requirements for the integrated workflow. The offline preparation, accounting
+and export module is implemented; the live run/resume workflow is not.
+Configuration must pin model,
 runtime, fixtures, incident versions, seeds, host class, tool policy and budget.
 A prepared campaign contains its entire assignment roster, including runs not
 yet started. Resume uses that roster and never silently creates new trials.
@@ -106,11 +113,13 @@ it never displays fabricated benchmark results.
 
 **Implemented on this branch:** the dashboard, import consistency checks,
 descriptive summaries, model/incident filters, trial details, and JSON/CSV
-downloads. Open the HTML file directly in a browser. Automated checks exercise
+downloads, with an offline source-replaying campaign exporter. Open the HTML
+file directly in a browser. Automated checks exercise
 the shipped JavaScript, UI event wiring, exports, and guard mutations without
 third-party JavaScript packages. CI runs those checks through the Python suite
-with Node.js available. The campaign exporter and source-artifact verification
-are not implemented; historical run JSON cannot be imported as comparison data.
+with Node.js available. Export requires a trusted registered verifier for
+terminal records; production Shop reviewers are not installed. Historical run
+JSON cannot be imported as comparison data.
 
 This is a reporting boundary, not a replacement for Inspect, canonical run
 records, or the pre-registered analysis. The first dashboard shows descriptive
@@ -136,7 +145,7 @@ A scored campaign requires a Git commit hash for `analysisPlan`.
 | `model`, `incident`, `seed`, `configurationId` | Nonempty strings. Model includes its pinned version. Configuration identifies the immutable non-treatment configuration. Rows in a matched set must agree on these fields. |
 | `expectedFault` | Boolean, including false for healthy controls; constant within a matched set. |
 | `status` | `pending`, `running`, `excluded`, or one of `validated_success`, `diagnosis_failure`, `budget_exhaustion`, `no_submission`, `invalid_structured_output`, `refusal`, `isolation_violation_attempt`. |
-| `attempts`, `harnessFailures` | Integers. Pending has zero of both; running has one or two attempts; an agent result has one or two attempts and exactly `attempts - 1` harness failures. Excluded has two attempts and two harness failures, per retry policy. |
+| `attempts`, `harnessFailures` | Integers. Pending has zero of both. Running has one attempt and zero failures while active, one attempt and one failure while waiting for retry, or two attempts and one failure while the retry is active. An agent result has one or two attempts and exactly `attempts - 1` harness failures. Excluded has two attempts and two harness failures, per retry policy. |
 | `recordDigest` | SHA-256 reference to the canonical terminal record; null while pending/running. |
 | `reason` | Nonempty for exclusions; string otherwise. No secret-bearing logs. |
 | `validators` | Object. A validated success requires `diagnosis`, `evidence`, `scope`, `safety`, and `cleanup` all equal to `pass`. Other rows may carry their actual results or an empty object, not assumed passes. |
@@ -147,8 +156,10 @@ Every matched set declares each arm exactly once, including pending assignments.
 The dashboard rejects unknown schemas/statuses, duplicate assignments,
 inconsistent matching, malformed numeric values, and a complete campaign with
 unfinished runs. It validates report consistency, not the truth of a claimed
-digest or grade. The future exporter must verify these against actual artifacts,
-redact before export, and retain every underlying attempt separately.
+digest or grade. The offline exporter verifies these against captured artifacts
+and registered verifier replay, redacts before export, and retains every
+underlying attempt separately. Source authentication and production incident
+grading still require the later integration milestones.
 
 ### Views and denominators
 

@@ -10,9 +10,10 @@ for the remaining work; the Astronomy Shop campaign is not yet runnable end to e
 Open [`dashboard.html`](dashboard.html) directly in a local browser, then choose
 **Import campaign JSON**. The page starts empty. It accepts only the versioned
 [comparison report contract](../docs/specs/benchmark-completion-plan.md#results-dashboard-and-download-contract),
-not the historical smoke evidence or catalogue determinism reports. There is no
-campaign exporter yet; wiring canonical records to this contract is part of the
-completion plan.
+not the historical smoke evidence or catalogue determinism reports. The
+[offline campaign store and exporter](#m2-campaign-bookkeeping-and-export)
+produce this contract from a prepared roster and replay-verified attempts.
+Production Shop reviewers and the live campaign runner remain unbuilt.
 
 Model and incident filters affect descriptive comparisons, trial rows, and
 **Download filtered CSV**. **Download full JSON** always preserves the complete
@@ -81,6 +82,7 @@ isolates the application under test, not the agent.
 | `trials.py` | Repeated-cycle determinism harness and declared tolerances |
 | `images.py` / `docker_cli.py` | Digest pinning and Docker CLI plumbing |
 | `cli.py` | `radius-perf-eval-env` (`doctor`/`trial`/`determinism`/`cleanup`) |
+| `campaign.py` | Prepared three-arm roster, append-only attempt journal, retry reduction, source-replaying report export |
 
 ## Packages come from CFS only
 
@@ -572,10 +574,10 @@ meaning and are not comparison reports. In particular, the SDK adapter's
 historical `validated_success` completion label is not trusted as a diagnosis.
 There is no remediation scorer in this increment.
 
-**M2 remains open:** immutable campaign assignments, durable attempt storage,
-retry-once/exclusion reduction, denominator reconciliation, and the redacted
-`radius-comparison-v1` exporter with source-digest verification are not built.
-Neither M1 internals nor the dashboard format changes here.
+The next increment below implements campaign bookkeeping and the report
+boundary. M2 remains open for production incident reviewers and their independent
+mechanism, activation and healthy-detection controls. Neither increment changes
+M1 internals.
 
 With the locked benchmark environment restored, run the offline contracts and
 guard mutations from the repository root:
@@ -587,6 +589,145 @@ DOCKER_HOST=unix:///nonexistent/docker.sock benchmark/.venv/bin/python -m pytest
 Mutation controls remove guards and call wiring in fresh local Python processes.
 They do not start agents or Docker, and a collection/import failure does not
 count as a killed mutation.
+
+### M2 campaign bookkeeping and export
+
+`campaign.CampaignStore` prepares the entire nonempty assignment roster before
+execution. It requires exactly one `native`, `architecture` and `radius` row per
+matched set and unique logical `runId` values. Preparation returns a SHA-256
+receipt. Every subsequent open requires that receipt and verifies the exact
+prepared bytes, including roster order. Preparation cannot replace an existing
+database. Keep the receipt outside the database.
+
+The preparation object has `schemaVersion: radius-campaign-v1`, `campaign` and
+`assignments`. Campaign fields are `id`, `phase`, `benchmarkCommit` and
+`analysisPlan`, as in the report contract. Each assignment has the report's
+`runId`, `pairId`, `arm`, `model`, `incident`, `seed`, `configurationId` and
+`expectedFault`, plus `blockId`, `verifierId` and `verifierDigest`.
+Members of a matched set must agree on every non-treatment field, including
+block and verifier identity. These are operator-curated **public identifiers**,
+not log excerpts, credentials or free-text labels. The store rejects extra
+fields, whitespace/control characters, markup and formula prefixes in these
+identifiers. An identifier-shaped secret still requires operator review.
+`configurationId` identifies frozen non-treatment inputs; checking the actual
+runtime against those inputs remains integration work.
+
+The store is one operator-only SQLite database, outside the repository. Its
+canonical JSON event bytes form a hash chain. Transactions use full synchronous
+commits; SQL triggers prohibit updates and deletion. `start(run_id)` appends an
+attempt and returns its `Binding`. `capture(binding, name, bytes)` appends each
+raw source with a checksum **before** judgment. Captured source names cannot be
+replaced. `finish(binding)` replays the trusted verifier and appends a canonical
+terminal record, including the PR #18 `TrialOutcome.to_json_dict()` output,
+metrics, validator provenance and the captured sources. The terminal record's
+digest hashes the actual persisted bytes; `record_bytes(digest)` retrieves and
+verifies them. These raw records may contain sensitive data and are not the
+redacted download.
+
+Restart uses `open_attempts()` to recover the same unfinished bindings. A
+missing capture, crashed verifier or interrupted transaction does not fabricate
+an outcome. Existing captures survive a rejected finish. The caller must
+complete the evidence for that attempt, including any independently verified
+interruption/cleanup result, before it can retry. Duplicate starts, captures,
+finishes, foreign bindings, reordered events, malformed JSON, mismatched source
+checksums and saved outcomes that disagree with replay fail closed. Concurrent
+writers serialize through SQLite. This is not tamper-proof storage: someone
+who controls the database can bypass SQL triggers or remove a history suffix.
+Signed external checkpoints and authenticated capture producers remain
+integration work; the hash chain is not a signature.
+
+Only a canonical `harness_failure` permits a retry. All first attempts in its
+declared block must finish before that retry starts. The second harness failure
+excludes the logical assignment; any agent outcome ends it without retry.
+Every attempt remains stored, including its separate `agentTerminalClass`.
+An assignment waiting for its retry is `running` with one attempt and one
+harness failure, null final digest and null final metrics. It is not silently
+counted as a started second attempt. The dashboard accepts this waiting state.
+Scheduling randomized arm order, performing the retry and stopping the campaign
+at the canonical failure-rate thresholds remain M5 work.
+
+`export(complete=False)` includes the entire roster, including pending work.
+It derives statuses and denominators rather than accepting caller-supplied
+report rows. `complete=True` refuses unfinished assignments. Only allowlisted
+assignment fields, classes, validator decisions, Boolean fault claims, finite
+metrics and digests leave the store. Exclusions use fixed public reason text;
+the actual failure reasons remain in their canonical records. Agent text,
+submission observations, logs, capture bytes and filesystem paths are not
+exported. Missing metrics stay null; measured zero stays zero. Report metrics
+describe the final attempt. `accounting()` separately reconciles logical
+assignments, all attempts and retry-inclusive metric sums with available and
+missing attempt counts. An available sum is not a complete campaign total when
+measurements are missing. It provides no treatment effects or interim analysis.
+
+**Verifier trust boundary:** an operator installs a `Verifier` in an explicit
+Python registry. Campaign JSON cannot import code or nominate a callable.
+Its fingerprint pins the callable entry point, its declared incident-specific
+source/configuration files, and the core scorer/store source files. The verifier
+receives the immutable assignment/attempt binding and captured bytes. It must
+validate their trial origin, reconstruct the submission and independent checks,
+call the canonical scorer, and derive usage metrics from captured accounting
+inputs. It returns `VerifiedAttempt`, containing a `TrialOutcome`, metrics and
+nonempty examined source IDs. All validator references must resolve to actual,
+nonempty captured bytes. The exporter reruns that same registered implementation,
+recomputes the shared diagnosis gate and compares the entire saved result,
+including types, with replay. A self-consistent checksum or a saved `pass` label
+is not sufficient.
+
+No production Shop verifier is registered by this increment. The test verifier
+is a labelled exact-observation toy, and the store forbids it in scored attempts.
+The source hash does not prove a reviewer's scientific validity or the origin
+of caller-supplied telemetry. Production evidence authentication, within-category
+mechanism validation, fixture/runtime binding, hidden incident provenance and
+independent reviewer controls remain M5/M6 and incident work. Retain pinned
+verifier sources with the artifacts; changing them refuses replay rather than
+silently regrading history. Historical smoke/catalogue records are not accepted.
+
+The offline module CLI exposes `prepare`, `export` and `accounting`. `prepare`
+takes `--spec` and `--store` and prints the receipt. The read commands take
+`--store`, `--receipt` and a new `--output` path; export also accepts `--complete`.
+Existing outputs are never overwritten. The default CLI has no production
+verifier registry, so it can export prepared/pending rosters but refuses
+terminal records. A future trusted driver can call `main(..., verifiers=...)`
+or the same `CampaignStore` API. This is deliberately not a live run/resume CLI.
+
+From the repository root with the locked environment restored:
+
+```bash
+DOCKER_HOST=unix:///nonexistent/docker.sock benchmark/.venv/bin/python -m radius_perf_eval.campaign --help
+DOCKER_HOST=unix:///nonexistent/docker.sock benchmark/.venv/bin/python -m pytest benchmark/tests/test_campaign.py benchmark/tests/test_campaign_mutations.py benchmark/tests/test_dashboard.py -q
+```
+
+The controls exercise restart, process interruption before commit, concurrent
+starts, retry/exclusion reconciliation, source/assignment forgeries, redaction,
+healthy/fault distinctions and verifier provenance. Generated reports pass
+through the shipped dashboard JavaScript and its existing UI/download/embargo
+checks. Guard and call-wiring mutations run offline in fresh Python processes.
+Synthetic captures stay in test temporary directories, not published results.
+Raw verification logs, including failed mutation and collection attempts, are
+retained in `../radius-perf-eval-artifacts/m2-attempts-20261001-07393aba/`.
+
+### M2 exit-criterion accounting
+
+The bookkeeping increment does **not** close M2. The owner has asked for the
+entire milestone before declaring it ready. This table separates a tested
+interface from an implemented incident grader.
+
+| Criterion | Implementation and evidence | Remaining M2 work |
+|---|---|---|
+| Directed answers and canonical names | `submit_tool.py`; reference, reversed-edge, alias-conflict and malformed-call controls in `test_submit_tool.py` and `test_diagnosis.py` | None at the schema/mapping boundary; sealed fixture inventories are M3. |
+| Correct component/edge and healthy/fault claim | `DiagnosisGrade` derives these verdicts; reference and planted wrong answers in `test_diagnosis.py`, with canonical outcomes exercised through `test_campaign.py` | Connect the shared gate to the reference incident reviewer below, not just the exact-observation test double. |
+| Wrong mechanism fails | The shared gate checks `causalCategory`. The submit schema has no separate mechanism claim; the toy reviewer matches complete observation strings. Neither establishes discrimination between mechanisms within a category. | An owner-approved mechanism-claim/evidence interpretation contract and an implemented deterministic reference reviewer, with correct and wrong within-category controls. Do not count category mismatch as this criterion. |
+| Correlated symptom, fabricated evidence and empty evidence fail | Every citation must be reviewed; the test reviewer rejects non-causal signals, missing signals and wrong exact observations. Actual captured byte references, checksums and trial binding are exercised in `test_campaign.py`. | A reference reviewer that checks incident-owned causal evidence rather than test dictionary equality. Actual Shop capture/authentication and incident activation integrate in M5; the expanded library and calibration are M6. |
+| Canonical outcome classes and all success gates | `trial_outcome.py` and `campaign.py`; missing grade/lifecycle checks fail closed, agent class survives harness override, and unsupported canonical shapes cannot export | Wire the reference reviewer into the canonical attempt path. Real sandbox/environment adapters are M4/M5, not implied by offline pass labels. |
+| Prepared full roster; interruption and retry do not inflate denominators | `CampaignStore`; durable start/capture/finish events, process-crash and concurrent-start controls, retry-once/exclusion tests and guard mutations | None in the offline bookkeeping contract. Live randomized scheduling and campaign-stop enforcement are M5. |
+| Source-backed redacted report and shipped dashboard | Export replays registered code against stored bytes, checks the canonical grade and saved result, and emits the full roster. `test_campaign.py` passes generated exports through `dashboard_checks.cjs`, including healthy false alarms and the scored embargo. | Install the reference verifier through a trusted operator entry point. The default CLI currently refuses terminal export. Real telemetry-origin authentication cannot be inferred from hashes. |
+
+The unresolved mechanism contract changes how answers are judged, so it is an
+owner decision under the canonical plan, not an implementation convenience.
+M2 must remain incomplete until that decision is recorded and the corresponding
+reference grading and integration controls pass. No live call is needed to make
+or exercise that contract; real Shop measurements remain subject to the existing
+approval gates.
 
 ### Context window and compaction
 

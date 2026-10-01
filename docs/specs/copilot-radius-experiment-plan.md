@@ -21,7 +21,7 @@ This section is the handoff point. Update it in the same pull request as the wor
 
 **Scope decision, September 30, 2026:** evaluate the combined Radius repository experience. The owner removed separate graph-only, skills-only, and factorial experiments. The native and architecture-document controls remain. [Completion and reporting plan](benchmark-completion-plan.md) defines the delivery sequence and the approved local HTML dashboard with JSON/CSV downloads.
 
-**Merged in PR #14:** the [offline dashboard](../../benchmark/dashboard.html) imports `radius-comparison-v1` reports, displays descriptive per-model comparisons and exclusions, and downloads full JSON or filtered CSV. It has an empty initial state, rejects inconsistent reports, and hides interim scored-arm results. It is not connected to a campaign runner yet. The exporter, source-artifact verification, and pre-registered analysis remain M2/M5/M8 work in the completion plan.
+**Merged in PR #14:** the [offline dashboard](../../benchmark/dashboard.html) imports `radius-comparison-v1` reports, displays descriptive per-model comparisons and exclusions, and downloads full JSON or filtered CSV. It has an empty initial state, rejects inconsistent reports, and hides interim scored-arm results. It is not connected to a campaign runner yet. The offline exporter described below implements the M2 reporting boundary; authenticated Shop evidence and pre-registered analysis remain M5/M6/M8 work.
 
 **M2 answer/outcome increment, not milestone completion:** the submit tool now
 accepts directed `connection: {source, target}` answers, canonicalizes endpoints
@@ -41,14 +41,59 @@ and wrong healthy/fault claims. They do not establish a production mechanism
 grader, telemetry authenticity, incident activation or healthy detection
 coverage. Real incident reviewers and their trial binding remain unbuilt.
 Historical catalogue and smoke/session records are not promoted to campaign
-results. The assignment roster, durable attempts, retry/exclusion policy and
-source-backed redacted report exporter remain M2 work. This increment does not
-change M1 or authorize live calls.
+results. The following increment adds the assignment roster, durable attempts,
+retry/exclusion reduction and source-backed redacted report boundary. Neither
+increment changes M1 or authorizes live calls.
 
 The offline command, guard/call-wiring mutation controls and full-suite logs
 are retained in `../radius-perf-eval-artifacts/m2-contracts-20261001-07ac055e/`.
 Earlier failed schema and mutation-control runs remain there as well. Docker
 was unreachable; no model calls, environment runs or cloud resources were used.
+
+**M2 bookkeeping/report increment, not milestone completion:** the offline
+campaign store freezes the complete three-arm roster and requires its preparation
+receipt on reopen. An append-only SQLite journal preserves starts, raw captures
+and canonical terminal records across restart. Only a harness failure permits
+one retry after its block's first attempts finish; a second excludes the logical
+assignment. Reduction counts assignments once and keeps every attempt and its
+agent class. Unfinished or malformed evidence cannot become an outcome.
+
+The exporter replays an explicitly registered, source-pinned verifier against
+captured bytes, checks assignment binding, canonical outcome structure and actual
+validator references, and compares the saved result with replay. Its
+`radius-comparison-v1` report contains the full roster and allowlisted fields,
+not logs or submitted prose. Digests reference the actual canonical terminal
+bytes. Final-attempt metrics and retry-inclusive accounting remain separate.
+The dashboard now represents the first harness failure waiting for retry as
+`running` with one attempt and one failure, without inventing a second attempt.
+
+Offline controls use a test-only exact-observation reviewer. They cover
+interruption/resume, duplicate and foreign artifacts, checksum/grade forgeries,
+retry/exclusion denominators, healthy/fault claims and generated reports through
+the shipped dashboard. The source hashes are not signatures or proof of
+scientific validity. There is no installed Shop verifier, authenticated telemetry
+producer, within-category mechanism grader or live scheduler. The default CLI
+refuses terminal export without a trusted verifier. M5 still owns live binding,
+randomized execution, interruption/cleanup recovery and campaign-stop thresholds;
+M6 owns the incident controls. See the
+[bookkeeping contract](../../benchmark/README.md#m2-campaign-bookkeeping-and-export).
+
+**M2 closure requirement:** the owner has asked to finish the entire milestone
+before declaring it ready. The
+[criterion accounting](../../benchmark/README.md#m2-exit-criterion-accounting)
+identifies the missing deterministic reference reviewer and its attempt/export
+integration. Wrong-category controls do not establish rejection of a wrong
+mechanism within the right category. The current answer contract does not
+declare a separate mechanism claim or a deterministic interpretation policy for
+free-text observations/remediation. That scoring-policy choice needs the owner's
+decision before implementation. Do not move this M2 requirement into M5/M6 merely
+because those milestones build the live Shop integration and incident library.
+
+Raw offline results, including failed guard-mutation and collection attempts,
+are in `../radius-perf-eval-artifacts/m2-attempts-20261001-07393aba/`. The local
+locked environment was restored through CFS after the missing-environment
+failure. No model request, live Shop run, cloud resource or runtime change was
+used. M1 findings and deferred tracing permissions are unchanged.
 
 **M1 implementation, not yet accepted:** a `shop` driver command now renders the pinned Shop with offline startup assets, an internal backend network, a loopback ingress, and blocked flag/control routes. It calls deployment, readiness, flag, CPU and load gates, saves evidence before judging it, and verifies cleanup. The public upstream `.env` is now tracked. The load script omits only `ask_agent`; the Apache-2.0 OpenSearch plugin is pinned for Linux ARM64 and AMD64. CPU readers resolve actual cgroup paths through host PIDs. The footprint tool emits a host-labelled kernel-demand report.
 
@@ -193,7 +238,7 @@ activation and sealed-fixture leakage enforcement remain M5/M6 and M3 work.
 **Next, in order.** Each step lists its exit criterion. Steps 1 and 2 are independent and can run in parallel.
 
 1. **Finish the Astronomy Shop environment.** Typed log bootstrap, collector-to-index accounting, actual Grafana logs, fresh metric-export gates, planted failures, healthy load samples, and the live footprint/demand producer now have bounded evidence. Outbound-attempt instrumentation awaits the owner's deferred tracing decision. After approval, finish coverage beyond Grafana logs. Investigate the unreproduced startup HTTP 500 using the new full backend diagnostics, and establish repeatability without weakening CPU or load gates. The Grafana source assessment records semantic hints but does not clear M3's sealed fixtures; incident-phase activation belongs to M5/M6. The requirements are in `benchmark/README.md`. *Exit:* a healthy stack on the internal network has no failing endpoint, makes no unexplained outbound request, and passes every generated check.
-2. **Finish M2's answer and result contracts.** Directed answers, canonical naming, a required incident-evidence review boundary, and canonical diagnosis outcome classes are implemented with offline controls. Build the immutable assignment roster, durable attempt records, retry/exclusion reduction and source-backed redacted exporter. Integrate real incident reviewers without treating the controlled test reviewer as one. *Exit:* M2's answer controls and retry/denominator requirements in the [completion plan](benchmark-completion-plan.md), with verified source-backed reports.
+2. **Finish M2's answer and result contracts.** Directed answers, canonical naming, canonical diagnosis outcomes, the immutable roster, durable attempts, retry/exclusion reduction and source-replaying redacted exporter are implemented with offline controls. Integrate real incident reviewers and authenticated trial binding without treating the controlled test reviewer as one. *Exit:* M2's answer controls and retry/denominator requirements in the [completion plan](benchmark-completion-plan.md), with verified source-backed reports.
 3. **Fit and hold out the determinism suite on the laptop.** It takes about three hours and needs the user's approval before it starts. *Exit:* the holdout passes with tolerances frozen before it ran.
 4. **Build the three Astronomy Shop fixtures** under Phase 0: fault-flag code removed from the agent-visible source, a neutral README, a validated `app.bicep`, the arm C document, two difference manifests, and a leakage scan that covers Grafana dashboards and provisioning. *Exit:* the Phase 0 exit criteria.
 5. **Re-verify the sandbox** on the locked SDK and CLI pair and on each pilot model, and run the forced-compaction control. This needs a premium-request allowance from the user. Build the probe session that runs before each campaign batch. *Exit:* every escape probe is denied with `sandboxApplied: "true"`, and the in-workspace control succeeds.

@@ -129,7 +129,7 @@
     <details>
       <summary>Input contract and interpretation</summary>
       <p>Import <code>radius-comparison-v1</code> reports. Historical smoke logs and environment measurements are not comparison reports. The complete field contract is in <code>docs/specs/benchmark-completion-plan.md</code>.</p>
-      <p>The dashboard checks consistency, not the authenticity of grades or record hashes. The future exporter must verify and redact the source evidence.</p>
+      <p>The dashboard checks consistency, not the authenticity of grades or record hashes. The campaign exporter replays registered validators against captured sources and exports only allowlisted fields. Production Shop reviewers are still required.</p>
       <p>This initial dashboard shows descriptive results, not statistical significance. Incident-clustered intervals and the pre-registered analysis are still required before reporting uplift.</p>
     </details>
   </section>
@@ -217,6 +217,8 @@
         ? run.attempts === 0 && run.harnessFailures === 0
         : run.status === "excluded"
           ? run.attempts === 2 && run.harnessFailures === 2
+          : run.status === "running"
+            ? (run.attempts === 1 && [0, 1].includes(run.harnessFailures)) || (run.attempts === 2 && run.harnessFailures === 1)
           : [1, 2].includes(run.attempts) && run.harnessFailures === run.attempts - 1;
       requireValue(attemptsOK, `${where}: counts violate the one-retry policy.`);
       requireValue(finished(run)

@@ -171,6 +171,15 @@ function regression(api) {
   none.runs[0].status = "running";
   none.runs[0].attempts = 1;
   api.validate(none);
+  none.runs[0].harnessFailures = 1;
+  api.validate(none); // First harness failure waiting for the end-of-block retry.
+  for (const [attempts, failures] of [[0, 0], [1, 2], [2, 0], [2, 2], [3, 2]]) {
+    const broken = structuredClone(none);
+    Object.assign(broken.runs[0], {attempts, harnessFailures: failures});
+    assert.throws(() => api.validate(broken), /retry/);
+  }
+  none.runs[0].attempts = 2;
+  api.validate(none);
   none.campaign.phase = "scored";
   none.campaign.analysisPlan = "b".repeat(40);
   assert.equal(api.summarize(api.validate(none)).embargoed, true);
@@ -189,6 +198,10 @@ function regression(api) {
 }
 const api = load();
 const report = regression(api);
+for (const filename of process.argv.slice(2)) {
+  const exported = api.validate(JSON.parse(fs.readFileSync(filename, "utf8")));
+  console.log("EXPORTED_SUMMARY:" + JSON.stringify(api.summarize(exported)));
+}
 
 // Weaken the actual shipped guards in memory; the same regression must fail.
 const mutations = [
@@ -209,6 +222,8 @@ const mutations = [
   ['typeof run.reason === "string" && (run.status !== "excluded" || text(run.reason))', "true"],
   ['Number.isInteger(run.attempts) && Number.isInteger(run.harnessFailures)', "true"],
   ['requireValue(attemptsOK,', 'requireValue(true,'],
+  ['[0, 1].includes(run.harnessFailures)', "true"],
+  ['(run.attempts === 2 && run.harnessFailures === 1)', "(run.attempts === 2)"],
   ['finished(run)\n        ? typeof run.recordDigest === "string" && /^sha256:[a-f0-9]{64}$/.test(run.recordDigest)\n        : run.recordDigest === null', 'true'],
   ['finished(run) || run.reportedFault === null', "true"],
   ['requireValue(object(run.validators),', 'requireValue(true,'],
