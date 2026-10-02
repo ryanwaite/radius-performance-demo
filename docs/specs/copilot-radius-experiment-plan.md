@@ -21,6 +21,19 @@ This section is the handoff point. Update it in the same pull request as the wor
 
 **Scope decision, September 30, 2026:** evaluate the combined Radius repository experience. The owner removed separate graph-only, skills-only, and factorial experiments. The native and architecture-document controls remain. [Completion and reporting plan](benchmark-completion-plan.md) defines the delivery sequence and the approved local HTML dashboard with JSON/CSV downloads.
 
+**Owner decision, October 2, 2026:** prioritize exploratory learning before
+confirmatory publication. Keep the three arms, completed M2 contracts, SQLite
+journal, verified exporter and dashboard. Connect one real externally injected
+Shop fault and its healthy counterpart, then a small fixed development batch
+with one model. The [exploratory policy](#exploratory-learning-path) below records
+the approved direction and the settings still requiring approval. It does not
+authorize model requests or declare formal M1/M4 acceptance complete.
+
+**Baseline:** [PR #19](https://github.com/ryanwaite/radius-performance-demo/pull/19)
+merged on October 1 at `ed56c60861e07b20440e242d7a58b4dc10c0c90f`.
+M2's contracts and human-adjudication reference are complete; no live three-arm
+comparison exists. This policy increment changes documentation only.
+
 **Merged in PR #14:** the [offline dashboard](../../benchmark/dashboard.html) imports `radius-comparison-v1` reports, displays descriptive per-model comparisons and exclusions, and downloads full JSON or filtered CSV. It has an empty initial state, rejects inconsistent reports, and hides interim scored-arm results. It is not connected to a campaign runner yet. The offline exporter described below implements the M2 reporting boundary; authenticated Shop evidence and pre-registered analysis remain M5/M6/M8 work.
 
 **M2 answer/outcome increment, not milestone completion:** the submit tool now
@@ -248,18 +261,115 @@ activation and sealed-fixture leakage enforcement remain M5/M6 and M3 work.
 - Host qualification by observed class and fingerprint; the Astronomy Shop 3.1.0 vendored with its isolation defects removed; uniform CPU limits verified by zero lifetime throttling; per-service readiness; the flag-off gate; and the offered-load gate on healthy cycles (PR #11). Six defects from review of #11 are fixed (PR #12): the CPU limits refuse to load on a host class other than the one they were fitted on, and the class is inside the verified hash; a requalification record counts only against the tolerance set it was made for; each trial gets its own copy of the flag file; the footprint tool tears the stack down when interrupted.
 - PR #14 integrated the Shop environment driver and offline startup assets. PR #15 added typed telemetry bootstrap, log accounting, and scoped Grafana inventories. PR #16 added metric-export acceptance and full backend failure diagnostics. This increment adds offline semantic review evidence, not tracing or sealed-fixture acceptance. The catalogue determinism runner remains separate.
 
-**Next, in order.** Each step lists its exit criterion. Steps 1 and 2 are independent and can run in parallel.
+**Next, in order.** These steps replace the previous publication-first queue,
+not its formal acceptance criteria.
 
-1. **Finish the Astronomy Shop environment.** Typed log bootstrap, collector-to-index accounting, actual Grafana logs, fresh metric-export gates, planted failures, healthy load samples, and the live footprint/demand producer now have bounded evidence. Outbound-attempt instrumentation awaits the owner's deferred tracing decision. After approval, finish coverage beyond Grafana logs. Investigate the unreproduced startup HTTP 500 using the new full backend diagnostics, and establish repeatability without weakening CPU or load gates. The Grafana source assessment records semantic hints but does not clear M3's sealed fixtures; incident-phase activation belongs to M5/M6. The requirements are in `benchmark/README.md`. *Exit:* a healthy stack on the internal network has no failing endpoint, makes no unexplained outbound request, and passes every generated check.
-2. **M2 contract milestone complete, carry its limits into integration.** Directed answers, canonical outcomes, immutable assignments, durable attempts, retry/exclusion reduction, redacted reports and the approved incident-rubric human-adjudication reference are implemented. The [criterion accounting](../../benchmark/README.md#m2-exit-criterion-accounting) names the positive/negative controls and real limitations. M5 must connect actual Shop captures and operational human review; M6 must qualify incidents and measure reviewer agreement. The unqualified reference cannot produce scored findings.
-3. **Fit and hold out the determinism suite on the laptop.** It takes about three hours and needs the user's approval before it starts. *Exit:* the holdout passes with tolerances frozen before it ran.
-4. **Build the three Astronomy Shop fixtures** under Phase 0: fault-flag code removed from the agent-visible source, a neutral README, a validated `app.bicep`, the arm C document, two difference manifests, and a leakage scan that covers Grafana dashboards and provisioning. *Exit:* the Phase 0 exit criteria.
-5. **Re-verify the sandbox** on the locked SDK and CLI pair and on each pilot model, and run the forced-compaction control. This needs a premium-request allowance from the user. Build the probe session that runs before each campaign batch. *Exit:* every escape probe is denied with `sandboxApplied: "true"`, and the in-workspace control succeeds.
-6. **Run one incident end to end.** Inspect AI task integration, standalone workspace creation, one ported AIOpsLab incident with its hidden validator, a healthy control, and randomized sets of all three arms. Export the report to the dashboard. *Exit:* the Phase 2 exit criteria, on the Astronomy Shop.
-7. **Build the incident set:** at least 20 incidents with validators, planted wrong answers, and no-fault controls. *Exit:* Phase 3 stage 1 incident criteria.
-8. **Pilot, calibrate, and pre-register.** This needs the user's approval for its cost. *Exit:* the analysis plan and sample size are committed.
-9. **Provision and qualify the Azure VMs.** This needs the user's approval. The portable cgroup resolver has offline controls for cgroupfs and systemd layouts; confirm it on the real VM before qualification. *Exit:* each VM passes a determinism holdout on its own host class.
-10. **Run the scored campaign and publish the comparison.** Integrate the results exporter and dashboard described in the [completion plan](benchmark-completion-plan.md). *Exit:* Phase 3 stage 2 criteria, reproducible downloadable results, and a dashboard whose denominators agree with the run records.
+1. **Land this policy before implementing it.** Record exploratory eligibility separately from confirmatory acceptance and retain the open decisions below. *Exit:* the owner merges this documentation PR; no runtime guard has changed.
+2. **Connect one real Shop incident and healthy counterpart to M2.** The current `ShopEnvironment.run_healthy` tears down after an environment sample, `incidents.py` injects only the catalogue MySQL case, and `CPUReference` accepts operator-attested reference captures. Build the narrow Shop lifecycle/capture binding, external injector and incident rubric, plus the three sealed fixtures needed to exercise them. Reuse the existing SDK, sandbox, submit tool, store and exporter. Agree the target, window criteria and run settings before code relies on them. *Exit:* fault/healthy activation, delivered load, agent-visible telemetry, scope, safety and cleanup have real trial-bound producers and positive/negative controls; hidden answers are isolated, fixture parity and Radius access are checked, and actual evidence can enter the existing human-review/export path. No reference capture is relabelled as Shop evidence.
+3. **Run the bounded integration comparison after explicit approval.** Request the expected model/premium requests and runtime, including fixture authoring and confinement probes. Use fresh sessions, matched settings and randomized arm order for the fault and healthy cases. *Exit:* the complete roster and all attempts survive through human adjudication, the independent audit, verified export and dashboard; unfinished reviews remain visible. Record request usage, agent time, setup and human-review cost. Report integration observations, not scientific findings.
+4. **Use a small fixed development batch to improve Radius.** Choose cases, one model, budgets and validity rules before the batch; request its allowance using measured integration costs. *Exit:* both control contrasts, case outcomes, healthy false alarms, failures, missing reviews and costs are interpretable; a versioned Radius change has a stated expected benefit and regression check. Periodically rerun controls under matching settings.
+5. **Freeze a candidate, then evaluate untouched cases.** Retire holdout cases to development if their results guide tuning. Pursue the broader confirmatory milestones only when the development results justify them. *Exit for publication:* complete M1/M4 acceptance, qualified incidents/reviewers, powered pre-registration, separately approved hosts and runs, and reproducible analysis/downloads under M6-M8. Those requirements remain incomplete, not waived.
+
+## Exploratory learning path
+
+The owner approved the simplification recommendations on October 2, 2026:
+"Great, I agree with all of the recommendations about keeping this from being
+overengineered. Let's proceed." The assessment, `benchmark-engineering-assessment.md`,
+was written on October 1 against PR #19 commit
+`5c2fc45fb031a3099803c8eda842106061d85b77`, while that PR was open. It is historical
+rationale, not a second policy authority. This plan records the decision after
+M2 merged.
+
+### Purpose and retained safeguards
+
+Exploratory work asks what to improve in the combined Radius experience.
+Confirmatory work tests a frozen claim on cases not used for tuning. Start with
+one real externally injected Shop fault and a healthy counterpart across native,
+architecture-document and combined-Radius arms. Only then choose a small fixed
+development batch with one model. The assessment's example, four faults plus a
+healthy case across three arms with two repetitions, is illustrative, not an
+approved roster, request allowance or powered design. Sessions are not billable
+requests. Measure usage and runtime in the approved integration run before
+requesting a development allowance.
+
+Keep matched non-treatment settings, fresh sessions, randomized arm order,
+sealed fixtures, hidden-answer isolation, effective sandbox confinement,
+diagnosis-only write prohibition, safety and verified cleanup. Require actual
+delivered-load, fault-activation and retrievable telemetry evidence, with
+positive controls; missing evidence cannot pass. Preserve the full planned
+roster, raw measurements, failures and limitations. Only a harness failure
+permits the existing once-after-block retry on the same assignment; a second
+excludes it. A valid wrong answer is never retried. Repeated infrastructure
+breakage calls for repair, not a winner among whichever arms finished.
+
+Retain automated target/measurement/integrity checks, human mechanism and
+per-citation review, and the independent blinded audit in
+[Validating graders](#validating-graders). Missing or ambiguous review stays
+unfinished, not a success, failure or retry opportunity. Preserve the blinding
+limitations and record review time separately. The synthetic CPU reference
+remains an offline control, barred from scientific findings and scored use.
+
+Review sealed repository contents and telemetry surfaces for actual
+incident-specific answers or shortcuts. Preserve ordinary diagnostic guidance
+and shared Grafana capabilities equally across arms; a useful hint is not by
+itself evidence of leakage.
+
+### Exploratory environment eligibility
+
+Formal M1 environment acceptance and M4 host qualification remain incomplete.
+Exploratory eligibility is a separate, explicitly recorded decision, not a
+qualified-host claim. This policy permits an exploratory path before those
+formal milestones; it does not make the current driver eligible by itself.
+
+Distinguish a recovered startup disturbance from a problem affecting the
+healthy baseline or diagnosis window. Preserve startup failures and cumulative
+counters, mark phase boundaries, and require affirmative recovery and usable
+baseline/diagnosis evidence rather than resetting history or relying on averages
+that hide bursts. The historical startup HTTP 500 and intermittent checkout
+throttling remain unexplained. Accidental faults during diagnosis invalidate
+the comparison. A declared, independently verified CPU-quota fault must be
+distinguished from accidental pressure on the target, other services or load
+generator; it is not a blanket throttling exception.
+
+The existing confirmatory zero-lifetime-throttling rule and other implemented
+guards remain unchanged. The assessment did not settle numeric stability
+thresholds, window durations or which observed startup failures qualify as
+recovered. The owner must approve concrete criteria before a separate
+implementation changes gate behavior or a run relies on an exception. Do not
+silently promote calibration samples or weaken load/telemetry checks to obtain
+an exploratory verdict.
+
+Full outbound-attempt tracing remains deferred. Keep current isolation and
+state the observation limits; Grafana logs and blocked connections do not prove
+no application attempted egress. No new tooling or tracing permissions are
+authorized. Comprehensive tracing and exhaustive negative proofs are not
+prerequisites for this exploratory path.
+
+### Development loop and remaining decisions
+
+Use the laptop, M2 journal, verified exporter, file-based review and dashboard.
+Defer broad incident/model libraries, cloud scale, new review infrastructure,
+formal inference and publication packaging. Report descriptive wins, losses
+and ties against each control, underlying denominators, case outcomes, healthy
+false alarms, unfinished/excluded work, and measured time/tool/request costs.
+Inspect traces to distinguish Radius usability problems from reasoning,
+environment or grading failures. Small or inconsistent differences are
+inconclusive, not equivalence; a faster wrong answer is not progress.
+
+Version each Radius change on development cases and state its expected benefit
+before running it. Compare predecessor and candidate under matching conditions;
+periodically rerun both controls. Freeze a candidate before untouched holdout.
+Tuning from holdout results retires those cases to development; a new seed alone
+does not make a case independent. Broad claims still require the confirmatory
+design below, including qualification, power and pre-registration.
+
+Before the first live integration, the owner still needs to approve the real
+fault mechanism/target and healthy evidence/rubric, concrete exploratory
+stability/validity criteria, one model and matched time/tool settings, and the
+expected request/runtime allowance. Development batch size follows measured
+integration costs. Existing confirmatory numeric defaults are not an approved
+exploratory budget or validity exception. This policy authorizes no model call,
+cloud resource, long run, allocation/version change or unrelated Docker cleanup.
 
 ## Purpose and research questions
 
@@ -344,7 +454,9 @@ A trial that ends without a valid call to the submit tool scores as a failure.
 
 ## Completion boundary
 
-Completion means a reproducible three-arm diagnosis campaign on the Astronomy Shop, a pre-registered analysis of the combined Radius treatment, and downloadable results with a local dashboard. The architecture-document arm tests whether Radius adds value beyond comparable prose; it does not isolate graph or skill effects.
+The immediate exploratory deliverable is an interpretable real three-arm
+comparison that guides Radius development, not a publication claim.
+Confirmatory completion means a reproducible three-arm diagnosis campaign on the Astronomy Shop, a pre-registered analysis of the combined Radius treatment, and downloadable results with a local dashboard. The architecture-document arm tests whether Radius adds value beyond comparable prose; it does not isolate graph or skill effects.
 
 Remediation, Kubernetes execution, interactive Canvas work, and telemetry overlays are optional later extensions, not prerequisites for this diagnosis comparison. Graph and skill usage remain descriptive instrumentation, never separate treatment arms or a basis for causal attribution.
 
@@ -720,6 +832,10 @@ The same failure appears in the checks that guard the checks. Three cases from I
 
 ### Application under test
 
+The environment rules below describe the implemented driver and confirmatory
+acceptance. The separate [exploratory eligibility policy](#exploratory-environment-eligibility)
+does not change them in code or declare M1/M4 passed.
+
 Scored campaigns use the [OpenTelemetry Astronomy Shop](https://github.com/open-telemetry/opentelemetry-demo), the OpenTelemetry project's reference application, rather than the catalog application. Three facts decide it:
 
 - **Size.** It runs 28 services in several languages (20 in `compose.yaml`, 3 more in `compose.full.yaml`, and 5 in `compose.observability.yaml`), with Postgres, Valkey, Kafka, and a load generator. On the four-component catalog application, an agent can read the whole Compose file in one step, so an application graph has little room to help. A larger topology is where Radius should help if it helps anywhere.
@@ -739,6 +855,9 @@ The scored load is the load generator's upstream default, pinned and recorded wi
 The agent may query Prometheus, Jaeger, OpenSearch, and Grafana. Upstream Grafana downloads its OpenSearch datasource plugin from grafana.com on every start, unpinned, so each trial would run whatever version was current, depend on grafana.com being reachable, and fail once trial egress is blocked. The plugin is instead stored in the repository at a pinned version with its SHA-256 recorded, mounted read-only, and the download setting is removed; its hash goes into provenance with the image digests. Grafana then starts on the internal network with no outbound request. Upstream's dashboards encode how the services connect, and every arm sees them, so they give the native arm part of what the Radius graph provides and narrow the measurable difference. The report says so. The dashboards and their provisioning files are part of the sealed fixture and pass the same leakage scan, since a dashboard or panel named after a fault flag would name the answer.
 
 ### Incident set
+
+The breadth and calibration targets below are for the later confirmatory path,
+not prerequisites for the first exploratory fault/healthy comparison.
 
 The analysis generalizes over incidents, not over repeated runs of one incident. Repeats measure how noisy the agent is. A distinct incident is a pair of fault mechanism and target component; changing only a magnitude or a seed makes a variant of the same incident, not a new one.
 
@@ -1036,6 +1155,10 @@ The weighted score remains as defined in [agent-evaluation-spec.md](agent-evalua
 
 ### Experimental design
 
+The inference, multi-model pilot and powered campaign below are confirmatory
+requirements. Exploratory batches retain matching, fresh sessions, randomization
+and provenance, but report descriptive development observations instead.
+
 - Match arms within exact Copilot model, model version, SDK/CLI/runtime, reasoning effort, prompt, tools, budget, scenario variant, seed, and host class.
 - Use cold contexts and a fresh Copilot session for every run.
 - Randomize arm order within each set.
@@ -1186,6 +1309,11 @@ Actual records use real immutable identifiers; placeholders above illustrate the
 
 ## Implementation roadmap
 
+This is the retained confirmatory roadmap, not the immediate delivery order.
+Follow [Current state and next steps](#current-state-and-next-steps) for the
+approved exploratory increment. Deferral does not mark any formal exit criterion
+passed.
+
 ### Phase 0: Freeze fixtures and setup cost
 
 Work:
@@ -1319,6 +1447,10 @@ Exit criteria:
 
 ## Recommended defaults and unresolved decisions
 
+Numeric campaign defaults and the multi-model selections below belong to the
+confirmatory path. Exploratory run settings and eligibility criteria require
+the approvals listed in [Exploratory learning path](#exploratory-learning-path).
+
 | Area | Recommended default | Status |
 |---|---|---|
 | Orchestrator | Inspect AI, pinned in `uv.lock` | Decided; task integration not built |
@@ -1327,7 +1459,7 @@ Exit criteria:
 | Scored application | OpenTelemetry Astronomy Shop; catalog application for harness development only | Decided |
 | Primary arms | Native, native with architecture document (written by a fresh Copilot session without the plan), fully Radius-enabled | Decided |
 | Treatment scope | Combined Radius repository experience only; no graph-only, skills-only, or factorial experiments | Owner decision, September 30, 2026 |
-| Results UI | Self-contained local HTML dashboard importing versioned campaign JSON, with JSON and CSV downloads | Implemented on this branch; campaign exporter and inferential analysis not built |
+| Results UI | Self-contained local HTML dashboard importing versioned campaign JSON, with JSON and CSV downloads | Dashboard and M2 verified exporter merged; live binding and inferential analysis not built |
 | Incident set | 20-50 distinct incidents, misleading-symptom incidents, and 10-15 percent no-fault controls, drawn from AIOpsLab and external injectors; flag fault code removed from agent-visible source, flag faults diagnosis-only | Decided; not built |
 | Smallest effect worth detecting | 15 percentage points | Decided; sets the campaign size |
 | Analysis plan | Pre-registered before the scored campaign; incident-clustered model; Holm correction across co-primary contrasts | Decided; plan not yet written |
@@ -1340,7 +1472,7 @@ Exit criteria:
 | Prompt | Neutral, no Radius/graph/cache/root-cause mention | Decided |
 | Radius fixture | Frozen validated `app.bicep`, repo config, graph, IDs/source refs, generic skills | Required; not built |
 | Trial budgets | 30 minutes wall clock and 100 tool calls, whichever comes first; high reasoning effort; identical across arms; exhaustion scores as failure; token, AI-credit, and cost usage recorded | Decided; revisited once after the pilot |
-| Harness failures | Rerun once at the end of the block with the same seed; a second failure excludes the trial; stop if harness failures exceed 5 percent or one arm's rate is more than twice another's | Decided; not built |
+| Harness failures | Rerun once at the end of the block with the same seed; a second failure excludes the trial; stop if harness failures exceed 5 percent or one arm's rate is more than twice another's | M2 retry/exclusion reduction implemented; live scheduling and campaign-stop enforcement remain |
 | Weighted score | Graph-grounding points awarded in every arm for the correct component and connection with evidence | Decided |
 | Escape probes | None inside scored trials; each trial is gated on `sandboxApplied: "true"` for every execution; harness-driven probes run in separate sessions on the same host and pins at re-verification and before each campaign batch | Decided; not built |
 | Models | Pilot: Claude Opus 5 and GPT-5.6 Sol. Scored: Claude Opus 5.5 and GPT-6 Sol, after a calibration check on each | Decided |
@@ -1358,7 +1490,9 @@ Exit criteria:
 | Astronomy Shop images | `ghcr.io`, pinned by digest | Declared exception; digests not yet recorded |
 | Human review | Blinded incident-rubric causal/citation adjudication gates each valid diagnosis; unresolved decisions stay unfinished. A separate random 10 percent second review measures agreement; 95 percent agreement required. Include human work in pilot costs. | Owner approved October 1, 2026 |
 
-Models, budgets, and the output schema are decided above. The Copilot SDK drives its own pinned CLI unless explicitly pointed at another binary; pinning the SDK-supplied CLI is preferred because it removes host machine state from the reproducibility surface, and both versions are recorded separately so a result cannot be misattributed. Before Phase 5, verify Azure access and select the Kubernetes/Radius deployment configuration.
+Confirmatory models and budgets, and the shared output schema, are decided above.
+Exploratory settings remain subject to the separate approval above.
+The Copilot SDK drives its own pinned CLI unless explicitly pointed at another binary; pinning the SDK-supplied CLI is preferred because it removes host machine state from the reproducibility surface, and both versions are recorded separately so a result cannot be misattributed. Before Phase 5, verify Azure access and select the Kubernetes/Radius deployment configuration.
 
 ## What this experiment can and cannot claim
 

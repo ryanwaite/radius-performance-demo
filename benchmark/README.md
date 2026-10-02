@@ -5,6 +5,49 @@ native and architecture-document repositories. It does not test graphs and
 skills separately. Follow the [completion plan](../docs/specs/benchmark-completion-plan.md)
 for the remaining work; the Astronomy Shop campaign is not yet runnable end to end.
 
+## Exploratory comparison: next operator path
+
+The owner's October 2 decision prioritizes one real externally injected Shop
+fault and a healthy counterpart across the three arms, then a small fixed
+development batch with one model. The
+[canonical exploratory policy](../docs/specs/copilot-radius-experiment-plan.md#exploratory-learning-path)
+governs this path. M2 merged in
+[PR #19](https://github.com/ryanwaite/radius-performance-demo/pull/19); keep its
+SQLite journal, human-review files, verified exporter and existing dashboard.
+No live three-arm comparison or integrated exploratory command exists yet.
+
+The next implementation slice connects the Shop lifecycle, real incident
+activation and trial-bound captures to `CampaignStore`, the submit/outcome
+contracts and an incident-owned human-review rubric. `ShopEnvironment.run_healthy`
+currently tears down after a healthy sample; `incidents.py` injects the catalogue
+MySQL case, not a Shop fault. `CPUReference` is an unqualified offline reference,
+not a live producer. Build the sealed native, architecture and Radius fixtures
+needed by this slice; do not replace the store or introduce a review service.
+
+Before running, obtain approval for the fault/healthy case, concrete exploratory
+stability and validity criteria, one model and matched budgets, and expected
+model/premium requests and runtime. Include authoring and confinement probes.
+The illustrative batch in the assessment is not an approved allowance. Measure
+integration costs before requesting the development batch.
+
+Formal M1/M4 acceptance remains open. Exploratory eligibility must distinguish
+recovered startup disturbances from relevant baseline/diagnosis failures while
+retaining raw startup records and limitations. Accidental faults during diagnosis
+invalidate comparisons; intentional CPU faults require independent activation
+evidence. Existing zero-lifetime and telemetry/load guards are unchanged.
+Neither `--calibrate` nor an offline reference export establishes eligibility.
+Full outbound tracing stays deferred; no new tracing tools or permissions.
+
+Keep effective sandbox/safety/cleanup, hidden-answer isolation, matched settings,
+fresh sessions, randomized order, real delivered-load/fault/telemetry evidence,
+and every planned assignment and failed attempt. Retry only harness failures,
+once after the block. Human mechanism/citation review and the independent audit
+remain required; missing review stays unfinished. Preserve ordinary shared
+dashboard guidance while reviewing actual incident-specific leakage. Version
+Radius changes on development cases, periodically rerun controls, and freeze
+before untouched holdout. Tuning from holdout results retires those cases to
+development. Formal inference and publication remain later work.
+
 ## Local results dashboard
 
 Open [`dashboard.html`](dashboard.html) directly in a local browser, then choose
@@ -1575,12 +1618,18 @@ bind copies are removed only after verified container cleanup.
 
 **Remaining acceptance work**
 
+These are formal M1/M4 and later integration gaps, not a new prerequisite queue
+for exploratory learning. Follow the [exploratory operator path](#exploratory-comparison-next-operator-path)
+above. No existing guard has changed, and no exploratory eligibility is claimed.
+
   - **Qualification and campaign integration.** There is still no frozen
     `offered-load.json`, Shop determinism campaign, agent trial, or report
-    exporter. A successful environment sample will not qualify a host.
+    binding from live Shop evidence to the implemented M2 exporter. A successful
+    environment sample will not qualify a host.
   - **Telemetry and outbound acceptance.** Retain the typed ingestion and
     missing-plugin controls. Extend outbound-attempt coverage beyond Grafana's
-    logs; network isolation alone does not prove services never tried to leave.
+    logs after separate owner approval; network isolation alone does not prove
+    services never tried to leave. That tracing work remains deferred.
     Investigate the unreproduced startup Prometheus HTTP 500 using the new
     complete backend logs. Metric gates now prevent observed export failures
     or missing periodic counter evidence from passing, but are not a repair
@@ -1603,7 +1652,7 @@ bind copies are removed only after verified container cleanup.
     minutes a cycle, fitting on one set of cycles and validating on a separate
     holdout, following the catalog app's method. It needs the user's go-ahead
     and a laptop kept awake and on power. Until it runs, the shop has no frozen
-    tolerance set and therefore cannot produce a verdict.
+    tolerance set and therefore cannot produce a formal qualification verdict.
   - **Host coverage.** Everything fitted here covers **this laptop only**. The
     Linux VM host class has no frozen tolerances, and by the rule above the
     suite will refuse to give a verdict there until it is qualified on that
@@ -1783,6 +1832,12 @@ and the shipped defaults agree exactly, and a test pins that agreement so a
 newly targeted flag surfaces rather than quietly weakening the gate.
 
 ### CPU limits are fitted, applied to every service, and verified by the kernel
+
+This section documents the implemented zero-lifetime rule and its measurement
+history. It remains the confirmatory rule. The
+[exploratory environment policy](../docs/specs/copilot-radius-experiment-plan.md#exploratory-environment-eligibility)
+separates startup recovery from baseline/diagnosis evidence, but concrete
+criteria need owner approval and a separate implementation before use.
 
 Upstream declares `deploy.resources.limits.memory` on all 28 services and
 `cpus` on none, so 28 services contend freely for the host's cores underneath
