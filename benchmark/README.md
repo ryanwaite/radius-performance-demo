@@ -23,6 +23,9 @@ currently tears down after a healthy sample; `incidents.py` injects the catalogu
 MySQL case, not a Shop fault. `CPUReference` is an unqualified offline reference,
 not a live producer. Build the sealed native, architecture and Radius fixtures
 needed by this slice; do not replace the store or introduce a review service.
+The [source-authoring preparation](#shop-source-authoring-workspaces) now creates
+the standalone Shop copies. Final Radius and architecture treatments remain
+unfinished pending owner-assisted setup.
 
 Before running, obtain approval for the fault/healthy case, concrete exploratory
 stability and validity criteria, one model and matched budgets, and expected
@@ -47,6 +50,126 @@ dashboard guidance while reviewing actual incident-specific leakage. Version
 Radius changes on development cases, periodically rerun controls, and freeze
 before untouched holdout. Tuning from holdout results retires those cases to
 development. Formal inference and publication remain later work.
+
+## Shop source authoring workspaces
+
+`radius_perf_eval.shop_fixtures` prepares the application source needed to
+author the treatments. It **does not build trial-ready treatments**. The owner
+asked to prepare a Radius workspace first, then help verify the latest Radius
+installation and generate the application graph. Exact versions remain unknown
+until that setup. No automatic install, upgrade, extra model request, incident
+selection or live Shop startup is part of these commands.
+
+The source is OpenTelemetry Astronomy Shop 3.1.0 at
+`dedc0178918e260823323b8d95005a8cb924b007`. The upstream tag was checked against
+that commit; the downloader uses the commit URL and checks the reviewed archive
+SHA-256. It never takes source from this benchmark repository or upgrades Shop.
+
+Run from the repository root. Only `fetch` needs network access, to download
+public source. Preparation, verification and recreation use Python's standard
+library and Git, without Docker or package installation. Each destination must
+be new; existing artifacts and owner edits are never overwritten.
+
+```bash
+ARTIFACTS=../radius-perf-eval-artifacts/shop-authoring-$(date -u +%Y%m%dT%H%M%SZ)
+mkdir -p "$ARTIFACTS"
+DOCKER_HOST=unix:///nonexistent/docker.sock PYTHONPATH=benchmark python3 -m radius_perf_eval.shop_fixtures fetch --output "$ARTIFACTS/upstream.tar.gz" > "$ARTIFACTS/fetch.json" &&
+DOCKER_HOST=unix:///nonexistent/docker.sock PYTHONPATH=benchmark python3 -m radius_perf_eval.shop_fixtures prepare --source-archive "$ARTIFACTS/upstream.tar.gz" --output "$ARTIFACTS/prepared" > "$ARTIFACTS/prepare.json" &&
+DOCKER_HOST=unix:///nonexistent/docker.sock PYTHONPATH=benchmark python3 -m radius_perf_eval.shop_fixtures verify --workspace "$ARTIFACTS/prepared/workspaces/native" --manifest "$ARTIFACTS/prepared/source.manifest.json" > "$ARTIFACTS/verify-native.json" &&
+DOCKER_HOST=unix:///nonexistent/docker.sock PYTHONPATH=benchmark python3 -m radius_perf_eval.shop_fixtures materialize --artifact "$ARTIFACTS/prepared/source.tar" --manifest "$ARTIFACTS/prepared/source.manifest.json" --output "$ARTIFACTS/recreated-native" > "$ARTIFACTS/recreated-native.json" &&
+printf '%s\n' "$ARTIFACTS" && cat "$ARTIFACTS/prepare.json"
+```
+
+`prepare` accepts a previously downloaded, hash-matching archive for fully
+offline recreation. The source tar has sorted entries, normalized Git file
+modes and fixed metadata. The manifest binds every included path, mode and
+digest; extraction checks the artifact digest and complete inventory before
+writing. It rejects unsafe paths, duplicates, links, special files, unsafe
+modes and oversized input. Git starts with an empty template, fixed identity
+and timestamp, and no inherited Git configuration. Verification checks the
+complete working tree and index inventory, clean status, one baseline commit,
+only the baseline branch, and absence of remotes, hooks, alternates and
+unexpected configuration. These are offline repository checks, **not OS
+confinement or authenticated provenance**.
+
+The versioned source policy includes service code and tests, supporting build
+files, Compose manifests, ordinary repository instructions, telemetry schemas,
+Grafana/Prometheus/Jaeger/collector configuration, and the upstream license.
+It excludes host/editor metadata, environment files, CI configuration,
+control-plane paths and optional recorded model conversations. The pinned
+archive contains no Kubernetes manifests; no substitute chart was fabricated.
+A neutral common README replaces the upstream landing page. `compose.defaults`
+derives public settings without credentials or host mounts; it is not a complete
+runtime environment. The upstream Makefile still expects `.env` and
+`.env.override`, which are deliberately absent. The optional agent replay
+profile cannot run without its excluded cassettes. Source/services and ordinary
+telemetry remain unchanged across copies; these commands do not claim to launch
+or validate the deployment.
+
+Files outside the workspaces record preparation:
+
+| Path under `prepared/` | Meaning |
+|---|---|
+| `source.tar`, `source.manifest.json` | Hashed source artifact, upstream pin, policy version and file inventory |
+| `source.review.json` | Excluded paths with hashes/modes/reasons, common transformations and omitted default keys |
+| `preparation.json` | Absolute workspace paths, synthetic tree/commit hashes and explicit unfinished setup states |
+| `native-to-architecture.json`, `native-to-radius.json` | Pending treatment differences; empty lists mean no treatment has been authored, not parity acceptance |
+| `workspaces/native/` | Native source authoring baseline |
+| `workspaces/architecture/` | Same baseline, awaiting the architecture document |
+| `workspaces/radius/` | Same baseline, awaiting actual Radius configuration, model, graph, tools and generic skills |
+
+The source manifest and preparation receipt declare `eligibleForTrials: false`.
+Public built-in flag code
+remains for source authoring; no fault has been selected and no incident-specific
+leakage clearance is claimed. The source allowlist is not a semantic leakage
+detector. Only the future incident-aware review can clear final treatments.
+The archive and review records must stay outside agent mounts.
+
+### Owner-assisted Radius handoff
+
+The actual prepared copies are under
+`../radius-perf-eval-artifacts/shop-authoring-20261002T192813Z/prepared/workspaces/`.
+Open `radius/` as its own local application workspace, not a worktree linked
+to this benchmark. No new GitHub repository or public remote was created.
+
+Verify the latest Radius installation with the owner before generating the
+model. Use the required Radius authoring and graph workflows against this
+application source; inspect licensing and provenance before copying any
+repository-scoped tools or skills. Never link personal configuration or skill
+directories. Capture the actual Radius/tool/skill versions, graph inputs,
+compilation and graph/source-reference evidence, configuration and setup cost.
+This preparation found an existing managed Radius executable but did not
+execute it or verify its version. No package or runtime upgrade was attempted.
+
+Freeze a real, usable Radius overlay only after those checks. Then mechanically
+extract architecture facts from its validated model and request the numerical
+model/premium allowance for the plan's isolated Claude Opus 5 author at high
+reasoning effort. Retain author prompt/transcript/model provenance outside the
+agent copies; measure token parity with all Radius additions using one named
+tokenizer. Neither an architecture placeholder nor a mock graph is supplied
+here. Final sealing/difference publication and live agent tool/skill usability
+remain unimplemented, not inferred from these offline repository checks.
+Any later smoke/confinement call needs its own approved allowance.
+
+### Offline source controls
+
+With the locked benchmark environment available, run:
+
+```bash
+DOCKER_HOST=unix:///nonexistent/docker.sock benchmark/.venv/bin/python -m pytest benchmark/tests/test_shop_fixtures.py benchmark/tests/test_shop_fixture_mutations.py -q -s
+```
+
+Tests use synthetic source inputs for rejection controls and repeatedly
+materialize standalone baselines. They plant forbidden files, modified bytes
+and modes, missing files, unsafe archive entries, hostile Git metadata and
+ambient Git settings. Mutation controls weaken each new rejection guard and
+selected call wiring. The real pinned-source preparation and reproduction
+receipts live beside the actual copies; raw test logs and earlier preparation
+attempts are in `../radius-perf-eval-artifacts/shop-fixtures-20261002/`.
+`pytest-final.log` and `pytest-driver.log` record the passing focused and existing
+driver checks. Earlier interrupted and failed control runs are retained.
+Those records establish source preparation, not completed M3, live usability,
+runtime equivalence or a campaign result.
 
 ## Local results dashboard
 
@@ -127,6 +250,7 @@ isolates the application under test, not the agent.
 | `cli.py` | `radius-perf-eval-env` (`doctor`/`trial`/`determinism`/`cleanup`) |
 | `campaign.py` | Prepared three-arm roster, append-only attempt journal, retry reduction, source-replaying report export |
 | `adjudication.py` | Blinded review packets, explicit human-decision ingestion, unqualified CPU-quota reference verifier |
+| `shop_fixtures.py` | Pinned source export and deterministic standalone authoring workspaces; no treatment sealing or trial admission |
 
 ## Packages come from CFS only
 
