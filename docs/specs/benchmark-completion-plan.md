@@ -8,13 +8,53 @@ three arms. Do not build graph-only, skills-only, factorial, or telemetry-overla
 experiments. The [canonical plan](copilot-radius-experiment-plan.md) governs
 protocol, budgets, grading, and analysis.
 
-The project is complete when an operator can build sealed fixtures, qualify a
-host, run a resumable diagnosis campaign, reproduce its analysis, inspect the
+**Owner decision, October 2, 2026:** separate exploratory learning from
+confirmatory publication. The immediate deliverable is one real externally
+injected Shop fault and a healthy counterpart across all three arms, followed
+by a small fixed development batch with one model. Keep M2, its SQLite journal,
+verified exporter and dashboard. The canonical
+[exploratory policy](copilot-radius-experiment-plan.md#exploratory-learning-path)
+governs eligibility, retained safeguards and unresolved run settings.
+
+The confirmatory project is complete when an operator can build sealed fixtures,
+qualify a host, run a resumable diagnosis campaign, reproduce its analysis, inspect the
 comparison in a local dashboard, and download the results. A working pilot is
 not evidence of uplift. Remediation, Kubernetes, and the human Canvas demo are
 not required for this finish line.
 
 ## Delivery sequence
+
+**Immediate path:** land the policy PR before implementing it. M2 merged in
+[PR #19](https://github.com/ryanwaite/radius-performance-demo/pull/19) on October 1
+at `ed56c60861e07b20440e242d7a58b4dc10c0c90f`; no live three-arm comparison exists.
+Formal M1/M4 acceptance remains incomplete. Exploratory eligibility is separate,
+not a waiver or an assertion that the host is qualified.
+
+| Increment | Work | Exit criterion |
+|---|---|---|
+| Real incident integration | After the policy lands and the owner settles the case and eligibility criteria, connect one external Shop fault and healthy counterpart, sealed three-arm fixtures, SDK/sandbox capture and human review to M2. Reuse existing boundaries rather than build a new orchestrator, store or review UI. | Real trial-bound activation, delivered-load, telemetry and lifecycle evidence enters M2; positive/negative controls reject broken evidence, hidden answers stay isolated, and treatment parity and usable Radius access are checked. |
+| Approved integration run | Request model/premium allowance and runtime before calls, including authoring/probes. Run fresh matched sessions in randomized arm order. | Complete roster and failed attempts persist; human decisions and independent audit support replay/export into the dashboard; missing reviews remain unfinished. Usage, runtime, setup and review cost are measured. |
+| Fixed development batch | Select cases, one model and matched budgets using integration measurements; obtain approval. Version Radius improvements on development cases and periodically rerun controls. | Descriptive outcomes against both controls and investigation traces identify benefits, regressions or uncertainty. Freeze a candidate before untouched holdout; tuning retires holdout cases to development. |
+
+The assessment's sample batch is illustrative, not a request budget or powered
+design. Concrete fault targets, stability/window criteria, run settings and
+allowances still need owner approval. Recovered startup disturbances must be
+distinguished from baseline/diagnosis-window problems without erasing failures;
+accidental faults during diagnosis invalidate the comparison. Intentional CPU
+faults need independent activation evidence, not a general pressure exception.
+Existing zero-lifetime guards remain unchanged until a separately reviewed
+exploratory implementation. Comprehensive outbound tracing stays deferred with
+its observation limits recorded; no new tooling or permissions are authorized.
+
+Keep effective confinement, cleanup, matched evidence access, human
+mechanism/citation review and independent audit, the full roster and
+once-after-block harness-only retry. Review actual incident-specific leakage while retaining
+ordinary shared dashboard hints. Synthetic CPU reference captures are not Shop
+findings. Broad libraries, cloud scale, inference/publication infrastructure and
+exhaustive negative proofs wait until exploratory learning justifies them.
+
+**Retained milestone accounting:** the history and M1-M8 criteria below describe
+formal completion, not prerequisites that must all precede exploratory learning.
 
 **Implementation progress:** PR #14 merged the M1 environment driver and
 offline assets. PR #15 added shared typed log bootstrap, direct
@@ -68,7 +108,7 @@ The [criterion accounting](../../benchmark/README.md#m2-exit-criterion-accountin
 maps M2's full exit criteria to implemented controls and separates the later
 live capture, operational review and incident-qualification responsibilities.
 
-Each milestone is a reviewable PR or small sequence of PRs. Dependencies below
+Each milestone is a reviewable PR or small sequence of PRs. Formal dependencies below
 are explicit; environment work and answer/report contracts can proceed
 independently. No date or campaign cost is promised before the first integrated
 trial measures runtime and usage.
@@ -95,11 +135,19 @@ runtime, fixtures, incident versions, seeds, host class, tool policy and budget.
 A prepared campaign contains its entire assignment roster, including runs not
 yet started. Resume uses that roster and never silently creates new trials.
 
-The first end-to-end run is the integration checkpoint. Do not expand the
+The first exploratory end-to-end run is the integration checkpoint. Do not expand the
 incident library or provision scored hosts until it establishes that the agent
 can actually use the Radius additions and that the same graders work for all
 arms. Do not count synthetic dashboard fixtures or catalogue determinism runs
 as Astronomy Shop comparison evidence.
+
+There is no integrated exploratory command yet. `ShopEnvironment.run_healthy`
+currently finishes and tears down an environment sample; `incidents.py` targets
+the catalogue application. The next slice supplies a real Shop fault/healthy
+lifecycle and capture binding to `CampaignStore`, an incident-owned verifier
+and rubric, and the sealed fixtures required for the SDK session. It must not
+promote `CPUReference` snapshots into authenticated Shop evidence. Keep the
+existing report schema and dashboard rather than adding a reporting architecture.
 
 ### Approval and cost gates
 
@@ -107,6 +155,9 @@ Ask the owner before any model call, naming the expected requests and allowance.
 This includes Radius/document authoring, sandbox registration, smoke runs,
 calibration, and the pilot. Model calls and billable requests are different;
 report both measured quantities rather than assuming one request per tool call.
+The integration run measures cost; the development batch allowance follows that
+measurement, including setup and human review. Approval of this policy is not
+approval of any live request budget.
 Before M4's laptop fit/holdout, request approval for approximately three hours.
 Other runs expected to exceed an hour need a separate estimate and approval.
 Before M7, request VM and storage cost approval using measured Shop/harness
@@ -120,7 +171,7 @@ picker. No data leaves the browser. No model calls, registry requests, telemetry
 or cloud resources are required. The initial screen says no campaign is loaded;
 it never displays fabricated benchmark results.
 
-**Implemented on this branch:** the dashboard, import consistency checks,
+**Implemented on main:** the dashboard, import consistency checks,
 descriptive summaries, model/incident filters, trial details, and JSON/CSV
 downloads, with an offline source-replaying campaign exporter. Open the HTML
 file directly in a browser. Automated checks exercise
