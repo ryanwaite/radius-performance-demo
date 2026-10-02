@@ -32,7 +32,55 @@ authorize model requests or declare formal M1/M4 acceptance complete.
 **Baseline:** [PR #19](https://github.com/ryanwaite/radius-performance-demo/pull/19)
 merged on October 1 at `ed56c60861e07b20440e242d7a58b4dc10c0c90f`.
 M2's contracts and human-adjudication reference are complete; no live three-arm
-comparison exists. This policy increment changes documentation only.
+comparison exists. The exploratory policy subsequently merged in
+[PR #20](https://github.com/ryanwaite/radius-performance-demo/pull/20).
+
+**Owner-directed fixture preparation, October 2, 2026:** keep OpenTelemetry
+Astronomy Shop 3.1.0 at `dedc0178918e260823323b8d95005a8cb924b007`.
+Prepare standalone source workspaces now; the owner will help verify the Radius
+installation and generate the real application graph. Use the latest Radius
+available at that setup, then record and freeze the exact installed Radius,
+tool and skill versions and graph inputs before comparisons. The exact release
+is not known yet. This does not authorize an automatic installation or upgrade,
+extra model calls, or a floating version during trials.
+
+The source-preparation module now exports the pinned public application, not
+this benchmark checkout, and materializes independent native, architecture and
+Radius authoring repositories. All start with the same source bytes and one
+synthetic Git baseline. The source tar, per-file hashes/modes, exclusion and
+common-change inventory, preparation receipt and pending treatment differences
+stay outside the copies. No host configuration, source history or `.env` file
+is copied. Upstream licensing, service source/tests, Compose manifests and
+ordinary telemetry assets remain; a neutral README and non-secret source
+defaults explain the export. This is source preparation, not a live deployment.
+
+The concrete handoff is
+`../radius-perf-eval-artifacts/shop-authoring-20261002T192813Z/prepared/`;
+the owner's Radius workspace is `workspaces/radius/` below it. The sibling
+`workspaces/native/` and `workspaces/architecture/` are source baselines, not
+completed experimental controls. The
+[recreation commands and handoff](../../benchmark/README.md#shop-source-authoring-workspaces)
+describe the artifact files and limitations.
+
+**M3 remains incomplete.** Radius has no authored model, graph, repository
+configuration or installed repository-scoped tools/skills yet. Its treatment
+is draft and unsealed. The architecture document must follow validated Radius
+facts and the approved isolated-author policy, including request approval,
+provenance and token parity; it has not been written. Empty difference lists
+are labelled pending, not successful parity checks. Public built-in flag code
+remains unchanged for source authoring; there is no selected incident and no
+incident-specific leakage clearance. Optional recorded LLM conversations were
+excluded, so that optional upstream replay profile is not runnable as exported.
+The source manifest and preparation receipt say `eligibleForTrials: false`.
+
+Offline source and guard-mutation controls passed with Docker unreachable.
+The existing Shop driver regression checks also passed. Raw logs, including
+the earlier interrupted and failed mutation-control runs, are preserved in
+`../radius-perf-eval-artifacts/shop-fixtures-20261002/`; use `pytest-final.log`
+and `pytest-driver.log` for the final outcomes. The real source inspection
+and repeated-baseline receipts live alongside the handoff. They establish
+identical exported source and reproducible Git baselines, not running-service
+equivalence, runtime confinement or agent usability.
 
 **Merged in PR #14:** the [offline dashboard](../../benchmark/dashboard.html) imports `radius-comparison-v1` reports, displays descriptive per-model comparisons and exclusions, and downloads full JSON or filtered CSV. It has an empty initial state, rejects inconsistent reports, and hides interim scored-arm results. It is not connected to a campaign runner yet. The offline exporter described below implements the M2 reporting boundary; authenticated Shop evidence and pre-registered analysis remain M5/M6/M8 work.
 
@@ -264,7 +312,7 @@ activation and sealed-fixture leakage enforcement remain M5/M6 and M3 work.
 **Next, in order.** These steps replace the previous publication-first queue,
 not its formal acceptance criteria.
 
-1. **Land this policy before implementing it.** Record exploratory eligibility separately from confirmatory acceptance and retain the open decisions below. *Exit:* the owner merges this documentation PR; no runtime guard has changed.
+1. **Finish owner-assisted treatment setup.** The exploratory policy merged in PR #20. Use the prepared standalone Radius workspace, verify the latest installation and real graph, then freeze exact tool/skill/model inputs. Obtain the authoring request allowance before generating the architecture document from validated facts. Review the final artifacts against the selected incident and finalize declared treatment differences. *Exit:* real Radius access and source references work, architecture parity is measured, and all three treatment artifacts pass their own sealing checks. Source-only preparation does not meet this exit.
 2. **Connect one real Shop incident and healthy counterpart to M2.** The current `ShopEnvironment.run_healthy` tears down after an environment sample, `incidents.py` injects only the catalogue MySQL case, and `CPUReference` accepts operator-attested reference captures. Build the narrow Shop lifecycle/capture binding, external injector and incident rubric, plus the three sealed fixtures needed to exercise them. Reuse the existing SDK, sandbox, submit tool, store and exporter. Agree the target, window criteria and run settings before code relies on them. *Exit:* fault/healthy activation, delivered load, agent-visible telemetry, scope, safety and cleanup have real trial-bound producers and positive/negative controls; hidden answers are isolated, fixture parity and Radius access are checked, and actual evidence can enter the existing human-review/export path. No reference capture is relabelled as Shop evidence.
 3. **Run the bounded integration comparison after explicit approval.** Request the expected model/premium requests and runtime, including fixture authoring and confinement probes. Use fresh sessions, matched settings and randomized arm order for the fault and healthy cases. *Exit:* the complete roster and all attempts survive through human adjudication, the independent audit, verified export and dashboard; unfinished reviews remain visible. Record request usage, agent time, setup and human-review cost. Report integration observations, not scientific findings.
 4. **Use a small fixed development batch to improve Radius.** Choose cases, one model, budgets and validity rules before the batch; request its allowance using measured integration costs. *Exit:* both control contrasts, case outcomes, healthy false alarms, failures, missing reviews and costs are interpretable; a versioned Radius change has a stated expected benefit and regression check. Periodically rerun controls under matching settings.
@@ -614,6 +662,13 @@ A worktree remains linked to the parent repository's object database, configurat
 The benchmark repository and hidden validators should ultimately live outside the public application fixture. Until that separation is implemented, the fixture builder must enforce a strict allowlist and construct artifacts without exposing the source checkout.
 
 ### Phase 0 fixture construction
+
+The implemented `radius_perf_eval.shop_fixtures` commands prepare **source-only
+authoring workspaces**, not these final treatment artifacts. The owner-directed
+staging decision in [Current state](#current-state-and-next-steps) leaves the
+Radius overlay and architecture document unfinished until assisted setup and
+approved authoring. Their pending difference manifests cannot admit a trial.
+See the [source preparation commands](../../benchmark/README.md#shop-source-authoring-workspaces).
 
 Build and seal three artifacts from the same pinned application source commit:
 

@@ -24,7 +24,7 @@ not required for this finish line.
 
 ## Delivery sequence
 
-**Immediate path:** land the policy PR before implementing it. M2 merged in
+**Immediate path:** the exploratory policy merged in PR #20. M2 merged in
 [PR #19](https://github.com/ryanwaite/radius-performance-demo/pull/19) on October 1
 at `ed56c60861e07b20440e242d7a58b4dc10c0c90f`; no live three-arm comparison exists.
 Formal M1/M4 acceptance remains incomplete. Exploratory eligibility is separate,
@@ -83,6 +83,25 @@ No new tracing tooling or permissions are authorized.
 The dashboard and M2's offline attempt/report boundary are implemented.
 M2 also implements the owner-approved file-based human-adjudication reference.
 Qualified production incidents and the later campaign milestones remain unbuilt.
+
+**M3 source-authoring increment:** `radius_perf_eval.shop_fixtures` prepares
+the allowlisted pinned Shop application source as a hashed tar and materializes
+independent Git baselines for native, architecture and Radius authoring.
+It retains source/tests, manifests, ordinary instructions, licenses and
+telemetry, with an explicit exclusion/common-change inventory. It does not
+export the benchmark checkout or inherit host Git state. The concrete copies
+are under `../radius-perf-eval-artifacts/shop-authoring-20261002T192813Z/prepared/workspaces/`.
+See the [commands and limitations](../../benchmark/README.md#shop-source-authoring-workspaces).
+
+The owner will help verify the latest Radius installation and generate the
+graph in `radius/`. Exact installed Radius/tool/skill versions must then be
+frozen, rather than floating during comparisons. No installation, generation
+call or usability probe was authorized by source preparation. Radius remains
+draft/unsealed, and `architecture/` has no architecture document until validated
+graph facts and approved isolated authoring exist. Source receipts explicitly
+deny trial eligibility. Incident-specific leakage review, final treatment
+differences, architecture token parity, actual tool/skill isolation and live
+agent usability are still open; **M3 is not complete**.
 
 **M2 first increment:** directed answers and canonical endpoint mapping are
 implemented. The shared diagnosis gate checks the hidden causal target and
