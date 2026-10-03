@@ -129,8 +129,28 @@ The archive and review records must stay outside agent mounts.
 
 The actual prepared copies are under
 `../radius-perf-eval-artifacts/shop-authoring-20261002T192813Z/prepared/workspaces/`.
-Open `radius/` as its own local application workspace, not a worktree linked
-to this benchmark. No new GitHub repository or public remote was created.
+Open `radius/` as its own application workspace, not a worktree linked to this
+benchmark. On October 2, the owner approved creating private
+[`ryanwaite/astronomy-shop-radius`](https://github.com/ryanwaite/astronomy-shop-radius)
+because the Radius authoring tools require GitHub backing. The coordinating
+session created and verified it with `main` at
+`12dbef5dfde1df1b902ca74b7d2b03ada89eceef`, tree
+`7d9c5587e18627943c8237229b1fea0293c958b5`. The existing local checkout now uses
+`https://github.com/ryanwaite/astronomy-shop-radius.git` as `origin`, with `main`
+tracking `origin/main`. Before pushing, the coordinator checked every tracked
+file against `source.manifest.json` and the clean synthetic baseline. No local
+setup changes existed, and no benchmark files or credentials were uploaded.
+The native and architecture siblings remain unchanged and unpublished.
+
+This supersedes the earlier remote-free handoff description: `radius/` is now
+a **GitHub-backed authoring checkout, not a scored trial workspace**. Preserve
+the original source receipt unchanged as historical preparation evidence. It
+does not attest the checkout's current remote state, and the source verifier's
+no-remotes check is not expected to pass on this authoring checkout. Do not
+weaken that verifier or rewrite the receipt to admit it. No remote-free trial
+seal exists; the source-only draft remains `eligibleForTrials: false`. Final
+trials still require fresh workspaces from sealed exports under the approved
+trial policy.
 
 Verify the latest Radius installation with the owner before generating the
 model. Use the required Radius authoring and graph workflows against this
@@ -140,6 +160,20 @@ directories. Capture the actual Radius/tool/skill versions, graph inputs,
 compilation and graph/source-reference evidence, configuration and setup cost.
 This preparation found an existing managed Radius executable but did not
 execute it or verify its version. No package or runtime upgrade was attempted.
+The GitHub handoff did not run Radius installation, generation or a model call.
+
+During assisted setup, inventory which Radius capabilities need GitHub, the
+data they use, and whether the need is for authoring or runtime diagnosis.
+Every trial copy already contains local application source; authoring access
+does not prove diagnostic access is needed. Follow the canonical
+[GitHub access boundary](../docs/specs/copilot-radius-experiment-plan.md#authoring-and-diagnostic-github-access):
+if runtime access is necessary, propose assigned-repository read access and
+comparable source browsing for the controls, excluding benchmark material,
+hidden answers and other arms. Freeze remote state and record the tool/network
+policy before runs, subject to explicit owner approval. The current scored
+policy still denies general GitHub access; Radius tools remain treatment, not
+tools promised to every arm. Independent fixture work need not wait for this
+assessment.
 
 Freeze a real, usable Radius overlay only after those checks. Then mechanically
 extract architecture facts from its validated model and request the numerical
