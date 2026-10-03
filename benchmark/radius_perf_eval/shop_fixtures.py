@@ -270,6 +270,11 @@ def materialize(artifact: Path, manifest: dict, output: Path) -> dict:
     require(REQUIRED_FILES <= files.keys(), "empty or incomplete application fixture")
     require(all(exclusion(n) is None or n == "compose.defaults" for n in files),
             "forbidden source file")
+    return write_workspace(files, manifest, output)
+
+
+def write_workspace(files: dict[str, tuple[bytes, int]], manifest: dict, output: Path) -> dict:
+    """Write already validated files and verify the complete standalone baseline."""
     output.mkdir(parents=True, exist_ok=False)
     for name, (data, mode) in files.items():
         path = output / name
