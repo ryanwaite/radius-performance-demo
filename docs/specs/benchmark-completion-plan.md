@@ -93,8 +93,24 @@ export the benchmark checkout or inherit host Git state. The concrete copies
 are under `../radius-perf-eval-artifacts/shop-authoring-20261002T192813Z/prepared/workspaces/`.
 See the [commands and limitations](../../benchmark/README.md#shop-source-authoring-workspaces).
 
-The owner will help verify the latest Radius installation and generate the
-graph in `radius/`. Exact installed Radius/tool/skill versions must then be
+**GitHub-backed authoring handoff, October 2, 2026:** the owner approved private
+[`ryanwaite/astronomy-shop-radius`](https://github.com/ryanwaite/astronomy-shop-radius)
+to supply the GitHub backing required by the Radius authoring tools. The
+coordinator verified the tracked source against `source.manifest.json` and the
+clean synthetic baseline before pushing `main` at
+`12dbef5dfde1df1b902ca74b7d2b03ada89eceef`, tree
+`7d9c5587e18627943c8237229b1fea0293c958b5`. The existing `radius/` checkout now
+has that repository as `origin` and tracks `origin/main`. No local setup
+changes, benchmark files or credentials were uploaded; native and architecture
+siblings remain unchanged and unpublished. No Radius installation, generation
+or model call ran.
+
+This is an authoring checkout, not a scored trial workspace. Preserve the
+previous source receipt as immutable historical evidence, not proof of the
+checkout's current remote-free state. No remote-free trial seal exists, and
+the source-only draft remains ineligible. The owner will help verify the
+latest Radius installation and generate and validate the graph in this
+GitHub-backed checkout. Exact installed Radius/tool/skill versions must then be
 frozen, rather than floating during comparisons. No installation, generation
 call or usability probe was authorized by source preparation. Radius remains
 draft/unsealed, and `architecture/` has no architecture document until validated
@@ -102,6 +118,18 @@ graph facts and approved isolated authoring exist. Source receipts explicitly
 deny trial eligibility. Incident-specific leakage review, final treatment
 differences, architecture token parity, actual tool/skill isolation and live
 agent usability are still open; **M3 is not complete**.
+
+During assisted setup, inventory GitHub-dependent Radius capabilities and
+distinguish authoring needs from runtime diagnosis needs. Local application
+source already exists in every trial copy. If runtime GitHub is necessary,
+bring the owner a proposal for assigned-repository read access with comparable
+source browsing for controls, no benchmark/hidden-answer/other-arm exposure,
+and frozen remote state and tool/network policy before runs. The canonical
+[access boundary](copilot-radius-experiment-plan.md#authoring-and-diagnostic-github-access)
+retains the current denial of general GitHub access in scored trials until an
+explicit revision is approved. Radius tools remain part of the treatment, not
+a promise of identical tools. This assessment does not block independent
+fixture progress.
 
 **M2 first increment:** directed answers and canonical endpoint mapping are
 implemented. The shared diagnosis gate checks the hidden causal target and

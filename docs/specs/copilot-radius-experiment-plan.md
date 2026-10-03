@@ -62,6 +62,30 @@ completed experimental controls. The
 [recreation commands and handoff](../../benchmark/README.md#shop-source-authoring-workspaces)
 describe the artifact files and limitations.
 
+**Owner-approved GitHub authoring handoff, October 2, 2026:** the standalone
+prepared checkout lacked the GitHub backing required by the Radius authoring
+tools. The owner approved creating private
+[`ryanwaite/astronomy-shop-radius`](https://github.com/ryanwaite/astronomy-shop-radius).
+The coordinating session created and verified that repository with `main` at
+`12dbef5dfde1df1b902ca74b7d2b03ada89eceef`, tree
+`7d9c5587e18627943c8237229b1fea0293c958b5`. It checked every tracked file against
+`source.manifest.json` and the clean synthetic baseline before pushing.
+There were no local setup changes; no benchmark files or credentials were
+uploaded. The existing `workspaces/radius/` now has
+`origin` set to `https://github.com/ryanwaite/astronomy-shop-radius.git`, and
+`main` tracks `origin/main`. Native and architecture siblings remain unchanged
+and unpublished. No Radius installation, generation or model call ran.
+
+That checkout is now a **GitHub-backed authoring checkout, not a scored trial
+workspace**. The prior source receipt is immutable historical evidence of
+preparation, not an attestation that this checkout is still remote-free.
+Do not rewrite it to describe the new remote. No remote-free trial seal exists;
+the source-only draft remains ineligible. During assisted setup, inventory
+GitHub dependencies by authoring versus diagnosis capability under the
+[authoring and diagnostic access boundary](#authoring-and-diagnostic-github-access).
+This assessment does not block source preparation or other fixture work that
+does not depend on a runtime access decision.
+
 **M3 remains incomplete.** Radius has no authored model, graph, repository
 configuration or installed repository-scoped tools/skills yet. Its treatment
 is draft and unsealed. The architecture document must follow validated Radius
@@ -312,7 +336,7 @@ activation and sealed-fixture leakage enforcement remain M5/M6 and M3 work.
 **Next, in order.** These steps replace the previous publication-first queue,
 not its formal acceptance criteria.
 
-1. **Finish owner-assisted treatment setup.** The exploratory policy merged in PR #20. Use the prepared standalone Radius workspace, verify the latest installation and real graph, then freeze exact tool/skill/model inputs. Obtain the authoring request allowance before generating the architecture document from validated facts. Review the final artifacts against the selected incident and finalize declared treatment differences. *Exit:* real Radius access and source references work, architecture parity is measured, and all three treatment artifacts pass their own sealing checks. Source-only preparation does not meet this exit.
+1. **Finish owner-assisted treatment setup.** The exploratory policy merged in PR #20. Use the GitHub-backed [Radius authoring repository](https://github.com/ryanwaite/astronomy-shop-radius) and its existing local checkout, verify the latest installation and real graph, then freeze exact tool/skill/model inputs. Inventory authoring versus diagnostic GitHub dependencies; bring any required runtime access revision to the owner before relying on it. Obtain the authoring request allowance before generating the architecture document from validated facts. Review the final artifacts against the selected incident and finalize declared treatment differences. *Exit:* real Radius access and source references work, architecture parity is measured, and all three treatment artifacts pass their own sealing checks. Source-only preparation and the GitHub-backed authoring checkout do not meet this exit.
 2. **Connect one real Shop incident and healthy counterpart to M2.** The current `ShopEnvironment.run_healthy` tears down after an environment sample, `incidents.py` injects only the catalogue MySQL case, and `CPUReference` accepts operator-attested reference captures. Build the narrow Shop lifecycle/capture binding, external injector and incident rubric, plus the three sealed fixtures needed to exercise them. Reuse the existing SDK, sandbox, submit tool, store and exporter. Agree the target, window criteria and run settings before code relies on them. *Exit:* fault/healthy activation, delivered load, agent-visible telemetry, scope, safety and cleanup have real trial-bound producers and positive/negative controls; hidden answers are isolated, fixture parity and Radius access are checked, and actual evidence can enter the existing human-review/export path. No reference capture is relabelled as Shop evidence.
 3. **Run the bounded integration comparison after explicit approval.** Request the expected model/premium requests and runtime, including fixture authoring and confinement probes. Use fresh sessions, matched settings and randomized arm order for the fault and healthy cases. *Exit:* the complete roster and all attempts survive through human adjudication, the independent audit, verified export and dashboard; unfinished reviews remain visible. Record request usage, agent time, setup and human-review cost. Report integration observations, not scientific findings.
 4. **Use a small fixed development batch to improve Radius.** Choose cases, one model, budgets and validity rules before the batch; request its allowance using measured integration costs. *Exit:* both control contrasts, case outcomes, healthy false alarms, failures, missing reviews and costs are interpretable; a versioned Radius change has a stated expected benefit and regression check. Periodically rerun controls under matching settings.
@@ -730,6 +754,26 @@ Recommended Git visibility is **yes**: Copilot should have `git status`, `git di
 Initially deny general outbound internet from the scored sandbox. Permit Copilot/model control connectivity through a narrowly controlled path outside the application sandbox, plus only explicitly required local trial endpoints.
 
 The agent must not fetch the public benchmark repository, search published expected answers, add arbitrary Git remotes, or query public code search. If GitHub access becomes necessary for a later task class, expose a controlled mirror containing only the assigned fixture and record that access as a new tool/treatment version.
+
+#### Authoring and diagnostic GitHub access
+
+The owner-approved private Radius repository supports treatment authoring.
+Application source already exists locally in every trial copy. An authoring
+tool's GitHub dependency therefore does not establish that runtime diagnosis
+needs GitHub access, nor does publishing this authoring repository authorize it.
+The scored policy above continues to deny general GitHub access.
+
+During owner-assisted setup, record which Radius capabilities require GitHub,
+what repository data they use, and whether they are needed only for authoring
+or also during diagnosis. If diagnosis requires GitHub, propose narrowly scoped
+read access to only the assigned repository, with comparable application-source
+browsing for native and architecture controls. Exclude the benchmark, hidden
+answers and other arms. Pin and freeze the remote state, and record the proposed
+tool/network policy before runs. The owner must approve an explicit plan
+revision before implementation or trial use; neither broad internet access nor
+identical tools across arms is implied. Radius tools remain part of the treatment.
+Until that decision, the existing scored network and workspace rules stand.
+Independent fixture preparation can continue.
 
 ### Reproducibility record
 
