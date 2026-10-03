@@ -23,9 +23,11 @@ currently tears down after a healthy sample; `incidents.py` injects the catalogu
 MySQL case, not a Shop fault. `CPUReference` is an unqualified offline reference,
 not a live producer. Build the sealed native, architecture and Radius fixtures
 needed by this slice; do not replace the store or introduce a review service.
-The [source-authoring preparation](#shop-source-authoring-workspaces) now creates
-the standalone Shop copies. Final Radius and architecture treatments remain
-unfinished pending owner-assisted setup.
+The [source-authoring preparation](#shop-source-authoring-workspaces) creates
+the standalone Shop copies. The [pinned Radius import](#pinned-radius-overlay-import)
+now captures the owner's merged model and configuration. Static profile/runtime
+gaps and unverified diagnostic tool access keep the treatment unsealed;
+the architecture control remains unwritten.
 
 Before running, obtain approval for the fault/healthy case, concrete exploratory
 stability and validity criteria, one model and matched budgets, and expected
@@ -152,15 +154,17 @@ seal exists; the source-only draft remains `eligibleForTrials: false`. Final
 trials still require fresh workspaces from sealed exports under the approved
 trial policy.
 
-Verify the latest Radius installation with the owner before generating the
-model. Use the required Radius authoring and graph workflows against this
-application source; inspect licensing and provenance before copying any
-repository-scoped tools or skills. Never link personal configuration or skill
-directories. Capture the actual Radius/tool/skill versions, graph inputs,
-compilation and graph/source-reference evidence, configuration and setup cost.
-This preparation found an existing managed Radius executable but did not
-execute it or verify its version. No package or runtime upgrade was attempted.
-The GitHub handoff did not run Radius installation, generation or a model call.
+The owner subsequently generated the model and merged
+[ryanwaite/astronomy-shop-radius#1](https://github.com/ryanwaite/astronomy-shop-radius/pull/1)
+at `dce2f8f596e2eda9d7d07c114cb44749dc27acb0`. The import below captures the
+committed files without touching that authoring workspace. The
+[static review](../docs/specs/radius-overlay-review.md) records source parity,
+generation history, concrete model gaps and remaining setup evidence.
+The reported generator version is `0.2.0`; installed Radius CLI and extension
+versions remain unknown. Neither the original handoff nor this offline import
+ran installation, generation or a model call. The intervening owner-assisted
+generation is recorded separately. Never link personal configuration or skill
+directories.
 
 During assisted setup, inventory which Radius capabilities need GitHub, the
 data they use, and whether the need is for authoring or runtime diagnosis.
@@ -175,7 +179,11 @@ policy still denies general GitHub access; Radius tools remain treatment, not
 tools promised to every arm. Independent fixture work need not wait for this
 assessment.
 
-Freeze a real, usable Radius overlay only after those checks. Then mechanically
+Correct and validate the model's selected profile and runtime contracts in the
+application repository, then freeze a usable Radius overlay after those checks.
+Every graph operation must go through the Radius extension in that application
+session, never a direct `rad` command or a graph opened on this benchmark.
+Then mechanically
 extract architecture facts from its validated model and request the numerical
 model/premium allowance for the plan's isolated Claude Opus 5 author at high
 reasoning effort. Retain author prompt/transcript/model provenance outside the
@@ -184,6 +192,67 @@ tokenizer. Neither an architecture placeholder nor a mock graph is supplied
 here. Final sealing/difference publication and live agent tool/skill usability
 remain unimplemented, not inferred from these offline repository checks.
 Any later smoke/confinement call needs its own approved allowance.
+
+### Pinned Radius overlay import
+
+This consumes immutable upstream and application archives, not the owner's
+checkout. Only the download commands need network access. The importer uses
+Python's standard library and Git; it does not load Radius, Docker, host
+configuration, credentials or personal skills. Run from the repository root:
+
+```bash
+ARTIFACTS=../radius-perf-eval-artifacts/radius-overlay-$(date -u +%Y%m%dT%H%M%SZ)
+mkdir -p "$ARTIFACTS"
+DOCKER_HOST=unix:///nonexistent/docker.sock PYTHONPATH=benchmark python3 -m radius_perf_eval.shop_fixtures fetch --output "$ARTIFACTS/upstream.tar.gz" > "$ARTIFACTS/fetch.json" &&
+gh api repos/ryanwaite/astronomy-shop-radius/tarball/dce2f8f596e2eda9d7d07c114cb44749dc27acb0 > "$ARTIFACTS/application.tar.gz" &&
+DOCKER_HOST=unix:///nonexistent/docker.sock PYTHONPATH=benchmark python3 -m radius_perf_eval.radius_overlay --source-archive "$ARTIFACTS/upstream.tar.gz" --application-archive "$ARTIFACTS/application.tar.gz" --output "$ARTIFACTS/imported" > "$ARTIFACTS/import.json" &&
+DOCKER_HOST=unix:///nonexistent/docker.sock PYTHONPATH=benchmark python3 -m radius_perf_eval.radius_overlay --source-archive "$ARTIFACTS/upstream.tar.gz" --application-archive "$ARTIFACTS/application.tar.gz" --output "$ARTIFACTS/recreated" > "$ARTIFACTS/recreated.json" &&
+cmp "$ARTIFACTS/imported/source.tar" "$ARTIFACTS/recreated/source.tar" &&
+cmp "$ARTIFACTS/imported/radius.tar" "$ARTIFACTS/recreated/radius.tar" &&
+cmp "$ARTIFACTS/imported/native-to-radius.json" "$ARTIFACTS/recreated/native-to-radius.json" &&
+printf '%s\n' "$ARTIFACTS" && cat "$ARTIFACTS/import.json"
+```
+
+For fully offline recreation, reuse the previously captured archives and invoke
+the importer with a new output directory. Existing directories are refused.
+The archive pin rejects unexpected content before extraction; complete source
+comparison rejects additions, deletions, byte changes and mode changes outside
+the exact overlay. The pre-existing CRLF-to-LF Git normalization of the Gradle
+batch files is recorded, not applied to either arm. Every common working-tree
+file still matches the original native source tar. Fresh Git baselines have
+no source history, remotes or inherited host configuration. The source-only
+verifier is not weakened to admit Radius files.
+
+| Path under `imported/` | Meaning |
+|---|---|
+| `source.tar`, `source.manifest.json`, `source.review.json` | Independently reconstructed native source and unchanged source policy |
+| `radius-overlay.tar` | Exact committed `.radius` additions |
+| `radius.tar`, `radius.manifest.json` | Native working-tree bytes plus the unchanged overlay, with complete inventory and digests |
+| `native-to-radius.json` | Every common source file, every added overlay file, and explicit source-tar/Git normalizations |
+| `setup-inventory.json` | Examined tree, raw and normalized model hashes, config, reported generator version and explicit unknown tool/skill/live states |
+| `import.json`, `workspaces/{native,radius}/` | Incrementally saved baseline identities and independently materialized draft repositories |
+
+Both draft manifests say `eligibleForTrials: false`. The inventory's
+`originHashMatchesModel` uses Radius's normalized-text contract, not the raw
+archive hash. That check passes for this model; it does not qualify semantics.
+The importer captures a known model with
+[documented profile and runtime-contract gaps](../docs/specs/radius-overlay-review.md).
+It does not repair the model, infer live graph equivalence, add missing tools or
+authorize incident-specific leakage clearance. No architecture facts/document
+are manufactured before model validation. Runtime GitHub requirements and
+app-hosted diagnostic exposure require the targeted owner check in that review.
+
+The following offline command covers import/recreation, common source bytes,
+provenance normalization, rejection controls, guard mutations and the extracted
+workspace-writing helper:
+
+```bash
+DOCKER_HOST=unix:///nonexistent/docker.sock benchmark/.venv/bin/python -m pytest benchmark/tests/test_radius_overlay.py benchmark/tests/test_radius_overlay_mutations.py benchmark/tests/test_shop_fixtures.py benchmark/tests/test_shop_fixture_mutations.py -q -s
+```
+
+The real capture and raw logs live under
+`../radius-perf-eval-artifacts/radius-import-20261003/`; the timestamped README
+command receipts are separate corrected captures. Earlier records are retained.
 
 ### Offline source controls
 

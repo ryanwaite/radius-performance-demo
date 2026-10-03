@@ -108,13 +108,26 @@ or model call ran.
 This is an authoring checkout, not a scored trial workspace. Preserve the
 previous source receipt as immutable historical evidence, not proof of the
 checkout's current remote-free state. No remote-free trial seal exists, and
-the source-only draft remains ineligible. The owner will help verify the
-latest Radius installation and generate and validate the graph in this
-GitHub-backed checkout. Exact installed Radius/tool/skill versions must then be
-frozen, rather than floating during comparisons. No installation, generation
-call or usability probe was authorized by source preparation. Radius remains
-draft/unsealed, and `architecture/` has no architecture document until validated
-graph facts and approved isolated authoring exist. Source receipts explicitly
+the source-only draft remains ineligible. The owner subsequently generated the
+model and merged
+[ryanwaite/astronomy-shop-radius#1](https://github.com/ryanwaite/astronomy-shop-radius/pull/1)
+at `dce2f8f596e2eda9d7d07c114cb44749dc27acb0`.
+The [offline import](../../benchmark/README.md#pinned-radius-overlay-import)
+now reproduces native source plus that exact overlay and publishes complete
+difference/setup inventories. The
+[static review and generation trace](radius-overlay-review.md) verifies source
+references and normalized provenance, while identifying the selected core
+profile's mismatch with the benchmark's full/observability stack and missing
+native runtime configuration. The omissions precede graph assembly; the origin
+hash is valid, not stale.
+
+Exact installed CLI/extension/tool/skill versions and actual diagnostic exposure
+still need owner/extension verification, not inference from `radius:0.61`.
+No installation, generation call or usability probe was authorized by source
+preparation or this import. Radius remains draft/unsealed; model/runtime gaps
+must be resolved in the application repository, not patched inside the fixture.
+`architecture/` has no architecture document until validated graph facts and
+approved isolated authoring exist. Source and import receipts explicitly
 deny trial eligibility. Incident-specific leakage review, final treatment
 differences, architecture token parity, actual tool/skill isolation and live
 agent usability are still open; **M3 is not complete**.
