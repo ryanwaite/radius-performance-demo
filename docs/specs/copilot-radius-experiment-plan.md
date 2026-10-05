@@ -86,16 +86,52 @@ GitHub dependencies by authoring versus diagnosis capability under the
 This assessment does not block source preparation or other fixture work that
 does not depend on a runtime access decision.
 
-**M3 remains incomplete.** Radius has no authored model, graph, repository
-configuration or installed repository-scoped tools/skills yet. Its treatment
-is draft and unsealed. The architecture document must follow validated Radius
+**Merged model and offline import, October 3, 2026:** the owner generated the
+application model and merged
+[ryanwaite/astronomy-shop-radius#1](https://github.com/ryanwaite/astronomy-shop-radius/pull/1)
+at `dce2f8f596e2eda9d7d07c114cb44749dc27acb0`. The complete committed difference
+adds only `.radius/.gitignore`, `app.bicep`, `app.origin.json` and
+`bicepconfig.json`. `radius_perf_eval.radius_overlay` imports that exact overlay
+over the independently reconstructed native source, produces complete difference
+and setup inventories, and recreates standalone native/Radius draft baselines.
+It preserves the source tar's CRLF batch files in both arms while explicitly
+accounting for their pre-existing Git normalization. Owner workspaces and
+historical receipts are unchanged.
+
+The [static review and generation trace](radius-overlay-review.md) distinguish
+raw model hash `c6bfefa7fd5d2577bcb764e7a4f0dc2d6bddd416541623312b09ecff24df74e1`
+from the Radius-normalized origin hash
+`81cf697706f4584d4ef93f66d7e75a573b9b7e6a418601eca0f54d0039e65f59`.
+The origin is valid; an initial raw-hash comparison was corrected, not treated
+as a regeneration requirement. The generation log shows that the author chose
+the core Compose profile before writing Bicep. Full-profile application services
+and shared diagnostics active in the benchmark are absent from the model.
+Required Flagd UI settings and database bootstrap are missing even within core.
+These are authored-model/runtime-contract findings, not evidence that the graph
+renderer discarded resources. Literal source references resolve, but that does
+not prove deployed parity. Raw captures and offline guard-mutation logs remain
+under `../radius-perf-eval-artifacts/radius-import-20261003/`.
+
+**M3 remains incomplete.** The real model and Bicep configuration now exist.
+The owner reported a generated graph; retained history shows a ready graph and
+an empty missing-reference query, not a complete graph inventory or deployment.
+Repository tools/skills were not added; app-hosted exposure and installed
+CLI/extension/tool versions remain unverified. The type alias `radius:0.61`
+does not identify the installed CLI. The treatment is draft and unsealed.
+Next, correct/validate the application's selected profile and native contracts,
+then capture actual graph and diagnostic tool/skill access in the application
+session through the extension. Keep diagnostic GitHub policy unchanged pending
+explicit owner approval. Do not run the Radius executable directly.
+The architecture document must follow validated Radius
 facts and the approved isolated-author policy, including request approval,
 provenance and token parity; it has not been written. Empty difference lists
 are labelled pending, not successful parity checks. Public built-in flag code
 remains unchanged for source authoring; there is no selected incident and no
 incident-specific leakage clearance. Optional recorded LLM conversations were
 excluded, so that optional upstream replay profile is not runnable as exported.
-The source manifest and preparation receipt say `eligibleForTrials: false`.
+The source manifest, preparation receipt and imported Radius draft say
+`eligibleForTrials: false`. No extra model requests, architecture authoring,
+live Shop activity or cloud resources were used for this import.
 
 Offline source and guard-mutation controls passed with Docker unreachable.
 The existing Shop driver regression checks also passed. Raw logs, including
@@ -336,7 +372,7 @@ activation and sealed-fixture leakage enforcement remain M5/M6 and M3 work.
 **Next, in order.** These steps replace the previous publication-first queue,
 not its formal acceptance criteria.
 
-1. **Finish owner-assisted treatment setup.** The exploratory policy merged in PR #20. Use the GitHub-backed [Radius authoring repository](https://github.com/ryanwaite/astronomy-shop-radius) and its existing local checkout, verify the latest installation and real graph, then freeze exact tool/skill/model inputs. Inventory authoring versus diagnostic GitHub dependencies; bring any required runtime access revision to the owner before relying on it. Obtain the authoring request allowance before generating the architecture document from validated facts. Review the final artifacts against the selected incident and finalize declared treatment differences. *Exit:* real Radius access and source references work, architecture parity is measured, and all three treatment artifacts pass their own sealing checks. Source-only preparation and the GitHub-backed authoring checkout do not meet this exit.
+1. **Finish owner-assisted treatment setup.** The exploratory policy merged in PR #20. The real model is now imported from the GitHub-backed [Radius authoring repository](https://github.com/ryanwaite/astronomy-shop-radius), but the [static review](radius-overlay-review.md) identifies profile and native-runtime gaps. Resolve these in the application repository, verify the actual graph through its extension, then freeze exact installed tool/skill/model inputs. Inventory authoring versus diagnostic GitHub dependencies; bring any required runtime access revision to the owner before relying on it. Obtain the authoring request allowance before generating the architecture document from validated facts. Review the final artifacts against the selected incident and finalize declared treatment differences. *Exit:* real Radius access and source references work, architecture parity is measured, and all three treatment artifacts pass their own sealing checks. Source preparation, an imported draft and the GitHub-backed authoring checkout do not meet this exit.
 2. **Connect one real Shop incident and healthy counterpart to M2.** The current `ShopEnvironment.run_healthy` tears down after an environment sample, `incidents.py` injects only the catalogue MySQL case, and `CPUReference` accepts operator-attested reference captures. Build the narrow Shop lifecycle/capture binding, external injector and incident rubric, plus the three sealed fixtures needed to exercise them. Reuse the existing SDK, sandbox, submit tool, store and exporter. Agree the target, window criteria and run settings before code relies on them. *Exit:* fault/healthy activation, delivered load, agent-visible telemetry, scope, safety and cleanup have real trial-bound producers and positive/negative controls; hidden answers are isolated, fixture parity and Radius access are checked, and actual evidence can enter the existing human-review/export path. No reference capture is relabelled as Shop evidence.
 3. **Run the bounded integration comparison after explicit approval.** Request the expected model/premium requests and runtime, including fixture authoring and confinement probes. Use fresh sessions, matched settings and randomized arm order for the fault and healthy cases. *Exit:* the complete roster and all attempts survive through human adjudication, the independent audit, verified export and dashboard; unfinished reviews remain visible. Record request usage, agent time, setup and human-review cost. Report integration observations, not scientific findings.
 4. **Use a small fixed development batch to improve Radius.** Choose cases, one model, budgets and validity rules before the batch; request its allowance using measured integration costs. *Exit:* both control contrasts, case outcomes, healthy false alarms, failures, missing reviews and costs are interpretable; a versioned Radius change has a stated expected benefit and regression check. Periodically rerun controls under matching settings.
@@ -688,11 +724,15 @@ The benchmark repository and hidden validators should ultimately live outside th
 ### Phase 0 fixture construction
 
 The implemented `radius_perf_eval.shop_fixtures` commands prepare **source-only
-authoring workspaces**, not these final treatment artifacts. The owner-directed
-staging decision in [Current state](#current-state-and-next-steps) leaves the
-Radius overlay and architecture document unfinished until assisted setup and
-approved authoring. Their pending difference manifests cannot admit a trial.
-See the [source preparation commands](../../benchmark/README.md#shop-source-authoring-workspaces).
+authoring workspaces**, not these final treatment artifacts.
+`radius_perf_eval.radius_overlay` now captures the exact merged model over that
+source as a **draft-unsealed** artifact, with a complete native-to-Radius
+difference and setup inventory. The owner-directed staging decision in
+[Current state](#current-state-and-next-steps) leaves semantic validation,
+tool/skill exposure and the architecture document unfinished. Neither captured
+differences nor pending architecture differences admit a trial.
+See the [source preparation](../../benchmark/README.md#shop-source-authoring-workspaces)
+and [overlay import](../../benchmark/README.md#pinned-radius-overlay-import) commands.
 
 Build and seal three artifacts from the same pinned application source commit:
 
