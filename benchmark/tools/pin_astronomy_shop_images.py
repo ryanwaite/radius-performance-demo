@@ -31,6 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from radius_perf_eval import astronomy_shop as shop  # noqa: E402
+from radius_perf_eval.podman_runtime import RuntimePolicyError, require_podman_driver  # noqa: E402
 
 MANIFEST_PATH = Path("benchmark/apps/astronomy-shop/image-digests.json")
 
@@ -92,6 +93,7 @@ def main() -> int:
     parser.add_argument("--allow-change", action="store_true")
     parser.add_argument("--no-pull", action="store_true")
     options = parser.parse_args()
+    require_podman_driver()
 
     repo_root = Path(__file__).resolve().parents[2]
     config = merged_config(repo_root)
@@ -147,4 +149,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except RuntimePolicyError as error:
+        print(f"runtime policy: {error}", file=sys.stderr)
+        raise SystemExit(2)

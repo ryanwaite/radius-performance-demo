@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from radius_perf_eval import astronomy_shop as shop  # noqa: E402
 from radius_perf_eval import cpu_limits, offered_load, shop_telemetry  # noqa: E402
 from radius_perf_eval.compose import ComposeProject  # noqa: E402
+from radius_perf_eval.podman_runtime import RuntimePolicyError, require_podman_driver  # noqa: E402
 from radius_perf_eval.shop_environment import render_stack as render_shop_stack  # noqa: E402
 from radius_perf_eval.hostclass import (  # noqa: E402
     derive_class_id,
@@ -130,6 +131,7 @@ def main() -> int:
     parser.add_argument("--project", default="astro-footprint")
     parser.add_argument("--artifacts", type=Path, default=DEFAULT_ARTIFACTS)
     options = parser.parse_args()
+    require_podman_driver()
     if options.minutes <= 0 or options.interval <= 0 or options.demand_seconds < 30:
         parser.error("minutes and interval must be positive; demand-seconds must be at least 30")
 
@@ -314,4 +316,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except RuntimePolicyError as error:
+        print(f"runtime policy: {error}", file=sys.stderr)
+        raise SystemExit(2)

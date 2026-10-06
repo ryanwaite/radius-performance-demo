@@ -20,8 +20,13 @@ This repository holds a benchmark. It asks whether the combined Radius repositor
   - a run expected to take more than one hour; give an estimate first;
   - any live model call or premium request, including smoke runs; say how many requests you expect;
   - provisioning cloud resources;
-  - changing the Docker Desktop allocation, or the Docker, Python, SDK, or CLI version, during a campaign, since each changes the host class or fingerprint;
-  - deleting Docker images, volumes, or build cache that you didn't create.
+  - changing the container VM allocation, or the Podman, Compose provider, Python, SDK, or CLI version, during a campaign, since each changes the host class or fingerprint;
+  - deleting container images, volumes, or build cache that you didn't create.
+
+The owner selected Podman on October 6. Never use Docker as a fallback. Preserve
+historical Docker artifacts and qualifications; they do not qualify Podman.
+The [migration boundary](benchmark/README.md#podman-migration) identifies the
+read-only inventory and the legacy execution paths that remain unported.
 
 ### Packages
 

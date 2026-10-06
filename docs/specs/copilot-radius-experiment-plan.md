@@ -28,12 +28,32 @@ The application and diagnostic telemetry must remain identical across all three
 arms. No installation, VM/service startup, allocation change, model call,
 cloud provisioning or live benchmark run is authorized by this decision.
 
-The first migration increment will capture Podman engine and explicit Compose
-provider identity without creating resources, and refuse legacy live driver
-commands rather than run their Docker implementation. This is an inventory
-boundary, not a new runtime framework or a runnable Podman benchmark.
-Podman was not found on the coordinating session's PATH; installation and
-configuration remain owner prerequisites, not verified facts.
+The first prerequisite increment now captures Podman engine and explicit
+Compose provider identity without creating resources. Public legacy live driver,
+footprint, pinning and holdout commands refuse rather than run Docker.
+Read-only `doctor` remains available; per-project owned-resource cleanup internals
+remain unchanged. The internal lifecycle is still Docker-specific, not an
+alternate supported entrypoint. This is an inventory boundary, not a new runtime
+framework or a runnable Podman benchmark. See the
+[migration commands and remaining surfaces](../../benchmark/README.md#podman-migration).
+
+The coordinating session initially found no Podman on its PATH. A subsequent
+read-only child-session capture found `/opt/podman/bin/podman`, client/server
+6.0.2, and an already-running libkrun VM. Machine inspection reported 5 CPUs and
+3814 MiB; the reachable arm64 Linux engine reported 3783753728 bytes of memory,
+rootful operation and cgroup v2/systemd. The inspected default connection was
+`podman-machine-default-root`. This corrects the earlier PATH-only observation,
+not the historical Docker evidence. No install/start/stop/resize ran.
+`podman-compose` was absent on PATH; the installed Docker Compose was not used.
+The owner still needs to select an approved provider and a benchmark connection.
+The observed VM envelope is not a fit or eligibility verdict.
+
+Raw read-only captures and offline policy/positive-control/mutation results live
+in `../radius-perf-eval-artifacts/podman-migration-20261006-263f17ce/`.
+The new inventory has its own fingerprint namespace, always says
+`eligibleForTrials: false`, and never reads or writes Docker qualification
+records or fitted limits. Missing provider identity leaves an incomplete
+inventory while retaining the engine observations.
 
 Before enabling execution, verify the selected Podman connection and VM envelope,
 rootless/rootful context, cgroup version/manager and host-PID/cgroup probes,
@@ -55,8 +75,10 @@ Recipe packs cannot register duplicate resource types, so a replacement mapping
 or pack needs separate coordination. Do not assume the Collector `docker_stats`
 receiver works with Podman's compatibility API: verify its actual calls, VM
 socket location/access/security and what `/hostfs` measures. Do not silently
-disable unsupported receivers or accept empty metrics. Recipe issue coordination,
-publishing and deployment are outside this migration increment.
+disable unsupported receivers or accept empty metrics. The parent filed
+[radius-project/resource-types-contrib#377](https://github.com/radius-project/resource-types-contrib/issues/377)
+for host-path volume support. Recipe implementation, publishing and deployment
+are outside this migration increment.
 
 **Scope decision, September 30, 2026:** evaluate the combined Radius repository experience. The owner removed separate graph-only, skills-only, and factorial experiments. The native and architecture-document controls remain. [Completion and reporting plan](benchmark-completion-plan.md) defines the delivery sequence and the approved local HTML dashboard with JSON/CSV downloads.
 
@@ -411,9 +433,10 @@ activation and sealed-fixture leakage enforcement remain M5/M6 and M3 work.
 **Next, in order.** These steps replace the previous publication-first queue,
 not its formal acceptance criteria.
 
-Podman migration is now a prerequisite for any live step below. First deliver
-the inventory/refusal boundary, then validate runtime-specific capabilities on
-the owner's installed/configured Podman with separately approved bounded runs.
+Podman migration is now a prerequisite for any live step below. The
+inventory/refusal boundary is implemented; next select the provider and validate
+runtime-specific capabilities on the owner's installed/configured Podman with
+separately approved bounded runs.
 *Exit:* actual engine/provider/context and capability evidence supports a new
 host/runtime identity, fitted limits and eligibility decision. Docker evidence,
 an installed executable or a successful Compose render does not meet this exit.
@@ -945,6 +968,10 @@ The live escape probe in Increment 1 is a permission-handler wiring check, not e
 No escape probe runs inside a scored trial. Tools register lazily, so a harness-driven probe costs a turn in the agent's own session, and that turn would sit in the context being scored. Each scored trial is gated instead on every tool execution reporting `sandboxApplied: "true"`. The escape probes run as harness-driven probes in separate sessions, on the same host and the same SDK, CLI, and model pins, at every re-verification and before each campaign batch. A batch does not start unless its probe session passes affirmatively: every probe denied by the operating system with `sandboxApplied: "true"`, and the in-workspace control succeeding. Missing evidence fails.
 
 ### MVP environment: Docker Compose
+
+This heading describes the historical implementation. The October 6 decision
+selects Podman Compose instead; its live driver remains unported. The reset and
+evidence requirements below still apply and must be demonstrated on Podman.
 
 Every trial uses:
 
