@@ -19,6 +19,45 @@ Operating rules for anyone working in this repository, human or agent, are in [`
 
 This section is the handoff point. Update it in the same pull request as the work it describes.
 
+**Owner decision, October 6, 2026: move the benchmark from Docker to Podman.**
+The company no longer uses Docker. This supersedes the Docker execution target
+below, not the historical measurements or their interpretation. Preserve all
+Docker artifacts, fitted limits and qualification records as historical evidence;
+none qualifies Podman. Do not fall back to Docker or alias its executable/socket.
+The application and diagnostic telemetry must remain identical across all three
+arms. No installation, VM/service startup, allocation change, model call,
+cloud provisioning or live benchmark run is authorized by this decision.
+
+The first migration increment will capture Podman engine and explicit Compose
+provider identity without creating resources, and refuse legacy live driver
+commands rather than run their Docker implementation. This is an inventory
+boundary, not a new runtime framework or a runnable Podman benchmark.
+Podman was not found on the coordinating session's PATH; installation and
+configuration remain owner prerequisites, not verified facts.
+
+Before enabling execution, verify the selected Podman connection and VM envelope,
+rootless/rootful context, cgroup version/manager and host-PID/cgroup probes,
+applied CPU/memory limits, image identity, Compose normalization and labels,
+internal networks/egress positive controls, published ports, resource ownership
+and cleanup, and nonempty fresh telemetry/load evidence. Bind new host/runtime
+identity and provider versions to newly fitted limits and qualifications. An
+inventory fingerprint must never enter the existing Docker qualification path.
+Repeat sandbox socket/path escape controls on the selected host without exposing
+the Podman API to agents. Missing evidence remains failure, not an exception.
+
+Podman Compose and Kubernetes recipe customization are separate targets. No new
+Kubernetes runtime or cluster is selected here. The approved recipe direction is
+narrow, platform-owner-opt-in host mounts preserving defaults, secrets and
+connections, not arbitrary Pod replacement or a new Radius core type. The
+October 6 inspected container recipe artifact did not read `platformOptions`
+or generate `hostPath`; advertised override support is not implementation.
+Recipe packs cannot register duplicate resource types, so a replacement mapping
+or pack needs separate coordination. Do not assume the Collector `docker_stats`
+receiver works with Podman's compatibility API: verify its actual calls, VM
+socket location/access/security and what `/hostfs` measures. Do not silently
+disable unsupported receivers or accept empty metrics. Recipe issue coordination,
+publishing and deployment are outside this migration increment.
+
 **Scope decision, September 30, 2026:** evaluate the combined Radius repository experience. The owner removed separate graph-only, skills-only, and factorial experiments. The native and architecture-document controls remain. [Completion and reporting plan](benchmark-completion-plan.md) defines the delivery sequence and the approved local HTML dashboard with JSON/CSV downloads.
 
 **Owner decision, October 2, 2026:** prioritize exploratory learning before
@@ -371,6 +410,14 @@ activation and sealed-fixture leakage enforcement remain M5/M6 and M3 work.
 
 **Next, in order.** These steps replace the previous publication-first queue,
 not its formal acceptance criteria.
+
+Podman migration is now a prerequisite for any live step below. First deliver
+the inventory/refusal boundary, then validate runtime-specific capabilities on
+the owner's installed/configured Podman with separately approved bounded runs.
+*Exit:* actual engine/provider/context and capability evidence supports a new
+host/runtime identity, fitted limits and eligibility decision. Docker evidence,
+an installed executable or a successful Compose render does not meet this exit.
+Offline treatment and incident integration work can proceed independently.
 
 1. **Finish owner-assisted treatment setup.** The exploratory policy merged in PR #20. The real model is now imported from the GitHub-backed [Radius authoring repository](https://github.com/ryanwaite/astronomy-shop-radius), but the [static review](radius-overlay-review.md) identifies profile and native-runtime gaps. Resolve these in the application repository, verify the actual graph through its extension, then freeze exact installed tool/skill/model inputs. Inventory authoring versus diagnostic GitHub dependencies; bring any required runtime access revision to the owner before relying on it. Obtain the authoring request allowance before generating the architecture document from validated facts. Review the final artifacts against the selected incident and finalize declared treatment differences. *Exit:* real Radius access and source references work, architecture parity is measured, and all three treatment artifacts pass their own sealing checks. Source preparation, an imported draft and the GitHub-backed authoring checkout do not meet this exit.
 2. **Connect one real Shop incident and healthy counterpart to M2.** The current `ShopEnvironment.run_healthy` tears down after an environment sample, `incidents.py` injects only the catalogue MySQL case, and `CPUReference` accepts operator-attested reference captures. Build the narrow Shop lifecycle/capture binding, external injector and incident rubric, plus the three sealed fixtures needed to exercise them. Reuse the existing SDK, sandbox, submit tool, store and exporter. Agree the target, window criteria and run settings before code relies on them. *Exit:* fault/healthy activation, delivered load, agent-visible telemetry, scope, safety and cleanup have real trial-bound producers and positive/negative controls; hidden answers are isolated, fixture parity and Radius access are checked, and actual evidence can enter the existing human-review/export path. No reference capture is relabelled as Shop evidence.
