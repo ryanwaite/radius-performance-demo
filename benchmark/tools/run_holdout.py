@@ -38,6 +38,10 @@ import sys
 import traceback
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from radius_perf_eval.podman_runtime import RuntimePolicyError, require_podman_driver
+
 
 def main(argv: list[str]) -> int:
     if len(argv) != 3:
@@ -50,7 +54,7 @@ def main(argv: list[str]) -> int:
     sys.path.insert(0, str(repo_root / "benchmark"))
     from radius_perf_eval.incidents import MYSQL_POOL_DELAY_V1
     from radius_perf_eval.trials import run_suite
-
+    require_podman_driver()
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
     dirty = subprocess.run(
@@ -110,4 +114,8 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    try:
+        raise SystemExit(main(sys.argv[1:]))
+    except RuntimePolicyError as error:
+        print(f"runtime policy: {error}", file=sys.stderr)
+        raise SystemExit(2)

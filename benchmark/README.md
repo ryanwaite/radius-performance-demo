@@ -5,6 +5,107 @@ native and architecture-document repositories. It does not test graphs and
 skills separately. Follow the [completion plan](../docs/specs/benchmark-completion-plan.md)
 for the remaining work; the Astronomy Shop campaign is not yet runnable end to end.
 
+## Podman migration
+
+**First prerequisite increment, not a completed migration.** The owner selected
+Podman on October 6. `doctor` now inventories an explicitly selected Podman
+connection without creating resources. The public `shop`, `trial`,
+`determinism` and broad `cleanup` commands refuse before dispatch. The footprint,
+image-pinning and holdout tools also refuse before runtime activity or writes.
+No Docker fallback or executable/socket alias is allowed.
+
+The legacy per-project `ComposeProject.destroy` and `finally` cleanup paths
+remain intact for an already-owned failed resource set. They are not ported
+Podman cleanup commands, and this increment does not authorize invoking Docker.
+Internal lifecycle helpers, catalogue development scripts and root Makefile
+targets remain Docker-specific; do not call them directly as a workaround.
+Historical Docker instructions and measurements below describe the old path,
+not current permission to execute it. Offline source preparation, M2 and
+dashboard commands remain available.
+
+The inventory uses only client version, connection-list, selected-engine info
+and, when explicitly supplied, provider version reads. Each command's start and
+raw result is saved before interpretation. It records engine/client versions,
+connection endpoint, rootless/rootful context, CPU/memory envelope, cgroup
+version/manager, OCI runtime and network backend. Complete inventory also
+requires an absolute executable path to an installed `podman-compose` provider,
+its reported version and file hash. There is no automatic provider discovery:
+Podman can otherwise select Docker Compose from PATH. This bounded inventory
+supports `podman-compose` identification only; it does not select or install
+the company's provider. Provider rendering and execution remain unverified.
+
+Every result says `eligibleForTrials: false`. Missing or malformed evidence
+returns exit status 2 with `status: incomplete`, preserving any engine facts
+already obtained. A complete inventory returns 0 with
+`status: inventoried-not-qualified`. Its `podman-inventory-v1:` fingerprint
+is separate from `HostFacts`, fitted limits and the qualification store.
+Changing the runtime context cannot reuse a Docker qualification; neither
+historical records nor limits are rewritten.
+
+**Observed October 6:** the child session found `/opt/podman/bin/podman`,
+client/server 6.0.2 and an already-running `podman-machine-default` libkrun VM.
+Its default connection was `podman-machine-default-root`, with rootful arm64
+Linux, cgroup v2/systemd and netavark. Machine inspection reported 5 CPUs and
+3814 MiB configured memory; engine info reported 3783753728 bytes. These are
+different observations, not a memory-fit verdict. `podman-compose` was absent
+on PATH. Docker Compose was present but was not executed. This corrects the
+parent session's earlier PATH-only absence observation; it does not establish
+who installed or started Podman. No service/VM configuration changed.
+
+Run this read-only diagnostic from the repository root for that observed
+connection. It does not start a stopped machine. Omission of a provider
+deliberately produces an incomplete inventory and exit status 2:
+
+```bash
+ARTIFACTS=../radius-perf-eval-artifacts/podman-inventory-$(date -u +%Y%m%dT%H%M%SZ)
+PYTHONPATH=benchmark python3 -m radius_perf_eval.cli doctor --podman /opt/podman/bin/podman --connection podman-machine-default-root --output "$ARTIFACTS"
+```
+
+Use a new output directory on every attempt; existing directories are refused.
+After the owner selects and installs an approved provider, pass its absolute
+path via `--compose-provider`. A provider version read may query the client;
+it does not launch the application. Raw inventories contain local endpoint and
+identity-file paths and belong outside agent mounts and public reports.
+
+The next increment must adapt and exercise these existing surfaces, not add
+a parallel harness:
+
+| Surface | Remaining Podman evidence and work |
+|---|---|
+| `docker_cli.py`, `compose.py`, `shop_environment.render_stack`, image pinning | Explicit engine/provider routing; full `compose.yaml` + `compose.full.yaml` + `compose.observability.yaml` normalization, labels and digest identity |
+| `hostclass.py`, `qualification.py`, fitted CPU/load files | New observed host/runtime identity, approved fit/eligibility; never rename Docker fields and reuse old bounds |
+| `cpu_limits.py`, footprint stats and deployment inspection | Actual host-PID/cgroup namespace access, quota/counter semantics, memory limits and nonempty service coverage |
+| `shop_readiness.py`, environment probes and cleanup | Ports, internal networks and namespace egress with working positive controls; ownership inventory before/after teardown |
+| `shop_telemetry.py`, Collector mounts/receivers and metrics | Socket-free benchmark transforms, typed bootstrap, actual log/metric delivery and load; no silent receiver removal or empty telemetry passes |
+| `sandbox.py` and declared paths | Podman client/config/API socket denial on the selected host, with separately approved confinement probes |
+
+The minimal owner input is an approved installed Compose provider and the
+connection to use for subsequent capability checks. The observed default is
+not a benchmark host selection. Do not resize this VM to match the historical
+Docker fit; the current envelope has not been shown to fit Shop. Request bounded
+runtime-check approval and estimates before creating resources; model requests,
+multi-hour runs and cloud provisioning require their separate approvals.
+
+Kubernetes recipe work is separate. Track host-mount support in
+[radius-project/resource-types-contrib#377](https://github.com/radius-project/resource-types-contrib/issues/377).
+Use narrowly scoped platform-owner opt-in mounts, preserving defaults, secrets
+and connections. Duplicate resource types cannot be overlaid by appending a
+pack, so replacement mapping/pack coordination is still needed. No Kubernetes
+runtime or new cluster is selected here. The inspected recipe artifact did not
+implement advertised Pod overrides. Podman's Docker-compatible API alone does
+not prove Collector `docker_stats` support: verify actual API calls, VM socket
+path/access/security and what `/hostfs` measures before relying on either mount.
+The existing benchmark removes those mounts; Kubernetes parity is not inferred
+from this inventory. All arms must retain the same application and diagnostics.
+
+Run the focused offline controls from the repository root after restoring the
+locked CFS environment. Runtime subprocesses are replaced by fixtures, including
+inside mutation-test subprocesses; no live Podman or Docker is contacted:
+
+```bash
+DOCKER_HOST=unix:///nonexistent/docker.sock CONTAINER_HOST=unix:///nonexistent/podman.sock benchmark/.venv/bin/python -m pytest benchmark/tests/test_podman_runtime.py benchmark/tests/test_podman_runtime_mutations.py benchmark/tests/test_driver.py -q -s
+```
+
 ## Exploratory comparison: next operator path
 
 The owner's October 2 decision prioritizes one real externally injected Shop

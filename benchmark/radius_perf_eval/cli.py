@@ -8,7 +8,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .docker_cli import DockerError, daemon_info
+from .docker_cli import DockerError
+from .podman_runtime import RuntimePolicyError, inventory, require_podman_driver
 from .environment import EnvironmentSpec, TrialEnvironment
 from .incidents import INCIDENTS, MYSQL_POOL_DELAY_V1
 from .trials import HEALTHY_PROFILE, INCIDENT_PROFILE, run_suite
@@ -28,9 +29,10 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    info = daemon_info()
+    info = inventory(args.output, connection=args.connection, podman=args.podman,
+                     compose_provider=args.compose_provider)
     print(json.dumps(info, indent=2, sort_keys=True))
-    return 0
+    return 0 if info["status"] == "inventoried-not-qualified" else 2
 
 
 def cmd_shop(args: argparse.Namespace) -> int:
@@ -122,11 +124,15 @@ def cmd_cleanup(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="radius-perf-eval-env",
-        description="Deterministic Docker Compose trial driver for the Radius performance benchmark.",
+        description="Podman inventory and legacy benchmark driver (live migration pending).",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    doctor = subparsers.add_parser("doctor", help="check that the Docker daemon is reachable")
+    doctor = subparsers.add_parser("doctor", help="read-only Podman inventory, not qualification")
+    doctor.add_argument("--connection", required=True)
+    doctor.add_argument("--podman", default="podman")
+    doctor.add_argument("--compose-provider", type=Path)
+    doctor.add_argument("--output", type=Path, required=True)
     doctor.set_defaults(func=cmd_doctor)
 
     shop = subparsers.add_parser("shop", help="measure a healthy Astronomy Shop; no agent or model calls")
@@ -163,7 +169,12 @@ def main(argv: list[str] | None = None) -> int:
     if getattr(args, "run_id", "sentinel") is None:
         args.run_id = _default_run_id()
     try:
+        if args.command != "doctor":
+            require_podman_driver()
         return int(args.func(args))
+    except (RuntimePolicyError, OSError) as exc:
+        print(f"runtime policy: {exc}", file=sys.stderr)
+        return 2
     except DockerError as exc:
         print(f"docker error: {exc}", file=sys.stderr)
         return 2
