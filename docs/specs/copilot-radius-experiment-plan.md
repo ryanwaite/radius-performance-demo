@@ -28,7 +28,8 @@ The application and diagnostic telemetry must remain identical across all three
 arms. No installation, VM/service startup, allocation change, model call,
 cloud provisioning or live benchmark run is authorized by this decision.
 
-The first prerequisite increment now captures Podman engine and explicit
+The first prerequisite increment merged in
+[PR #24](https://github.com/ryanwaite/radius-performance-demo/pull/24) and captures Podman engine and explicit
 Compose provider identity without creating resources. Public legacy live driver,
 footprint, pinning and holdout commands refuse rather than run Docker.
 Read-only `doctor` remains available; per-project owned-resource cleanup internals
@@ -65,20 +66,52 @@ inventory fingerprint must never enter the existing Docker qualification path.
 Repeat sandbox socket/path escape controls on the selected host without exposing
 the Podman API to agents. Missing evidence remains failure, not an exception.
 
-Podman Compose and Kubernetes recipe customization are separate targets. No new
-Kubernetes runtime or cluster is selected here. The approved recipe direction is
-narrow, platform-owner-opt-in host mounts preserving defaults, secrets and
-connections, not arbitrary Pod replacement or a new Radius core type. The
-October 6 inspected container recipe artifact did not read `platformOptions`
-or generate `hostPath`; advertised override support is not implementation.
-Recipe packs cannot register duplicate resource types, so a replacement mapping
-or pack needs separate coordination. Do not assume the Collector `docker_stats`
-receiver works with Podman's compatibility API: verify its actual calls, VM
-socket location/access/security and what `/hostfs` measures. Do not silently
-disable unsupported receivers or accept empty metrics. The parent filed
+**Owner decision, October 8, 2026: use a customer-owned container recipe rather
+than simplify the Shop to fit Radius limitations.** Preserve the full pinned
+Shop core + full + observability + extras application and telemetry contract
+across all three arms. Implement a small customer-owned derivative of the
+pinned Kubernetes container recipe, adding controlled host mounts and
+`readOnly` support while preserving existing defaults, secrets and connections.
+This is not arbitrary Pod replacement or a new Radius core type. Record the
+upstream recipe source and artifact pins and the derivative's exact changes;
+the derivative is planned, not implemented by this policy.
+
+Host mounts must be default-off behind a platform-owner-controlled gate and
+approved host paths. Workload properties must not enable the gate, widen the
+approved paths or override the platform's restrictions. Collector mounts must
+be read-only. Do not change admission policies automatically or bypass a
+cluster's rejection. Recipe packs cannot register duplicate resource types;
+document and validate the intended replacement mapping or pack before any
+separately approved registration. The October 6 inspected recipe artifact did
+not read `platformOptions` or generate `hostPath`; do not use unsupported
+`platformOptions` as if they implemented this contract. The upstream request is
 [radius-project/resource-types-contrib#377](https://github.com/radius-project/resource-types-contrib/issues/377)
-for host-path volume support. Recipe implementation, publishing and deployment
-are outside this migration increment.
+for host-path volume support.
+
+The first implementation increment is offline only: validate recipe rendering
+and the registration plan, preservation of existing behavior, and rejection of
+disabled, unapproved or workload-overridden mounts, with nonempty inventories,
+positive controls and guard mutations. Save raw results before summarizing
+them. This documentation increment contains no implementation. Neither
+increment authorizes publishing, registration into a live environment,
+deployment, cluster provisioning, runtime changes, model probes or live tests;
+each needs its separate applicable approval.
+
+Keep these evidence boundaries separate:
+
+| Evidence | Required conclusion and limit |
+|---|---|
+| Recipe behavior and registration | Offline output and controls establish only the pinned derivative's behavior and a valid registration plan. They do not establish that a live environment registered or ran it. |
+| Application model and graph | Unblock accurate Radius authoring only when all authoring requirements are met, including the full application/telemetry inventory, native configuration and source references. Capture the actual graph through the extension. Host-mount support alone cannot make a partial model complete. |
+| Podman runtime compatibility | Verify the Collector `docker_stats` receiver's actual API calls, socket location/access/security and the meaning of `/hostfs` on the selected host/VM. Podman's compatibility API and host-path support are not receiver compatibility or host-metric evidence. Podman remains unqualified after PR #24. |
+| Kubernetes deployment | A separately approved target and deployment need their own rendered/applied workload, admission and fresh telemetry evidence. Do not infer Docker receiver compatibility on containerd, hostfs meaning or successful deployment from recipe rendering. |
+
+Podman Compose and Kubernetes remain separate targets; no new Kubernetes
+runtime or cluster is selected. Do not simplify the application, omit telemetry,
+silently disable unsupported receivers, accept empty metrics or report a
+partial model as success. Recipe support, graph completeness and deployment
+evidence do not individually establish trial eligibility; the treatment,
+runtime and trial gates remain in force.
 
 **Scope decision, September 30, 2026:** evaluate the combined Radius repository experience. The owner removed separate graph-only, skills-only, and factorial experiments. The native and architecture-document controls remain. [Completion and reporting plan](benchmark-completion-plan.md) defines the delivery sequence and the approved local HTML dashboard with JSON/CSV downloads.
 
@@ -179,7 +212,9 @@ an empty missing-reference query, not a complete graph inventory or deployment.
 Repository tools/skills were not added; app-hosted exposure and installed
 CLI/extension/tool versions remain unverified. The type alias `radius:0.61`
 does not identify the installed CLI. The treatment is draft and unsealed.
-Next, correct/validate the application's selected profile and native contracts,
+Next, implement and validate the approved customer-owned recipe offline, then
+correct/validate the full application's selected profiles and native contracts
+only when all authoring requirements are met,
 then capture actual graph and diagnostic tool/skill access in the application
 session through the extension. Keep diagnostic GitHub policy unchanged pending
 explicit owner approval. Do not run the Radius executable directly.
@@ -442,7 +477,7 @@ host/runtime identity, fitted limits and eligibility decision. Docker evidence,
 an installed executable or a successful Compose render does not meet this exit.
 Offline treatment and incident integration work can proceed independently.
 
-1. **Finish owner-assisted treatment setup.** The exploratory policy merged in PR #20. The real model is now imported from the GitHub-backed [Radius authoring repository](https://github.com/ryanwaite/astronomy-shop-radius), but the [static review](radius-overlay-review.md) identifies profile and native-runtime gaps. Resolve these in the application repository, verify the actual graph through its extension, then freeze exact installed tool/skill/model inputs. Inventory authoring versus diagnostic GitHub dependencies; bring any required runtime access revision to the owner before relying on it. Obtain the authoring request allowance before generating the architecture document from validated facts. Review the final artifacts against the selected incident and finalize declared treatment differences. *Exit:* real Radius access and source references work, architecture parity is measured, and all three treatment artifacts pass their own sealing checks. Source preparation, an imported draft and the GitHub-backed authoring checkout do not meet this exit.
+1. **Finish owner-assisted treatment setup.** The exploratory policy merged in PR #20. The real model is now imported from the GitHub-backed [Radius authoring repository](https://github.com/ryanwaite/astronomy-shop-radius), but the [static review](radius-overlay-review.md) identifies profile and native-runtime gaps. First implement the approved pinned customer-owned recipe derivative with offline controls and a validated registration plan. Preserve the full core + full + observability + extras contract; do not simplify the Shop or omit telemetry. Once all authoring requirements are met and applicable approvals obtained, resolve model gaps in the application repository, verify the actual graph through its extension, then freeze exact installed tool/skill/model inputs. Keep recipe, graph, Podman compatibility and Kubernetes deployment evidence separate. Inventory authoring versus diagnostic GitHub dependencies; bring any required runtime access revision to the owner before relying on it. Obtain the authoring request allowance before generating the architecture document from validated facts. Review the final artifacts against the selected incident and finalize declared treatment differences. *Exit:* real Radius access and source references work, architecture parity is measured, and all three treatment artifacts pass their own sealing checks. Offline recipe support, source preparation, an imported draft and the GitHub-backed authoring checkout do not meet this exit.
 2. **Connect one real Shop incident and healthy counterpart to M2.** The current `ShopEnvironment.run_healthy` tears down after an environment sample, `incidents.py` injects only the catalogue MySQL case, and `CPUReference` accepts operator-attested reference captures. Build the narrow Shop lifecycle/capture binding, external injector and incident rubric, plus the three sealed fixtures needed to exercise them. Reuse the existing SDK, sandbox, submit tool, store and exporter. Agree the target, window criteria and run settings before code relies on them. *Exit:* fault/healthy activation, delivered load, agent-visible telemetry, scope, safety and cleanup have real trial-bound producers and positive/negative controls; hidden answers are isolated, fixture parity and Radius access are checked, and actual evidence can enter the existing human-review/export path. No reference capture is relabelled as Shop evidence.
 3. **Run the bounded integration comparison after explicit approval.** Request the expected model/premium requests and runtime, including fixture authoring and confinement probes. Use fresh sessions, matched settings and randomized arm order for the fault and healthy cases. *Exit:* the complete roster and all attempts survive through human adjudication, the independent audit, verified export and dashboard; unfinished reviews remain visible. Record request usage, agent time, setup and human-review cost. Report integration observations, not scientific findings.
 4. **Use a small fixed development batch to improve Radius.** Choose cases, one model, budgets and validity rules before the batch; request its allowance using measured integration costs. *Exit:* both control contrasts, case outcomes, healthy false alarms, failures, missing reviews and costs are interpretable; a versioned Radius change has a stated expected benefit and regression check. Periodically rerun controls under matching settings.

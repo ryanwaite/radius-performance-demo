@@ -30,8 +30,31 @@ at `ed56c60861e07b20440e242d7a58b4dc10c0c90f`; no live three-arm comparison exis
 Formal M1/M4 acceptance remains incomplete. Exploratory eligibility is separate,
 not a waiver or an assertion that the host is qualified.
 
+**Owner decision, October 8, 2026:** preserve the full Shop core + full +
+observability + extras application and telemetry contract rather than simplify
+the application for Radius. The next recipe increment implements a small
+customer-owned derivative of the pinned Kubernetes container recipe, with
+controlled host mounts and `readOnly`, offline validation first. The
+[canonical handoff](copilot-radius-experiment-plan.md#current-state-and-next-steps)
+defines the platform-owner default-off gate and approved paths, neither
+workload-overridable, read-only Collector mounts, unchanged admission policy,
+and the replacement registration-plan requirement. The derivative is not
+implemented by this policy.
+
+Recipe behavior/registration, complete model/graph evidence, Podman runtime
+compatibility and Kubernetes deployment evidence are separate. Host-path support
+does not establish Docker receiver compatibility on Podman or containerd, the
+meaning of `/hostfs`, or trial eligibility. PR #24 merged the Podman
+inventory/refusal boundary, not runtime qualification. The offline recipe
+increment does not authorize publishing, live registration/deployment,
+cluster/provisioning/runtime changes, model probes or live tests. Obtain separate
+applicable approvals. Resume accurate Radius authoring only when all authoring
+requirements are met; no unsupported `platformOptions`, telemetry omission or
+partial-model success can substitute for that exit.
+
 | Increment | Work | Exit criterion |
 |---|---|---|
+| Customer-owned recipe support | Implement the pinned derivative without changing the Shop contract. Preserve recipe defaults, secrets and connections; validate the replacement mapping/pack plan without live registration. Track [radius-project/resource-types-contrib#377](https://github.com/radius-project/resource-types-contrib/issues/377). | Saved offline rendering, nonempty inventories, positive controls and guard mutations establish preserved behavior and reject disabled, unapproved or workload-overridden mounts. Collector mounts are read-only. This exit is not model completeness, runtime compatibility, deployment or trial eligibility. |
 | Real incident integration | After the policy lands and the owner settles the case and eligibility criteria, connect one external Shop fault and healthy counterpart, sealed three-arm fixtures, SDK/sandbox capture and human review to M2. Reuse existing boundaries rather than build a new orchestrator, store or review UI. | Real trial-bound activation, delivered-load, telemetry and lifecycle evidence enters M2; positive/negative controls reject broken evidence, hidden answers stay isolated, and treatment parity and usable Radius access are checked. |
 | Approved integration run | Request model/premium allowance and runtime before calls, including authoring/probes. Run fresh matched sessions in randomized arm order. | Complete roster and failed attempts persist; human decisions and independent audit support replay/export into the dashboard; missing reviews remain unfinished. Usage, runtime, setup and review cost are measured. |
 | Fixed development batch | Select cases, one model and matched budgets using integration measurements; obtain approval. Version Radius improvements on development cases and periodically rerun controls. | Descriptive outcomes against both controls and investigation traces identify benefits, regressions or uncertainty. Freeze a candidate before untouched holdout; tuning retires holdout cases to development. |
