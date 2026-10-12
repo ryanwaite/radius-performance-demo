@@ -54,8 +54,9 @@ omission or partial-model success can substitute for that exit.
 
 **Owner decision, October 11, 2026:** implement an explicit product-supported
 model-only/local authoring path in `ai-extensions`, accepting pinned recipe
-evidence without falsely claiming live Environment registration. This path is
-not implemented yet. Deployment-ready remains the default with its existing
+evidence without falsely claiming live Environment registration. The policy
+merged in [PR #26](https://github.com/ryanwaite/radius-performance-demo/pull/26).
+Deployment-ready remains the default with its existing
 requirements; missing registration must not silently select model-only.
 The coordinator's fresh inspection of `ai-extensions` main at `343f7a80`
 corrects the earlier blanket blocker: authoring without an Environment no longer
@@ -69,6 +70,18 @@ graphs/tools. They are not deployable or registered by virtue of that mode.
 Full source, schema and native runtime completeness still apply. Verify the
 actual nonempty graph inventory, source references and intended tool/skill
 access; rendering alone does not satisfy these checks or make a trial eligible.
+
+**Implementation handoff:** draft
+[radius-project/ai-extensions#997](https://github.com/radius-project/ai-extensions/pull/997)
+implements the product path, with source-pinned evidence, durable model-only
+records retained on regeneration, a qualified abstract graph and
+deployment/plan/diff and generated-workflow guards. Focused source and
+build/artifact checks passed according to the product session; the PR holds
+the evidence and current CI/review status. Complete CI, review and owner
+adoption remain pending. This is not merged, installed, adopted or tried on
+Shop. Regenerate existing workflows from the adopted product to obtain checkout
+guards. Full Shop model and runtime verification remain outstanding; the
+already-recorded policy does not depend on the product merge.
 
 The [canonical handoff](copilot-radius-experiment-plan.md#current-state-and-next-steps)
 records merged policy PR #25 and

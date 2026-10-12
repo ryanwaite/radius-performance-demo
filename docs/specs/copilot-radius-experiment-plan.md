@@ -104,8 +104,23 @@ than selecting a Kubernetes target. Continue the local Podman direction and
 preserve the full original Shop, including telemetry, across all three arms.
 This is an explicit authoring mode, not a relaxation of the default
 deployment-ready path. It may accept pinned recipe evidence without claiming
-that a live Radius Environment has registered the recipe. The model-only path
-is not implemented yet.
+that a live Radius Environment has registered the recipe. The policy merged in
+[PR #26](https://github.com/ryanwaite/radius-performance-demo/pull/26);
+the product implementation is pending separately.
+
+**Implementation handoff, October 11, 2026:**
+[radius-project/ai-extensions#997](https://github.com/radius-project/ai-extensions/pull/997)
+is a draft at `bc931e90966a5f9f18002f18ac9bcda71d4311e4`. It implements explicit
+opt-in model-only evidence pinned by repository source SHA, durable origin and
+marker records retained during regeneration, an abstract graph labelled with
+its evidence limits, deployment/plan/diff refusal and generated-workflow
+guards. The product session reports focused source and build/artifact checks
+passed; see the PR for evidence and current CI/review status. Complete CI,
+review and owner adoption remain pending. The product change is not merged,
+installed, adopted or tried on Shop. Existing workflows need regeneration from
+the adopted product to obtain checkout guards. Full Shop model completeness,
+graph/source/tool verification and runtime eligibility remain unverified;
+the policy decision does not depend on the product PR merging.
 
 **Current product boundary:** the coordinating session's fresh inspection of
 `ai-extensions` main at `343f7a80` corrects the earlier blanket registration
@@ -276,7 +291,8 @@ an empty missing-reference query, not a complete graph inventory or deployment.
 Repository tools/skills were not added; app-hosted exposure and installed
 CLI/extension/tool versions remain unverified. The type alias `radius:0.61`
 does not identify the installed CLI. The treatment is draft and unsealed.
-Next, implement the approved model-only path in `ai-extensions` and complete
+Next, advance the draft model-only product change through CI, review and owner
+adoption before relying on it for Shop authoring, and complete
 the outstanding recipe input/output controls without treating publication as
 behavioral evidence. Then correct/validate the full application's selected
 profiles, schemas and native contracts under the explicitly selected authoring
