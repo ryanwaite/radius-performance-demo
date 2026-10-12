@@ -38,8 +38,8 @@ controlled host mounts and `readOnly`, offline validation first. The
 [canonical handoff](copilot-radius-experiment-plan.md#current-state-and-next-steps)
 defines the platform-owner default-off gate and approved paths, neither
 workload-overridable, read-only Collector mounts, unchanged admission policy,
-and the replacement registration-plan requirement. The derivative is not
-implemented by this policy.
+and the replacement registration-plan requirement. That policy did not
+implement the derivative; the October 11 update below records subsequent work.
 
 Recipe behavior/registration, complete model/graph evidence, Podman runtime
 compatibility and Kubernetes deployment evidence are separate. Host-path support
@@ -48,13 +48,39 @@ meaning of `/hostfs`, or trial eligibility. PR #24 merged the Podman
 inventory/refusal boundary, not runtime qualification. The offline recipe
 increment does not authorize publishing, live registration/deployment,
 cluster/provisioning/runtime changes, model probes or live tests. Obtain separate
-applicable approvals. Resume accurate Radius authoring only when all authoring
-requirements are met; no unsupported `platformOptions`, telemetry omission or
-partial-model success can substitute for that exit.
+applicable approvals. Resume accurate Radius authoring under the explicitly
+selected mode's requirements below; no unsupported `platformOptions`, telemetry
+omission or partial-model success can substitute for that exit.
+
+**Owner decision, October 11, 2026:** implement an explicit product-supported
+model-only/local authoring path in `ai-extensions`, accepting pinned recipe
+evidence without falsely claiming live Environment registration. This path is
+not implemented yet. Deployment-ready remains the default with its existing
+requirements; missing registration must not silently select model-only.
+Model-only artifacts must durably record and expose deployment-unverified
+state, recipe pins and evidence limits, including when reopened or consumed by
+graphs/tools. They are not deployable or registered by virtue of that mode.
+Full source, schema and native runtime completeness still apply. Verify the
+actual nonempty graph inventory, source references and intended tool/skill
+access; rendering alone does not satisfy these checks or make a trial eligible.
+
+The [canonical handoff](copilot-radius-experiment-plan.md#current-state-and-next-steps)
+records merged policy PR #25 and
+[ryanwaite/astronomy-shop-radius#2](https://github.com/ryanwaite/astronomy-shop-radius/pull/2),
+including the reviewed source and published recipe digest. The coordinator
+inspected recipe blobs, hashes and compiled structure, but did not evaluate
+inputs, inspect generated workload manifests, register or deploy it. Those
+behavioral and deployment checks remain outstanding. Continue the local Podman
+path with the full original Shop and telemetry; Podman remains unqualified.
+No Kubernetes target was selected, and the prospective Azure pack remains
+inactive. The three-arm scope and all treatment/runtime eligibility gates are
+unchanged. This decision does not authorize clusters, live registration or
+deployments, tool installs/changes, model probes, campaigns or cloud resources.
 
 | Increment | Work | Exit criterion |
 |---|---|---|
-| Customer-owned recipe support | Implement the pinned derivative without changing the Shop contract. Preserve recipe defaults, secrets and connections; validate the replacement mapping/pack plan without live registration. Track [radius-project/resource-types-contrib#377](https://github.com/radius-project/resource-types-contrib/issues/377). | Saved offline rendering, nonempty inventories, positive controls and guard mutations establish preserved behavior and reject disabled, unapproved or workload-overridden mounts. Collector mounts are read-only. This exit is not model completeness, runtime compatibility, deployment or trial eligibility. |
+| Customer-owned recipe support | The derivative is merged and published; complete outstanding input/output controls without changing the Shop contract. Preserve recipe defaults, secrets and connections; validate the replacement mapping/pack plan without live registration. Track [radius-project/resource-types-contrib#377](https://github.com/radius-project/resource-types-contrib/issues/377). | Saved offline rendering, nonempty inventories, positive controls and guard mutations establish preserved behavior and reject disabled, unapproved or workload-overridden mounts. Collector mounts are read-only. Compilation/publication alone does not meet this exit, which is not model completeness, runtime compatibility, deployment or trial eligibility. |
+| Explicit model-only authoring | Implement the product-supported local path in `ai-extensions` using pinned recipe evidence. Preserve default deployment-ready requirements and full application/source/schema/native runtime completeness. | Artifacts durably expose mode, pins, evidence limits and deployment-unverified state through graph/tool use and reopening. Actual graph inventory, source references and tool/skill access are verified. Missing evidence cannot become registered/deployable status or bypass unchanged treatment/runtime eligibility gates. |
 | Real incident integration | After the policy lands and the owner settles the case and eligibility criteria, connect one external Shop fault and healthy counterpart, sealed three-arm fixtures, SDK/sandbox capture and human review to M2. Reuse existing boundaries rather than build a new orchestrator, store or review UI. | Real trial-bound activation, delivered-load, telemetry and lifecycle evidence enters M2; positive/negative controls reject broken evidence, hidden answers stay isolated, and treatment parity and usable Radius access are checked. |
 | Approved integration run | Request model/premium allowance and runtime before calls, including authoring/probes. Run fresh matched sessions in randomized arm order. | Complete roster and failed attempts persist; human decisions and independent audit support replay/export into the dashboard; missing reviews remain unfinished. Usage, runtime, setup and review cost are measured. |
 | Fixed development batch | Select cases, one model and matched budgets using integration measurements; obtain approval. Version Radius improvements on development cases and periodically rerun controls. | Descriptive outcomes against both controls and investigation traces identify benefits, regressions or uncertainty. Freeze a candidate before untouched holdout; tuning retires holdout cases to development. |

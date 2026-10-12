@@ -74,7 +74,8 @@ pinned Kubernetes container recipe, adding controlled host mounts and
 `readOnly` support while preserving existing defaults, secrets and connections.
 This is not arbitrary Pod replacement or a new Radius core type. Record the
 upstream recipe source and artifact pins and the derivative's exact changes;
-the derivative is planned, not implemented by this policy.
+the derivative was planned, not implemented by that policy. The October 11
+update below records subsequent work without changing the evidence limits.
 
 Host mounts must be default-off behind a platform-owner-controlled gate and
 approved host paths. Workload properties must not enable the gate, widen the
@@ -97,12 +98,65 @@ increment authorizes publishing, registration into a live environment,
 deployment, cluster provisioning, runtime changes, model probes or live tests;
 each needs its separate applicable approval.
 
+**Owner decision, October 11, 2026: implement a product-supported model-only,
+local authoring path in `ai-extensions`.** The owner approved this path rather
+than selecting a Kubernetes target. Continue the local Podman direction and
+preserve the full original Shop, including telemetry, across all three arms.
+This is an explicit authoring mode, not a relaxation of the default
+deployment-ready path. It may accept pinned recipe evidence without claiming
+that a live Radius Environment has registered the recipe. The model-only path
+is not implemented yet.
+
+The October 8 policy merged in
+[PR #25](https://github.com/ryanwaite/radius-performance-demo/pull/25).
+The customer-owned recipe work subsequently merged in
+[ryanwaite/astronomy-shop-radius#2](https://github.com/ryanwaite/astronomy-shop-radius/pull/2),
+with reviewed head `834ccd0507a41393dbe59b15bf3d40b4f68f411b` and merge commit
+`582a4960171655692668056b5e4ae0c4a000b493`.
+The coordinating session reports that the recipe compiled and was published at
+`br:ghcr.io/ryanwaite/astronomy-shop-radius/containers-hostpath:experimental-af56964`,
+with manifest digest
+`sha256:633ae50ea645e8d19d71de2bcf03e7266dc1c5e2675fe00cfad21f391a5457e3`.
+It inspected the actual blobs, hashes and compiled structure. Recipe inputs
+were not evaluated; generated workload manifests were not inspected. No live
+registration or deployment occurred. Compilation and publication do not
+establish rendered behavior or satisfy the offline behavioral controls above.
+The prospective Azure recipe-pack example remains inactive; Azure was never
+selected.
+
+The product implementation must keep these authoring contracts distinct:
+
+- **Deployment-ready remains the default.** Preserve its existing source,
+  schema, runtime completeness and live Environment registration requirements.
+  Missing registration must not silently switch the request to model-only.
+- **Model-only requires explicit selection and durable evidence.** Record the
+  selected mode, exact recipe source/artifact pins and verified evidence, plus
+  the unevaluated or unverified requirements. Persist a deployment-unverified
+  state with the artifacts and expose it when reopening or consuming them,
+  including through graph and tool surfaces. A transient warning is not enough.
+  Do not label these artifacts deployable or registered, or promote them to
+  that state without the default path's evidence and separate approval.
+- **Completeness still applies.** Preserve the full application/telemetry
+  inventory, source references, schema validation and native runtime contracts,
+  including configuration, bootstrap, mounts, secrets and connections. Capture
+  and verify a nonempty actual graph inventory through the extension, resolve
+  source references and verify the intended tool/skill access. Pinned recipe
+  evidence does not excuse omissions, fabricated runtime facts or empty checks.
+
+Graph rendering alone cannot establish model completeness, deployment or trial
+eligibility. Model-only output remains draft and unsealed until the existing
+treatment gates are independently met; benchmark/runtime eligibility gates are
+unchanged, and Podman remains unqualified. This decision authorizes product
+implementation, not clusters, live registration or deployment, tool
+installation/version changes, model probes, campaigns or cloud resources.
+Obtain each separate applicable approval before those actions.
+
 Keep these evidence boundaries separate:
 
 | Evidence | Required conclusion and limit |
 |---|---|
 | Recipe behavior and registration | Offline output and controls establish only the pinned derivative's behavior and a valid registration plan. They do not establish that a live environment registered or ran it. |
-| Application model and graph | Unblock accurate Radius authoring only when all authoring requirements are met, including the full application/telemetry inventory, native configuration and source references. Capture the actual graph through the extension. Host-mount support alone cannot make a partial model complete. |
+| Application model and graph | Apply the explicitly selected authoring mode's requirements above, including the full application/telemetry inventory, schemas, native configuration, source references and verified tool access. Capture the actual graph through the extension. Model-only evidence remains deployment-unverified; host-mount support or graph rendering cannot make a partial model complete. |
 | Podman runtime compatibility | Verify the Collector `docker_stats` receiver's actual API calls, socket location/access/security and the meaning of `/hostfs` on the selected host/VM. Podman's compatibility API and host-path support are not receiver compatibility or host-metric evidence. Podman remains unqualified after PR #24. |
 | Kubernetes deployment | A separately approved target and deployment need their own rendered/applied workload, admission and fresh telemetry evidence. Do not infer Docker receiver compatibility on containerd, hostfs meaning or successful deployment from recipe rendering. |
 
@@ -212,11 +266,13 @@ an empty missing-reference query, not a complete graph inventory or deployment.
 Repository tools/skills were not added; app-hosted exposure and installed
 CLI/extension/tool versions remain unverified. The type alias `radius:0.61`
 does not identify the installed CLI. The treatment is draft and unsealed.
-Next, implement and validate the approved customer-owned recipe offline, then
-correct/validate the full application's selected profiles and native contracts
-only when all authoring requirements are met,
-then capture actual graph and diagnostic tool/skill access in the application
-session through the extension. Keep diagnostic GitHub policy unchanged pending
+Next, implement the approved model-only path in `ai-extensions` and complete
+the outstanding recipe input/output controls without treating publication as
+behavioral evidence. Then correct/validate the full application's selected
+profiles, schemas and native contracts under the explicitly selected authoring
+mode, retaining deployment-unverified state for model-only output. Capture the
+actual graph inventory, source references and diagnostic tool/skill access in
+the application session through the extension. Keep diagnostic GitHub policy unchanged pending
 explicit owner approval. Do not run the Radius executable directly.
 The architecture document must follow validated Radius
 facts and the approved isolated-author policy, including request approval,
@@ -477,7 +533,7 @@ host/runtime identity, fitted limits and eligibility decision. Docker evidence,
 an installed executable or a successful Compose render does not meet this exit.
 Offline treatment and incident integration work can proceed independently.
 
-1. **Finish owner-assisted treatment setup.** The exploratory policy merged in PR #20. The real model is now imported from the GitHub-backed [Radius authoring repository](https://github.com/ryanwaite/astronomy-shop-radius), but the [static review](radius-overlay-review.md) identifies profile and native-runtime gaps. First implement the approved pinned customer-owned recipe derivative with offline controls and a validated registration plan. Preserve the full core + full + observability + extras contract; do not simplify the Shop or omit telemetry. Once all authoring requirements are met and applicable approvals obtained, resolve model gaps in the application repository, verify the actual graph through its extension, then freeze exact installed tool/skill/model inputs. Keep recipe, graph, Podman compatibility and Kubernetes deployment evidence separate. Inventory authoring versus diagnostic GitHub dependencies; bring any required runtime access revision to the owner before relying on it. Obtain the authoring request allowance before generating the architecture document from validated facts. Review the final artifacts against the selected incident and finalize declared treatment differences. *Exit:* real Radius access and source references work, architecture parity is measured, and all three treatment artifacts pass their own sealing checks. Offline recipe support, source preparation, an imported draft and the GitHub-backed authoring checkout do not meet this exit.
+1. **Finish owner-assisted treatment setup.** The exploratory policy merged in PR #20. The real model is now imported from the GitHub-backed [Radius authoring repository](https://github.com/ryanwaite/astronomy-shop-radius), but the [static review](radius-overlay-review.md) identifies profile and native-runtime gaps. Implement the approved model-only path in `ai-extensions`, preserving the default deployment-ready requirements and durable deployment-unverified state. Complete the published recipe's outstanding offline input/output controls and validated registration plan without live registration. Preserve the full core + full + observability + extras contract; do not simplify the Shop or omit telemetry. Once the selected mode's authoring requirements are met and applicable approvals obtained, resolve model gaps in the application repository, verify the actual graph inventory, source references and tool access through its extension, then freeze exact installed tool/skill/model inputs. Keep recipe, graph, Podman compatibility and Kubernetes deployment evidence separate. Inventory authoring versus diagnostic GitHub dependencies; bring any required runtime access revision to the owner before relying on it. Obtain the authoring request allowance before generating the architecture document from validated facts. Review the final artifacts against the selected incident and finalize declared treatment differences. *Exit:* real Radius access and source references work, architecture parity is measured, and all three treatment artifacts pass their own sealing checks with unchanged runtime/benchmark eligibility gates. Published recipes, a rendered graph, model-only artifacts, source preparation, an imported draft and the GitHub-backed authoring checkout do not by themselves meet this exit.
 2. **Connect one real Shop incident and healthy counterpart to M2.** The current `ShopEnvironment.run_healthy` tears down after an environment sample, `incidents.py` injects only the catalogue MySQL case, and `CPUReference` accepts operator-attested reference captures. Build the narrow Shop lifecycle/capture binding, external injector and incident rubric, plus the three sealed fixtures needed to exercise them. Reuse the existing SDK, sandbox, submit tool, store and exporter. Agree the target, window criteria and run settings before code relies on them. *Exit:* fault/healthy activation, delivered load, agent-visible telemetry, scope, safety and cleanup have real trial-bound producers and positive/negative controls; hidden answers are isolated, fixture parity and Radius access are checked, and actual evidence can enter the existing human-review/export path. No reference capture is relabelled as Shop evidence.
 3. **Run the bounded integration comparison after explicit approval.** Request the expected model/premium requests and runtime, including fixture authoring and confinement probes. Use fresh sessions, matched settings and randomized arm order for the fault and healthy cases. *Exit:* the complete roster and all attempts survive through human adjudication, the independent audit, verified export and dashboard; unfinished reviews remain visible. Record request usage, agent time, setup and human-review cost. Report integration observations, not scientific findings.
 4. **Use a small fixed development batch to improve Radius.** Choose cases, one model, budgets and validity rules before the batch; request its allowance using measured integration costs. *Exit:* both control contrasts, case outcomes, healthy false alarms, failures, missing reviews and costs are interpretable; a versioned Radius change has a stated expected benefit and regression check. Periodically rerun controls under matching settings.
