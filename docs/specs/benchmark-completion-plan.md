@@ -57,6 +57,12 @@ model-only/local authoring path in `ai-extensions`, accepting pinned recipe
 evidence without falsely claiming live Environment registration. This path is
 not implemented yet. Deployment-ready remains the default with its existing
 requirements; missing registration must not silently select model-only.
+The coordinator's fresh inspection of `ai-extensions` main at `343f7a80`
+corrects the earlier blanket blocker: authoring without an Environment no longer
+requires live registration, but explicitly selects managed-default Azure.
+Named/custom Environment paths still require registration evidence. The missing
+contract is distinct durable local/custom model-only authoring, not general
+authoring without an Environment; Azure is not the selected local path.
 Model-only artifacts must durably record and expose deployment-unverified
 state, recipe pins and evidence limits, including when reopened or consumed by
 graphs/tools. They are not deployable or registered by virtue of that mode.

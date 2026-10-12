@@ -107,6 +107,14 @@ deployment-ready path. It may accept pinned recipe evidence without claiming
 that a live Radius Environment has registered the recipe. The model-only path
 is not implemented yet.
 
+**Current product boundary:** the coordinating session's fresh inspection of
+`ai-extensions` main at `343f7a80` corrects the earlier blanket registration
+blocker. General authoring without an Environment no longer requires live
+registration, but that path explicitly selects managed-default Azure.
+Named/custom Environment paths still require registration evidence. A distinct
+durable local/custom model-only contract remains unsupported; the existing
+managed-default Azure path is not the owner's selected local path.
+
 The October 8 policy merged in
 [PR #25](https://github.com/ryanwaite/radius-performance-demo/pull/25).
 The customer-owned recipe work subsequently merged in
@@ -127,7 +135,9 @@ selected.
 The product implementation must keep these authoring contracts distinct:
 
 - **Deployment-ready remains the default.** Preserve its existing source,
-  schema, runtime completeness and live Environment registration requirements.
+  schema and runtime completeness requirements, including registration evidence
+  where required for named/custom Environments. Do not impose a blanket live
+  Environment requirement on the existing managed-default Azure path.
   Missing registration must not silently switch the request to model-only.
 - **Model-only requires explicit selection and durable evidence.** Record the
   selected mode, exact recipe source/artifact pins and verified evidence, plus
