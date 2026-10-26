@@ -49,12 +49,53 @@ No full Shop, Radius deployment, model requests, cloud resources, campaign or
 VM/tool changes are part of this increment. Local Radius installation-path
 investigation is separate; deployment needs its applicable approval.
 
-**Current Kind milestone:** policy recorded; implementation and live smoke
-remain pending. Next, capture current tool versions, caches, connection and VM
-capacity, pin a compatible node image digest, and run the bounded smoke.
-*Exit:* persistent raw evidence and an explicit pass or blocker, with owned
-cluster cleanup verified. Only then proceed to the separate local Radius
-milestone and Kubernetes-native full-Shop/harness work.
+**Current Kind milestone, October 26:** policy was committed and
+[PR #28](https://github.com/ryanwaite/radius-performance-demo/pull/28) opened
+before runtime implementation. The isolated smoke is implemented in
+`benchmark/radius_perf_eval/kind_smoke.py`; the
+[operator command and offline controls](../../benchmark/README.md#bounded-local-kind-smoke)
+are separate from the still-blocked benchmark driver.
+
+**Measured:** `../radius-perf-eval-artifacts/kind-smoke-20261026T224451Z/`
+contains a passing live run with raw command streams, node/workload image
+identity, Kubernetes 1.37.0 readiness, DNS/service and loopback payloads, a
+PVC read by an independent pod, actual cgroup limits, increasing CPU
+usage/throttling counters, and the memory-limit OOM control. The owned node,
+node volume, network and local forward were removed; before/after inventories
+and ownership receipts support cleanup. Podman image caches remain. Source
+controls and guard-deletion mutations are recorded in `offline-controls.log`.
+The final run records its executable source hash and Python version, and only
+publishes a pass after cleanup. The preceding successful
+`kind-smoke-20261026T224023Z/` remains intact; the final run adds durable
+pass-publication controls and verifies the committed source candidate.
+The VM allocation, installed tool versions and global contexts were not changed.
+Final machine inspection matches the original allocation, state and last-start
+record. Final container/volume inventories are empty and only the pre-existing
+default Podman network remains.
+
+Earlier failures remain evidence, not discarded attempts.
+`kind-smoke-20261026T223353Z/` reached readiness and a bound PVC but its reader
+raced the writer. The initial cleanup compared Podman's returned network name
+to an ID and refused network removal after deleting the cluster. Its
+`recovery-*` files record inspected ownership and subsequent removal of that
+exact network, with containers and volumes absent. The reader now waits for
+the writer; network identity is inspected and recorded separately.
+`kind-smoke-20261026T223856Z/` refused before resource creation because the
+original capacity guard used `memFree`. The corrected guard reads VM
+`MemAvailable`, including reclaimable cache, without reducing the minimum
+available-memory threshold. No VM restart or cache pruning was used.
+
+**Inference and next gate:** this meets the bounded small-cluster exit, not
+Shop/Radius capacity, telemetry parity, egress, sandbox or trial eligibility.
+All records retain `eligibleForTrials: false`. Read-only rootful and rootless
+inventories found no pre-existing containers. The configured 3814 MiB VM is
+below Radius's documented 8 GB minimum; an unanswered allocation/restart
+request is not approval. Continue with the separately investigated local
+Radius path only after applicable approval and supported local registration
+are resolved, then select/verify the full Kubernetes-native Shop profile and
+migrate the existing harness. The
+[parent preflight handoff](benchmark-completion-plan.md#delivery-sequence)
+records offline Radius and candidate Shop-chart evidence and their limits.
 
 The dated entries below retain the prior decisions and evidence. Their
 Compose-first and no-Kubernetes-target statements are superseded above.

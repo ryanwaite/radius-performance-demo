@@ -5,6 +5,78 @@ native and architecture-document repositories. It does not test graphs and
 skills separately. Follow the [completion plan](../docs/specs/benchmark-completion-plan.md)
 for the remaining work; the Astronomy Shop campaign is not yet runnable end to end.
 
+## Bounded local Kind smoke
+
+`radius_perf_eval.kind_smoke` is an explicitly approved capability probe, not
+an alternate benchmark driver. It uses installed Podman 6.0.2, Kind 0.33.0 and
+kubectl 1.37.1 at their observed absolute paths, the existing running
+`podman-machine-default` VM, and its observed rootful
+`podman-machine-default-root` connection. It refuses changed tool versions,
+connection/default identity, unsupported architecture/cgroups, insufficient
+available memory and resource-name collisions. It does not install tools,
+start/restart/resize the VM, switch defaults or write the user's kubeconfig.
+It requires at least 2 GiB `MemAvailable` inside the VM for this small probe.
+This is a conservative smoke precondition, not a measured Shop capacity bound;
+`memFree` alone excludes reclaimable cache and is not the admission metric.
+
+The node pin comes from the
+[Kind 0.33.0 release](https://github.com/kubernetes-sigs/kind/releases/tag/v0.33.0):
+Kubernetes 1.37.0, multi-platform image digest
+`sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5`.
+The observed kubectl minor matches. The
+[Kubernetes support policy](https://kubernetes.io/releases/) listed 1.37, 1.36
+and 1.35 as maintained minors at the October 26 preflight. Recheck support
+before a future campaign; this pin is not permission to upgrade the tools.
+The diagnostic workload pins the observed BusyBox 1.37.0 image at
+`sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e`.
+
+Run from the repository root only with the bounded local-smoke approval. The
+expected duration is a few minutes; commands have finite timeouts. No model or
+premium requests are made.
+
+```bash
+RUN=../radius-perf-eval-artifacts/kind-smoke-$(date -u +%Y%m%dT%H%M%SZ)
+PYTHONPATH=benchmark /opt/homebrew/bin/python3.12 -m radius_perf_eval.kind_smoke --output "$RUN"
+```
+
+The output directory must be new. Every command start is journaled in
+`result.json`; stdout/stderr stream to numbered files before parsing. The run
+owns a random cluster name, labeled network and private kubeconfig, explicitly
+sets `KIND_EXPERIMENTAL_PROVIDER=podman` and
+`KIND_EXPERIMENTAL_PODMAN_NETWORK`, and strips inherited engine/context settings.
+The local Kubernetes node is privileged infrastructure managed by Kind; the
+diagnostic pods do not receive an engine socket, host mount or service-account
+token. Private raw records and exported cluster logs stay outside agent mounts
+and public reports.
+
+The probe checks node readiness/version, actual node/workload image identity,
+DNS and service payload delivery, and loopback API and workload access. A
+disk-backed PVC carries a unique payload between separate writer/reader pods.
+It reads actual `cpu.max` and `memory.max`, burns CPU and requires increasing
+usage and throttling counters. A separate memory-limited pod writes past its
+limit into tmpfs and must terminate as `OOMKilled`. The missing-service control
+must fail. These are small-cluster capabilities, not benchmark load or telemetry
+qualification. Stock Kind does not establish enforced NetworkPolicy;
+benchmark egress, sandboxing, full Shop/Radius fit and all-arm diagnostic parity
+remain unverified.
+
+The runner captures failure diagnostics before deleting its exact cluster.
+It checks container and volume inventories against preflight, removes only
+its labeled network after checking ownership, and verifies the port-forward
+listener closed. Images/cache are preserved. A failed or interrupted attempt
+stays failed: inspect its ownership receipt and raw evidence before recovering
+any resource, and never prune or delete another cluster. A missing positive
+owned-resource inventory cannot become a cleanup pass.
+
+Offline controls use the Python standard library already present; they do not
+need pytest or an engine. Fixture-backed lifecycle and fault cases, a local
+shell-only writer-ordering control, and fresh-interpreter guard mutations are
+separate from the live smoke. Run exactly:
+
+```bash
+DOCKER_HOST=unix:///nonexistent/docker.sock CONTAINER_HOST=unix:///nonexistent/podman.sock PYTHONPATH=benchmark /opt/homebrew/bin/python3.12 -m unittest discover -s benchmark/tests -p 'test_kind_smoke*.py' -v
+```
+
 ## Podman migration
 
 **October 26 supersession:** the owner now selects local Kind backed by Podman,
