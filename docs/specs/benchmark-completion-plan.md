@@ -19,10 +19,37 @@ governs eligibility, retained safeguards and unresolved run settings.
 The confirmatory project is complete when an operator can build sealed fixtures,
 qualify a host, run a resumable diagnosis campaign, reproduce its analysis, inspect the
 comparison in a local dashboard, and download the results. A working pilot is
-not evidence of uplift. Remediation, Kubernetes, and the human Canvas demo are
-not required for this finish line.
+not evidence of uplift. Remediation and the human Canvas demo are not required
+for this finish line. Kubernetes was originally deferred; the October 26
+decision below now selects local Kind as the execution target.
 
 ## Delivery sequence
+
+**Owner decision, October 26, 2026:** replace the Compose-first sequence with
+local Kind backed by the existing Podman VM. The
+[canonical decision](copilot-radius-experiment-plan.md#current-state-and-next-steps)
+sets approval and safety boundaries. Historical Docker and Compose evidence
+does not qualify this target. Three arms and full pinned Shop/telemetry parity
+are unchanged. The ordered increments are:
+
+1. Record this policy in a commit and open its PR, then implement and run a
+   bounded small Kind smoke with isolated ownership and kubeconfig. Verify
+   readiness, DNS/service traffic, pinned images, loopback-only access, actual
+   volume use, measured/enforced cgroup limits and cleanup. Preserve raw results,
+   positive controls and offline guard mutations. No Shop or Radius deployment.
+2. Establish local Radius through the separately investigated supported install
+   path, with applicable installation/deployment approval and measured evidence.
+3. Deploy the full pinned Shop using Kubernetes-native manifests and telemetry.
+   Measure capacity and diagnostic parity; do not transplant Docker/Compose
+   qualification, receiver assumptions or fitted bounds. Qualify egress rather
+   than claiming stock Kind enforces NetworkPolicy.
+4. Adapt the existing harness lifecycle, evidence, isolation and qualification
+   surfaces to this target before approved exploratory runs.
+
+The first smoke is pending. Its pass would establish small-cluster capability,
+not full Shop/Radius capacity or trial eligibility. Earlier no-Kubernetes and
+Compose-first statements below are retained history and superseded by this
+decision; other gates remain in force.
 
 **Immediate path:** the exploratory policy merged in PR #20. M2 merged in
 [PR #19](https://github.com/ryanwaite/radius-performance-demo/pull/19) on October 1

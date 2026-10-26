@@ -19,6 +19,46 @@ Operating rules for anyone working in this repository, human or agent, are in [`
 
 This section is the handoff point. Update it in the same pull request as the work it describes.
 
+**Owner decision, October 26, 2026: select local Kind backed by Podman instead
+of Compose.** This supersedes the Compose execution sequence and earlier
+statements that no Kubernetes target was selected. Retain those statements,
+Docker/Compose measurements and qualification records as history, not evidence
+for Kind. The combined Radius, native and architecture-document arms and full
+pinned Shop application/diagnostic parity remain unchanged.
+
+The approved sequence is a small local cluster smoke, local Radius setup,
+the full pinned Shop with Kubernetes-native deployment and telemetry, then
+migration of the existing harness. Record this policy in a commit and open its
+PR before runtime work relies on it; the owner merges. The first increment
+authorizes only a bounded, under-one-hour Kind smoke and its necessary image
+pulls and owned test workloads. Use the installed tools, existing running
+Podman VM and explicit observed rootful connection without changing defaults,
+restarting/resizing the machine or installing/upgrading tools. Use a unique
+cluster and isolated kubeconfig, refuse collisions, and preserve image caches.
+Save ownership and raw failure evidence before cleanup of only owned resources.
+No engine socket enters a diagnostic workload.
+
+Smoke acceptance requires nonempty node readiness, DNS and service traffic,
+image identity/availability, loopback-only access, actual volume reads/writes,
+measured CPU/memory cgroup limits and enforcement, and positive cleanup
+evidence. Offline controls must reject missing evidence and planted faults;
+mutation-test new guards. Stock Kind networking is not evidence of enforced
+NetworkPolicy: benchmark egress and sandbox qualification remain pending.
+A small-cluster pass does not establish capacity for Shop plus Radius.
+No full Shop, Radius deployment, model requests, cloud resources, campaign or
+VM/tool changes are part of this increment. Local Radius installation-path
+investigation is separate; deployment needs its applicable approval.
+
+**Current Kind milestone:** policy recorded; implementation and live smoke
+remain pending. Next, capture current tool versions, caches, connection and VM
+capacity, pin a compatible node image digest, and run the bounded smoke.
+*Exit:* persistent raw evidence and an explicit pass or blocker, with owned
+cluster cleanup verified. Only then proceed to the separate local Radius
+milestone and Kubernetes-native full-Shop/harness work.
+
+The dated entries below retain the prior decisions and evidence. Their
+Compose-first and no-Kubernetes-target statements are superseded above.
+
 **Owner decision, October 6, 2026: move the benchmark from Docker to Podman.**
 The company no longer uses Docker. This supersedes the Docker execution target
 below, not the historical measurements or their interpretation. Preserve all

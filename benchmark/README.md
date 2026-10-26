@@ -7,6 +7,14 @@ for the remaining work; the Astronomy Shop campaign is not yet runnable end to e
 
 ## Podman migration
 
+**October 26 supersession:** the owner now selects local Kind backed by Podman,
+not Compose. Follow the [current canonical sequence](../docs/specs/copilot-radius-experiment-plan.md#current-state-and-next-steps):
+small isolated Kind smoke, separate local Radius setup, full pinned Shop with
+Kubernetes-native telemetry, then existing-harness migration. The Compose
+provider selection and migration instructions below are historical, not the
+next execution prerequisite. Existing legacy live-command refusals remain.
+Neither Docker nor Compose qualification transfers to Kind.
+
 **First prerequisite increment, not a completed migration.** The owner selected
 Podman on October 6. `doctor` now inventories an explicitly selected Podman
 connection without creating resources. The public `shop`, `trial`,
